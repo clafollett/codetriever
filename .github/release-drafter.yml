@@ -1,0 +1,107 @@
+# Release Drafter Configuration
+# This file configures how release notes are automatically generated
+
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+# Categories for grouping changes
+categories:
+  - title: '🚀 Features'
+    labels:
+      - 'feature'
+      - 'enhancement'
+  - title: '⚡ Performance'
+    labels:
+      - 'performance'
+      - 'perf'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'fix'
+      - 'bugfix'
+      - 'bug'
+  - title: '🔒 Security'
+    labels:
+      - 'security'
+  - title: '🛠️ Refactoring'
+    labels:
+      - 'refactor'
+      - 'refactoring'
+  - title: '📚 Documentation'
+    labels:
+      - 'documentation'
+      - 'docs'
+  - title: '🧪 Tests'
+    labels:
+      - 'tests'
+      - 'test'
+  - title: '🏗️ Infrastructure'
+    labels:
+      - 'infrastructure'
+      - 'ci'
+      - 'build'
+  - title: '💥 Breaking Changes'
+    labels:
+      - 'breaking'
+      - 'breaking-change'
+
+# Exclude labels from release notes
+exclude-labels:
+  - 'skip-release'
+  - 'skip-changelog'
+  - 'no-release'
+
+# Version resolver (for pre-1.0, we'll mostly use patch bumps)
+version-resolver:
+  major:
+    labels:
+      - 'major'
+  minor:
+    labels:
+      - 'minor'
+      - 'feature'  # New features bump minor version
+  patch:
+    labels:
+      - 'patch'
+      - 'bug'
+      - 'bugfix'
+      - 'fix'
+      - 'performance'
+      - 'documentation'
+      - 'refactor'
+      - 'tests'
+      - 'infrastructure'
+  default: patch
+
+# Template for each change line
+change-template: '- $TITLE by @$AUTHOR in #$NUMBER'
+
+# Template for when there's no changes
+no-changes-template: '- No changes in this release'
+
+# Main release template
+template: |
+  ## What's Changed
+  
+  $CHANGES
+  
+  ## New Contributors
+  $CONTRIBUTORS
+  
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+  
+  ---
+  
+  **Note**: This is a pre-1.0 release. Breaking changes may occur without notice.
+  
+  ## Installation
+  
+  ```bash
+  cargo install maos
+  ```
+  
+  Or clone and build:
+  ```bash
+  git clone https://github.com/clafollett/maos.git
+  cd maos
+  cargo build --release
+  ```

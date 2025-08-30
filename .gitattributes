@@ -1,0 +1,27 @@
+# Enforce LF line endings for all text files across all platforms
+* text=auto eol=lf
+
+# Rust source files - ensure LF line endings
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# Shell scripts - ensure LF line endings
+*.sh text eol=lf
+
+# Windows batch files - ensure CRLF line endings
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files - do not modify
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary

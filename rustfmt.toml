@@ -1,0 +1,11 @@
+# Rustfmt configuration for MAOS
+# Ensures consistent formatting across the project
+
+edition = "2024"
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_small_heuristics = "Default"
+use_field_init_shorthand = true
+force_explicit_abi = true

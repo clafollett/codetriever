@@ -1,0 +1,22 @@
+# Clippy configuration for MAOS
+# Enforces strict code quality standards matching CI
+
+# Performance optimizations
+enum-variant-size-threshold = 200
+large-error-threshold = 128
+
+# Code clarity thresholds
+cognitive-complexity-threshold = 30
+too-many-arguments-threshold = 8
+too-many-lines-threshold = 150
+
+# Documentation requirements  
+check-private-items = false # Don't require docs for private items
+
+# Type complexity
+type-complexity-threshold = 60
+
+# Misc settings
+msrv = "1.88.0" # Minimum Supported Rust Version (matches current stable)
+
+# Modern Rust standards - enable inline format arg checking

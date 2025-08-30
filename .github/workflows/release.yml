@@ -1,0 +1,91 @@
+name: Release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    # Removed automatic trigger condition since workflow is now manual-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install cargo-release
+        run: cargo install cargo-release --version '^0.25'
+      
+      - name: Set version bump
+        id: version
+        run: |
+          echo "bump=${{ github.event.inputs.version_bump }}" >> $GITHUB_OUTPUT
+          echo "Manual release triggered with ${{ github.event.inputs.version_bump }} version bump"
+      
+      - name: Bump version
+        id: bump
+        run: |
+          # cargo-release will bump version AND commit with message from Cargo.toml config
+          cargo release ${{ steps.version.outputs.bump }} --no-confirm --execute
+          
+          # Get the new version and output it
+          NEW_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d '"' -f2)
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Push version bump
+        run: |
+          # Push the commit that cargo-release created
+          # Push to current branch, then create/push tag
+          git push origin HEAD:${{ github.ref_name }}
+          git tag v${{ steps.bump.outputs.version }}
+          git push origin v${{ steps.bump.outputs.version }}
+      
+      - name: Publish Draft Release
+        run: |
+          # Find and publish the draft release
+          DRAFT_RELEASE=$(gh release list --draft --limit 1 --json tagName -q 'if length > 0 then .[0].tagName else empty end')
+          
+          if [ -n "$DRAFT_RELEASE" ]; then
+            echo "Publishing draft release: $DRAFT_RELEASE"
+            # Update the tag to match our version
+            gh release edit $DRAFT_RELEASE \
+              --tag v${{ steps.bump.outputs.version }} \
+              --draft=false \
+              --prerelease
+          else
+            echo "No draft release found. Creating a new release..."
+            # Fallback: create a new release if no draft exists
+            gh release create v${{ steps.bump.outputs.version }} \
+              --title "Release v${{ steps.bump.outputs.version }}" \
+              --generate-notes \
+              --prerelease
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
