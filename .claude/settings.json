@@ -19,8 +19,7 @@
   "env": {
     "BASH_DEFAULT_TIMEOUT_MS": "1200000",
     "BASH_MAX_TIMEOUT_MS": "1200000",
-    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1",
-    "MAOS_PROJECT_ROOT_DIR": "~/Repositories/maos"
+    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"
   },
   "hooks": {
     "PreToolUse": [
