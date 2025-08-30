@@ -1,0 +1,40 @@
+{
+  "description": "Maintenance operation to remove stale data. Use when: index size grows too large, after deleting many files, to remove entries older than X days, or when switching between branches frequently. Frees up disk space and improves search performance.",
+  "operationId": "clean",
+  "path": "/clean",
+  "requestBody": {
+    "properties": [
+      {
+        "description": "Duration string (e.g., \\\"7d\\\", \\\"1h\\\")",
+        "name": "older_than"
+      },
+      {
+        "name": "missing_files"
+      }
+    ],
+    "schema": {
+      "missing_files": {
+        "default": false,
+        "type": "boolean"
+      },
+      "older_than": {
+        "description": "Duration string (e.g., \"7d\", \"1h\")",
+        "type": "string"
+      }
+    }
+  },
+  "response": {
+    "schema": {
+      "properties": {
+        "freed_space_mb": {
+          "type": "number"
+        },
+        "removed_chunks": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "summary": "Clean up outdated index entries"
+}

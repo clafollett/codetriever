@@ -1,0 +1,22 @@
+{
+  "description": "Runs database optimization to improve query speed and reduce file size. Similar to SQL Server index rebuild or PostgreSQL VACUUM. Use monthly or when /status shows degraded search performance. Safe to run anytime but may temporarily slow searches during compaction.",
+  "operationId": "compact",
+  "path": "/compact",
+  "response": {
+    "schema": {
+      "properties": {
+        "after_size_mb": {
+          "type": "number"
+        },
+        "before_size_mb": {
+          "type": "number"
+        },
+        "duration_ms": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "summary": "Optimize database for better performance"
+}

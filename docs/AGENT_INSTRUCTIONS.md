@@ -10,6 +10,12 @@
 4. **Test business logic only** - Not OS behavior or timing
 5. **Ship working code daily** - Progress > perfection
 
+## Technical Requirements
+
+- **Rust Edition**: Use Rust 2024 edition for all crates
+- **Workspace**: Multi-crate workspace structure
+- **Dependencies**: Define shared deps at workspace level
+
 ## Development Flow
 
 ```bash

@@ -1,0 +1,142 @@
+{
+  "description": "Use this to understand the current state of the codetriever system. Shows: active indexing jobs and their progress, file watcher status, index freshness, performance metrics, and any errors. Check this when searches seem slow or outdated, before starting large operations, or to monitor background indexing.",
+  "operationId": "get_status",
+  "path": "/status",
+  "response": {
+    "schema": {
+      "properties": {
+        "index": {
+          "properties": {
+            "jobs": {
+              "items": {
+                "properties": {
+                  "completed": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "progress": {
+                    "properties": {
+                      "current": {
+                        "type": "integer"
+                      },
+                      "eta_seconds": {
+                        "type": "integer"
+                      },
+                      "percent": {
+                        "type": "number"
+                      },
+                      "total": {
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "started": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "queued",
+                      "processing",
+                      "completed",
+                      "failed"
+                    ],
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "full",
+                      "incremental"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "stats": {
+              "properties": {
+                "index_size_mb": {
+                  "type": "number"
+                },
+                "indexed_files": {
+                  "type": "integer"
+                },
+                "last_update": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "stale_files": {
+                  "type": "integer"
+                },
+                "total_chunks": {
+                  "type": "integer"
+                },
+                "total_files": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "performance": {
+          "properties": {
+            "avg_index_ms_per_file": {
+              "type": "number"
+            },
+            "avg_search_ms": {
+              "type": "number"
+            },
+            "memory_usage_mb": {
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "server": {
+          "properties": {
+            "pid": {
+              "type": "integer"
+            },
+            "uptime_seconds": {
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "watcher": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "events_last_minute": {
+              "type": "integer"
+            },
+            "queue_size": {
+              "type": "integer"
+            },
+            "watching_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "summary": "Check health, index jobs, and performance metrics"
+}

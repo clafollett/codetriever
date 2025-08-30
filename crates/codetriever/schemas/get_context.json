@@ -1,0 +1,58 @@
+{
+  "description": "Use this when you need to understand code in its full context. Given a file and line number, returns the surrounding code including function signatures, class definitions, imports, and nearby related code. Essential when you need to see the \\\"bigger picture\\\" around a specific piece of code.",
+  "operationId": "get_context",
+  "path": "/context",
+  "requestBody": {
+    "properties": [
+      {
+        "name": "file"
+      },
+      {
+        "name": "line"
+      },
+      {
+        "description": "Lines before and after",
+        "name": "radius"
+      }
+    ],
+    "schema": {
+      "file": {
+        "type": "string"
+      },
+      "line": {
+        "type": "integer"
+      },
+      "radius": {
+        "default": 20,
+        "description": "Lines before and after",
+        "type": "integer"
+      }
+    }
+  },
+  "response": {
+    "schema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line_end": {
+          "type": "integer"
+        },
+        "line_start": {
+          "type": "integer"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "summary": "Get surrounding code context for a specific location"
+}

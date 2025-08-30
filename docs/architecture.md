@@ -130,10 +130,11 @@ on_file_change(path) {
 - Remote: OpenAI text-embedding-ada-002
 - Caches embeddings for unchanged code
 
-### Vector Store (SQLite-vec)
-- Single file database
-- HNSW indexing for fast similarity search
-- Stores chunks + metadata + vectors
+### Vector Store (Qdrant)
+- Native Rust vector database
+- Production-ready performance
+- Rich features: filtering, payloads, snapshots
+- Runs as Docker service for easy deployment
 
 ### File Watcher
 - fsnotify for cross-platform monitoring
@@ -185,11 +186,77 @@ on_file_change(path) {
 6. Job completes, status updated
 ```
 
+## Docker-based Multi-Service Architecture
+
+Codetriever uses a hybrid architecture with components split between host and Docker:
+
+### Service Topology
+```
+Docker Compose Stack
+├── codetriever-api (Rust HTTP Server)
+│   ├── Tree-sitter parsing
+│   ├── Vector embedding
+│   ├── Search logic
+│   └── Qdrant client
+│
+├── qdrant (Official Docker image)
+│   └── Vector storage & search
+│
+└── Host Machine
+    └── codetriever (MCP/CLI binary)
+        ├── File watching (native FS access)
+        ├── MCP server (stdio/SSE)
+        ├── CLI commands
+        └── HTTP client → API
+```
+
+### Component Separation Rationale
+
+**Host Binary (MCP/CLI):**
+- File watching requires native OS file system events
+- Docker volumes for watching are slow and problematic
+- MCP needs persistent connection to Claude Code
+- Direct file system access for reading code
+
+**Docker API Service:**
+- Heavy compute operations (parsing, embedding)
+- Stateless and horizontally scalable
+- Clean HTTP interface for future SaaS
+- Isolated from host file system
+
+**Docker Qdrant Service:**
+- Persistent vector storage
+- Managed as standard Docker service
+- Easy backup and migration
+- Production-ready deployment
+
+### File Watching Strategy
+
+The host binary watches files and sends changes to the API:
+
+```rust
+// Host binary detects change
+on_file_change(path) {
+    let content = fs::read_to_string(path)?;
+    
+    // Send to API for processing
+    api_client.post("/index", IndexRequest {
+        path: path,
+        content: content,
+        operation: "update"
+    });
+}
+```
+
+This avoids Docker volume mounting issues while keeping the heavy processing containerized.
+
 ## Why This Architecture?
 
 1. **Local-first**: Privacy, speed, no cloud costs
 2. **Unified interface**: Same tools everywhere
-3. **Always fresh**: Embedded watcher = auto-updates
+3. **Always fresh**: Native file watching = auto-updates
 4. **Non-blocking**: Async indexing = no wait
 5. **Incremental**: Only process changes
 6. **Observable**: Status shows what's happening
+7. **Production-ready**: Docker deployment from day one
+8. **Scalable**: Clean separation enables future SaaS

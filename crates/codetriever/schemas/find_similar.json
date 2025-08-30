@@ -1,0 +1,76 @@
+{
+  "description": "Use this when you have an example of code and want to find similar implementations. Useful for: finding duplicated logic that could be refactored, locating all error handling patterns similar to one you're reviewing, or discovering variations of the same algorithm. Returns code chunks ranked by similarity score.",
+  "operationId": "find_similar",
+  "path": "/similar",
+  "requestBody": {
+    "properties": [
+      {
+        "description": "File to exclude from results",
+        "name": "exclude_file"
+      },
+      {
+        "name": "limit"
+      },
+      {
+        "description": "Code snippet to find similar to",
+        "name": "code"
+      }
+    ],
+    "schema": {
+      "code": {
+        "description": "Code snippet to find similar to",
+        "type": "string"
+      },
+      "exclude_file": {
+        "description": "File to exclude from results",
+        "type": "string"
+      },
+      "limit": {
+        "default": 10,
+        "type": "integer"
+      }
+    }
+  },
+  "response": {
+    "schema": {
+      "properties": {
+        "chunks": {
+          "items": {
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "file": {
+                "example": "src/auth.rs",
+                "type": "string"
+              },
+              "line_end": {
+                "type": "integer"
+              },
+              "line_start": {
+                "type": "integer"
+              },
+              "similarity": {
+                "format": "float",
+                "type": "number"
+              },
+              "symbols": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "query_time_ms": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "summary": "Find code similar to a given snippet"
+}

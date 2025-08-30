@@ -1,0 +1,29 @@
+{
+  "description": "Lightweight endpoint for basic metrics. Use when you just need numbers: total files indexed, chunk count, database size, last update time. Faster than /status when you don't need detailed job information.",
+  "operationId": "get_stats",
+  "path": "/stats",
+  "response": {
+    "schema": {
+      "properties": {
+        "chunks": {
+          "type": "integer"
+        },
+        "db_size_mb": {
+          "type": "number"
+        },
+        "files": {
+          "type": "integer"
+        },
+        "last_indexed": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "vectors": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "summary": "Get quick index statistics"
+}

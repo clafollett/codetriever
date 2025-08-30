@@ -113,7 +113,7 @@ cargo watch -x test -x run
 🚧 **Pre-Alpha** - We're building this in public. Expect rough edges.
 
 - [x] Basic project structure
-- [ ] MCP scaffolding with Agenterra
+- [x] MCP scaffolding with Agenterra
 - [ ] Tree-sitter parsing
 - [ ] Vector embeddings
 - [ ] SQLite-vec storage

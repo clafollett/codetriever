@@ -1,0 +1,82 @@
+{
+  "description": "Use this when you need to find code that implements a concept or pattern. This understands semantic meaning-searching for \\\"authentication\\\" will find login functions, JWT validation, password checking, etc. even if they don't contain the word \\\"authentication\\\". Perfect for exploring unfamiliar codebases or finding implementation patterns.",
+  "operationId": "search",
+  "path": "/search",
+  "requestBody": {
+    "properties": [
+      {
+        "name": "threshold"
+      },
+      {
+        "description": "Natural language search query",
+        "example": "authentication logic",
+        "name": "query"
+      },
+      {
+        "name": "limit"
+      }
+    ],
+    "schema": {
+      "limit": {
+        "default": 10,
+        "maximum": 100.0,
+        "minimum": 1.0,
+        "type": "integer"
+      },
+      "query": {
+        "description": "Natural language search query",
+        "example": "authentication logic",
+        "type": "string"
+      },
+      "threshold": {
+        "default": 0.7,
+        "format": "float",
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+      }
+    }
+  },
+  "response": {
+    "schema": {
+      "properties": {
+        "chunks": {
+          "items": {
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "file": {
+                "example": "src/auth.rs",
+                "type": "string"
+              },
+              "line_end": {
+                "type": "integer"
+              },
+              "line_start": {
+                "type": "integer"
+              },
+              "similarity": {
+                "format": "float",
+                "type": "number"
+              },
+              "symbols": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "query_time_ms": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "summary": "Search code by meaning, not just text"
+}

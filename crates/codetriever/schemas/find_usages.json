@@ -1,0 +1,61 @@
+{
+  "description": "Use this to trace how a symbol is used throughout the codebase. Perfect for understanding impact of changes, finding all callers of a function, tracking down where a variable is modified, or analyzing dependencies. Distinguishes between definitions and references.",
+  "operationId": "find_usages",
+  "path": "/usages",
+  "requestBody": {
+    "properties": [
+      {
+        "name": "symbol"
+      },
+      {
+        "name": "type_"
+      }
+    ],
+    "schema": {
+      "symbol": {
+        "type": "string"
+      },
+      "type": {
+        "default": "all",
+        "enum": [
+          "all",
+          "definitions",
+          "references"
+        ],
+        "type": "string"
+      }
+    }
+  },
+  "response": {
+    "schema": {
+      "properties": {
+        "usages": {
+          "items": {
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "line": {
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "definition",
+                  "reference"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "summary": "Find all usages of a function, class, or variable"
+}

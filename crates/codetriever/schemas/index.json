@@ -1,0 +1,97 @@
+{
+  "description": "Triggers a reindex of the codebase. Usually runs automatically via file watcher, but use this when: switching branches and need immediate index update, after large refactoring, when status shows stale files, or to force a full rebuild. Returns immediately with job ID (async mode) or waits for completion (sync mode). Check progress via the /status endpoint.",
+  "operationId": "index",
+  "path": "/index",
+  "requestBody": {
+    "properties": [
+      {
+        "name": "mode"
+      },
+      {
+        "description": "Return immediately (MCP) or wait (CLI)",
+        "name": "async_"
+      },
+      {
+        "description": "Specific paths to index",
+        "name": "paths"
+      },
+      {
+        "description": "Max wait time for async operations",
+        "name": "timeout_ms"
+      }
+    ],
+    "schema": {
+      "async": {
+        "default": true,
+        "description": "Return immediately (MCP) or wait (CLI)",
+        "type": "boolean"
+      },
+      "mode": {
+        "default": "incremental",
+        "enum": [
+          "full",
+          "incremental"
+        ],
+        "type": "string"
+      },
+      "paths": {
+        "description": "Specific paths to index",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "timeout_ms": {
+        "default": 30000,
+        "description": "Max wait time for async operations",
+        "type": "integer"
+      }
+    }
+  },
+  "response": {
+    "schema": {
+      "oneOf": [
+        {
+          "properties": {
+            "job_id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "queued",
+                "started"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "properties": {
+            "chunks_created": {
+              "type": "integer"
+            },
+            "duration_ms": {
+              "type": "integer"
+            },
+            "errors": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "files_processed": {
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "summary": "Refresh the code index (usually automatic)"
+}
