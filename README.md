@@ -72,11 +72,24 @@ codetriever search "authentication flow"
 
 ## Architecture
 
+Codetriever runs as a persistent MCP server with embedded file watching and async indexing.
+
 ```
 Your Code → Tree-sitter Parser → Semantic Chunks → Vector Embeddings → SQLite
-                                                                          ↓
-Claude Code ← MCP Protocol ← Search Results ← Similarity Search ← Your Query
+     ↑                                                                   ↓
+File Watcher                                                             ↓
+(auto-index)                                                             ↓
+     ↓                                                                   ↓
+Claude Code ← MCP Protocol ← Search Results ← Similarity Search ←────────┘
 ```
+
+**Key Design Decisions:**
+- **Unified CLI/MCP interface** - Same tools everywhere
+- **Embedded file watcher** - No separate process needed
+- **Async indexing** - Never blocks queries (like SQL Server)
+- **Incremental updates** - Only re-parse what changed
+
+See [Architecture](docs/architecture.md) and [API Design](docs/api-design.md) for details.
 
 ## Development
 
