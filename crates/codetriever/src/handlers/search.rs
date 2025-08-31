@@ -14,10 +14,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
 /// Auto-generated parameters struct for `/search` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct SearchParams {
-}
+pub struct SearchParams {}
 
 // Implement Endpoint for generic handler
 impl Endpoint for SearchParams {
@@ -31,16 +30,16 @@ impl Endpoint for SearchParams {
 }
 
 /// Auto-generated properties struct for `/search` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct SearchProperties {
-#[schemars(description = r#" - "#)]
+    #[schemars(description = r#" - "#)]
     pub threshold: Option<f64>,
     #[schemars(description = r#" - Natural language search query"#)]
     pub query: Option<String>,
     #[schemars(description = r#" - "#)]
     pub limit: Option<i32>,
-    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct SearchResponse {
     #[schemars(description = r#" - "#)]
@@ -118,18 +117,17 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = SearchParams {
-        };
+        let params = SearchParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 
     #[test]
     fn test_properties_struct_serialization() {
         let props = SearchProperties {
-        threshold: None,
+            threshold: None,
             query: None,
             limit: None,
-            };
+        };
         let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

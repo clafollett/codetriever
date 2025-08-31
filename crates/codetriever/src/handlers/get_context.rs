@@ -14,10 +14,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
 /// Auto-generated parameters struct for `/get_context` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct GetContextParams {
-}
+pub struct GetContextParams {}
 
 // Implement Endpoint for generic handler
 impl Endpoint for GetContextParams {
@@ -31,16 +30,16 @@ impl Endpoint for GetContextParams {
 }
 
 /// Auto-generated properties struct for `/get_context` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct GetContextProperties {
-#[schemars(description = r#" - "#)]
+    #[schemars(description = r#" - "#)]
     pub file: Option<String>,
     #[schemars(description = r#" - "#)]
     pub line: Option<i32>,
     #[schemars(description = r#" - Lines before and after"#)]
     pub radius: Option<i32>,
-    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct GetContextResponse {
     #[schemars(description = r#" - "#)]
@@ -124,18 +123,17 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = GetContextParams {
-        };
+        let params = GetContextParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 
     #[test]
     fn test_properties_struct_serialization() {
         let props = GetContextProperties {
-        file: None,
+            file: None,
             line: None,
             radius: None,
-            };
+        };
         let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

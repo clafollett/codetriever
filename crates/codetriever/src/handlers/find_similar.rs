@@ -14,10 +14,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
 /// Auto-generated parameters struct for `/find_similar` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct FindSimilarParams {
-}
+pub struct FindSimilarParams {}
 
 // Implement Endpoint for generic handler
 impl Endpoint for FindSimilarParams {
@@ -31,16 +30,16 @@ impl Endpoint for FindSimilarParams {
 }
 
 /// Auto-generated properties struct for `/find_similar` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct FindSimilarProperties {
-#[schemars(description = r#" - File to exclude from results"#)]
+    #[schemars(description = r#" - File to exclude from results"#)]
     pub exclude_file: Option<String>,
     #[schemars(description = r#" - "#)]
     pub limit: Option<i32>,
     #[schemars(description = r#" - Code snippet to find similar to"#)]
     pub code: Option<String>,
-    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct FindSimilarResponse {
     #[schemars(description = r#" - "#)]
@@ -118,18 +117,17 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = FindSimilarParams {
-        };
+        let params = FindSimilarParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 
     #[test]
     fn test_properties_struct_serialization() {
         let props = FindSimilarProperties {
-        exclude_file: None,
+            exclude_file: None,
             limit: None,
             code: None,
-            };
+        };
         let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

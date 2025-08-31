@@ -14,12 +14,11 @@ pub enum Transport {
     #[value(name = "stdio")]
     #[default]
     Stdio,
-    
+
     /// Server-Sent Events (SSE) transport - for HTTP-based communication
     #[value(name = "sse")]
     Sse,
 }
-
 
 impl std::fmt::Display for Transport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -32,12 +31,14 @@ impl std::fmt::Display for Transport {
 
 impl std::str::FromStr for Transport {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "stdio" => Ok(Transport::Stdio),
             "sse" => Ok(Transport::Sse),
-            _ => Err(format!("Invalid transport: '{s}'. Valid options are: stdio, sse")),
+            _ => Err(format!(
+                "Invalid transport: '{s}'. Valid options are: stdio, sse"
+            )),
         }
     }
 }
@@ -45,7 +46,7 @@ impl std::str::FromStr for Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_transport_from_str() {
         assert_eq!("stdio".parse::<Transport>().unwrap(), Transport::Stdio);
@@ -54,11 +55,10 @@ mod tests {
         assert_eq!("SSE".parse::<Transport>().unwrap(), Transport::Sse);
         assert!("invalid".parse::<Transport>().is_err());
     }
-    
+
     #[test]
     fn test_transport_display() {
         assert_eq!(Transport::Stdio.to_string(), "stdio");
         assert_eq!(Transport::Sse.to_string(), "sse");
     }
-    
 }

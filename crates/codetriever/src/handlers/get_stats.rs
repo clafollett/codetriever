@@ -14,10 +14,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
 /// Auto-generated parameters struct for `/get_stats` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct GetStatsParams {
-}
+pub struct GetStatsParams {}
 
 // Implement Endpoint for generic handler
 impl Endpoint for GetStatsParams {
@@ -31,10 +30,9 @@ impl Endpoint for GetStatsParams {
 }
 
 /// Auto-generated properties struct for `/get_stats` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct GetStatsProperties {
-}
+pub struct GetStatsProperties {}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct GetStatsResponse {
     #[schemars(description = r#" - "#)]
@@ -118,15 +116,13 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = GetStatsParams {
-        };
+        let params = GetStatsParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 
     #[test]
     fn test_properties_struct_serialization() {
-        let props = GetStatsProperties {
-        };
+        let props = GetStatsProperties {};
         let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

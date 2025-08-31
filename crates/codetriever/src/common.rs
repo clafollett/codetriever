@@ -33,7 +33,7 @@ where
 
     // Replace {paramName} placeholders in path with actual values
     for (key, value) in &params {
-        let placeholder = format!("{{{}}}", key);
+        let placeholder = format!("{{{key}}}");
         if path.contains(&placeholder) {
             path = path.replace(&placeholder, value);
             path_params_used.push(key.clone());
@@ -51,7 +51,7 @@ where
         path.trim_start_matches('/')
     );
 
-    log::debug!("Sending request: URL={}, Query={:?}", url, params);
+    log::debug!("Sending request: URL={url}, Query={params:?}");
 
     // --- Execute Request ---
     let res = client
@@ -62,7 +62,7 @@ where
         .map_err(reqwest_to_rmcp_error)?;
 
     let status = res.status();
-    log::debug!("Received response status: {}", status);
+    log::debug!("Received response status: {status}");
 
     // Get response body
     let bytes = res.bytes().await.map_err(reqwest_to_rmcp_error)?;
@@ -111,11 +111,7 @@ where
             Ok(parsed)
         }
         Err(e) => {
-            log::error!(
-                "Failed to parse response as JSON: {}. Status: {}",
-                e,
-                status
-            );
+            log::error!("Failed to parse response as JSON: {e}. Status: {status}");
             Err(serde_json_to_rmcp_error(e))
         }
     }

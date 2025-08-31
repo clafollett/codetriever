@@ -21,8 +21,11 @@ use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
+// Type alias for main result
+type MainResult = Result<(), Box<dyn std::error::Error>>;
+
 /// codetriever MCP Server
-/// 
+///
 /// Supports both STDIO and SSE (Server-Sent Events) transports for MCP protocol
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -46,14 +49,14 @@ struct Args {
     /// API URL for backend services
     #[arg(long, default_value = "http://localhost:8080")]
     api_url: String,
-    
+
     /// Optional configuration file path (TOML format)
     #[arg(long, short = 'c')]
     config_file: Option<String>,
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> MainResult {
     debug!("[codetriever MCP] main() reached ===");
 
     // Parse command line arguments
@@ -63,14 +66,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = if let Some(config_path) = &args.config_file {
         // Load from config file if specified
         let contents = std::fs::read_to_string(config_path)
-            .map_err(|e| format!("Failed to read config file '{}': {}", config_path, e))?;
+            .map_err(|e| format!("Failed to read config file '{config_path}': {e}"))?;
         toml::from_str::<Config>(&contents)
-            .map_err(|e| format!("Failed to parse config file '{}': {}", config_path, e))?
+            .map_err(|e| format!("Failed to parse config file '{config_path}': {e}"))?
     } else {
         // Use defaults
         Config::default()
     };
-    
+
     // Command-line arguments always override config file settings
     config.transport = args.transport;
     config.api_url = args.api_url;
@@ -79,9 +82,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         get_default_log_dir()
     };
-    
+
     // Parse and apply SSE address
-    config.sse_addr = args.sse_addr.parse()
+    config.sse_addr = args
+        .sse_addr
+        .parse()
         .map_err(|e| {
             tracing::error!("Invalid SSE address '{}': {}", args.sse_addr, e);
             tracing::warn!("Using default address: 127.0.0.1:8080");
@@ -91,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .parse()
                 .expect("Default SSE address should be valid")
         });
-    
+
     config.sse_keep_alive = std::time::Duration::from_secs(args.sse_keep_alive);
 
     let cfg = Arc::new(Mutex::new(config));
@@ -107,11 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // === Dual Logging Setup (configurable) ===
     // 1. File logger (daily rotation, async non-blocking)
-    let file_appender = RollingFileAppender::new(
-        Rotation::DAILY,
-        &log_dir,
-        "codetriever-mcp.log",
-    );
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "codetriever-mcp.log");
     let (file_writer, file_guard): (NonBlocking, WorkerGuard) =
         tracing_appender::non_blocking(file_appender);
 
@@ -149,26 +150,24 @@ fn get_default_log_dir() -> std::path::PathBuf {
             std::path::PathBuf::from("logs")
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         // macOS: ~/Library/Logs/codetriever
         if let Some(home) = dirs::home_dir() {
-            home.join("Library")
-                .join("Logs")
-                .join("codetriever")
+            home.join("Library").join("Logs").join("codetriever")
         } else {
             // Fallback to current directory
             std::path::PathBuf::from("logs")
         }
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         // Linux and other Unix-like systems
         // Try /var/log first (if we have permissions), otherwise use user directory
         let system_log_dir = std::path::Path::new("/var/log/codetriever");
-        
+
         if system_log_dir.exists() && is_writable(system_log_dir) {
             system_log_dir.to_path_buf()
         } else if let Some(data_dir) = dirs::data_dir() {

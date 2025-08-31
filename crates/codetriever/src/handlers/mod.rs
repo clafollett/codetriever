@@ -3,23 +3,22 @@
 // MCP auto-generated: Endpoint handler modules
 pub mod clean;
 pub mod compact;
-pub mod get_context;
-pub mod index;
-pub mod search;
 pub mod find_similar;
+pub mod find_usages;
+pub mod get_context;
 pub mod get_stats;
 pub mod get_status;
-pub mod find_usages;
+pub mod index;
+pub mod search;
 
 // Internal dependencies
 use crate::config::Config;
 
 // External dependencies
-use log::debug;
 use agenterra_rmcp::{
-    handler::server::tool::Parameters, model::*, service::*, tool, Error as McpError,
-    ServerHandler,
+    Error as McpError, ServerHandler, handler::server::tool::Parameters, model::*, service::*, tool,
 };
+use log::debug;
 
 #[derive(Clone)]
 pub struct McpServer {
@@ -47,7 +46,9 @@ impl McpServer {
         )]))
     }
     /// MCP API `/clean` endpoint handler
-    #[tool(description = r#"Clean up outdated index entries - Maintenance operation to remove stale data. Use when: index size grows too large, after deleting many files, to remove entries older than X days, or when switching between branches frequently. Frees up disk space and improves search performance."#)]
+    #[tool(
+        description = r#"Clean up outdated index entries - Maintenance operation to remove stale data. Use when: index size grows too large, after deleting many files, to remove entries older than X days, or when switching between branches frequently. Frees up disk space and improves search performance."#
+    )]
     pub async fn clean(
         &self,
         Parameters(params): Parameters<clean::CleanParams>,
@@ -55,7 +56,9 @@ impl McpServer {
         clean::clean_handler(&self.config, &params).await
     }
     /// MCP API `/compact` endpoint handler
-    #[tool(description = r#"Optimize database for better performance - Runs database optimization to improve query speed and reduce file size. Similar to SQL Server index rebuild or PostgreSQL VACUUM. Use monthly or when /status shows degraded search performance. Safe to run anytime but may temporarily slow searches during compaction."#)]
+    #[tool(
+        description = r#"Optimize database for better performance - Runs database optimization to improve query speed and reduce file size. Similar to SQL Server index rebuild or PostgreSQL VACUUM. Use monthly or when /status shows degraded search performance. Safe to run anytime but may temporarily slow searches during compaction."#
+    )]
     pub async fn compact(
         &self,
         Parameters(params): Parameters<compact::CompactParams>,
@@ -63,7 +66,9 @@ impl McpServer {
         compact::compact_handler(&self.config, &params).await
     }
     /// MCP API `/get_context` endpoint handler
-    #[tool(description = r#"Get surrounding code context for a specific location - Use this when you need to understand code in its full context. Given a file and line number, returns the surrounding code including function signatures, class definitions, imports, and nearby related code. Essential when you need to see the \"bigger picture\" around a specific piece of code."#)]
+    #[tool(
+        description = r#"Get surrounding code context for a specific location - Use this when you need to understand code in its full context. Given a file and line number, returns the surrounding code including function signatures, class definitions, imports, and nearby related code. Essential when you need to see the \"bigger picture\" around a specific piece of code."#
+    )]
     pub async fn get_context(
         &self,
         Parameters(params): Parameters<get_context::GetContextParams>,
@@ -71,7 +76,9 @@ impl McpServer {
         get_context::get_context_handler(&self.config, &params).await
     }
     /// MCP API `/index` endpoint handler
-    #[tool(description = r#"Refresh the code index (usually automatic) - Triggers a reindex of the codebase. Usually runs automatically via file watcher, but use this when: switching branches and need immediate index update, after large refactoring, when status shows stale files, or to force a full rebuild. Returns immediately with job ID (async mode) or waits for completion (sync mode). Check progress via the /status endpoint."#)]
+    #[tool(
+        description = r#"Refresh the code index (usually automatic) - Triggers a reindex of the codebase. Usually runs automatically via file watcher, but use this when: switching branches and need immediate index update, after large refactoring, when status shows stale files, or to force a full rebuild. Returns immediately with job ID (async mode) or waits for completion (sync mode). Check progress via the /status endpoint."#
+    )]
     pub async fn index(
         &self,
         Parameters(params): Parameters<index::IndexParams>,
@@ -79,7 +86,9 @@ impl McpServer {
         index::index_handler(&self.config, &params).await
     }
     /// MCP API `/search` endpoint handler
-    #[tool(description = r#"Search code by meaning, not just text - Use this when you need to find code that implements a concept or pattern. This understands semantic meaning-searching for \"authentication\" will find login functions, JWT validation, password checking, etc. even if they don't contain the word \"authentication\". Perfect for exploring unfamiliar codebases or finding implementation patterns."#)]
+    #[tool(
+        description = r#"Search code by meaning, not just text - Use this when you need to find code that implements a concept or pattern. This understands semantic meaning-searching for \"authentication\" will find login functions, JWT validation, password checking, etc. even if they don't contain the word \"authentication\". Perfect for exploring unfamiliar codebases or finding implementation patterns."#
+    )]
     pub async fn search(
         &self,
         Parameters(params): Parameters<search::SearchParams>,
@@ -87,7 +96,9 @@ impl McpServer {
         search::search_handler(&self.config, &params).await
     }
     /// MCP API `/find_similar` endpoint handler
-    #[tool(description = r#"Find code similar to a given snippet - Use this when you have an example of code and want to find similar implementations. Useful for: finding duplicated logic that could be refactored, locating all error handling patterns similar to one you're reviewing, or discovering variations of the same algorithm. Returns code chunks ranked by similarity score."#)]
+    #[tool(
+        description = r#"Find code similar to a given snippet - Use this when you have an example of code and want to find similar implementations. Useful for: finding duplicated logic that could be refactored, locating all error handling patterns similar to one you're reviewing, or discovering variations of the same algorithm. Returns code chunks ranked by similarity score."#
+    )]
     pub async fn find_similar(
         &self,
         Parameters(params): Parameters<find_similar::FindSimilarParams>,
@@ -95,7 +106,9 @@ impl McpServer {
         find_similar::find_similar_handler(&self.config, &params).await
     }
     /// MCP API `/get_stats` endpoint handler
-    #[tool(description = r#"Get quick index statistics - Lightweight endpoint for basic metrics. Use when you just need numbers: total files indexed, chunk count, database size, last update time. Faster than /status when you don't need detailed job information."#)]
+    #[tool(
+        description = r#"Get quick index statistics - Lightweight endpoint for basic metrics. Use when you just need numbers: total files indexed, chunk count, database size, last update time. Faster than /status when you don't need detailed job information."#
+    )]
     pub async fn get_stats(
         &self,
         Parameters(params): Parameters<get_stats::GetStatsParams>,
@@ -103,7 +116,9 @@ impl McpServer {
         get_stats::get_stats_handler(&self.config, &params).await
     }
     /// MCP API `/get_status` endpoint handler
-    #[tool(description = r#"Check health, index jobs, and performance metrics - Use this to understand the current state of the codetriever system. Shows: active indexing jobs and their progress, file watcher status, index freshness, performance metrics, and any errors. Check this when searches seem slow or outdated, before starting large operations, or to monitor background indexing."#)]
+    #[tool(
+        description = r#"Check health, index jobs, and performance metrics - Use this to understand the current state of the codetriever system. Shows: active indexing jobs and their progress, file watcher status, index freshness, performance metrics, and any errors. Check this when searches seem slow or outdated, before starting large operations, or to monitor background indexing."#
+    )]
     pub async fn get_status(
         &self,
         Parameters(params): Parameters<get_status::GetStatusParams>,
@@ -111,7 +126,9 @@ impl McpServer {
         get_status::get_status_handler(&self.config, &params).await
     }
     /// MCP API `/find_usages` endpoint handler
-    #[tool(description = r#"Find all usages of a function, class, or variable - Use this to trace how a symbol is used throughout the codebase. Perfect for understanding impact of changes, finding all callers of a function, tracking down where a variable is modified, or analyzing dependencies. Distinguishes between definitions and references."#)]
+    #[tool(
+        description = r#"Find all usages of a function, class, or variable - Use this to trace how a symbol is used throughout the codebase. Perfect for understanding impact of changes, finding all callers of a function, tracking down where a variable is modified, or analyzing dependencies. Distinguishes between definitions and references."#
+    )]
     pub async fn find_usages(
         &self,
         Parameters(params): Parameters<find_usages::FindUsagesParams>,
@@ -146,18 +163,19 @@ impl ServerHandler for McpServer {
                 tools: Some(tools_capability),
             },
             server_info: Implementation::from_build_env(),
-            
+
             instructions: None,
-            
         };
 
-        debug!("[MCP] Returning ServerInfo with enabled tools and resources: {:?}", info);
+        debug!("[MCP] Returning ServerInfo with enabled tools and resources: {info:?}");
         info
     }
 
     /// Implements MCP resource enumeration for all schema resources (one per endpoint)
     fn list_resources(
-        &self, _request: Option<PaginatedRequestParam>, _context: RequestContext<RoleServer>,
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
         use agenterra_rmcp::model::{Annotated, RawResource};
         let resources = vec![
@@ -279,7 +297,10 @@ impl ServerHandler for McpServer {
                 annotations: Default::default(),
             },
         ];
-        std::future::ready(Ok(ListResourcesResult { resources, next_cursor: None }))
+        std::future::ready(Ok(ListResourcesResult {
+            resources,
+            next_cursor: None,
+        }))
     }
 
     /// Implements MCP resource fetching for schema resources by URI
@@ -288,7 +309,7 @@ impl ServerHandler for McpServer {
         request: ReadResourceRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
-        use agenterra_rmcp::model::{ResourceContents, ReadResourceResult};
+        use agenterra_rmcp::model::{ReadResourceResult, ResourceContents};
         let uri = request.uri;
         let prefix = "/schema/";
         let result = if let Some(endpoint) = uri.strip_prefix(prefix) {
@@ -303,13 +324,14 @@ impl ServerHandler for McpServer {
                 "get_stats" => include_str!("../../schemas/get_stats.json"),
                 "get_status" => include_str!("../../schemas/get_status.json"),
                 "find_usages" => include_str!("../../schemas/find_usages.json"),
-                _ => return std::future::ready(Err(McpError::resource_not_found(
-                    format!("Schema not found for endpoint '{}': unknown endpoint", endpoint),
-                    None,
-                ))),
+                _ => {
+                    return std::future::ready(Err(McpError::resource_not_found(
+                        format!("Schema not found for endpoint '{endpoint}': unknown endpoint"),
+                        None,
+                    )));
+                }
             };
-            let resource =
-                ResourceContents::text(schema_json, format!("/schema/{ep_lower}"));
+            let resource = ResourceContents::text(schema_json, format!("/schema/{ep_lower}"));
             Ok(ReadResourceResult {
                 contents: vec![resource],
             })

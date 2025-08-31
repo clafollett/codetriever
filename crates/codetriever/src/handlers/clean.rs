@@ -14,10 +14,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
 /// Auto-generated parameters struct for `/clean` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct CleanParams {
-}
+pub struct CleanParams {}
 
 // Implement Endpoint for generic handler
 impl Endpoint for CleanParams {
@@ -31,14 +30,14 @@ impl Endpoint for CleanParams {
 }
 
 /// Auto-generated properties struct for `/clean` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct CleanProperties {
-#[schemars(description = r#" - Duration string (e.g., \"7d\", \"1h\")"#)]
+    #[schemars(description = r#" - Duration string (e.g., \"7d\", \"1h\")"#)]
     pub older_than: Option<String>,
     #[schemars(description = r#" - "#)]
     pub missing_files: Option<bool>,
-    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct CleanResponse {
     #[schemars(description = r#" - "#)]
@@ -116,17 +115,16 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = CleanParams {
-        };
+        let params = CleanParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 
     #[test]
     fn test_properties_struct_serialization() {
         let props = CleanProperties {
-        older_than: None,
+            older_than: None,
             missing_files: None,
-            };
+        };
         let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

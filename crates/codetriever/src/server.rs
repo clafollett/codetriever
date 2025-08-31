@@ -12,18 +12,18 @@
 // Internal imports (std, crate)
 use crate::config::Config;
 use crate::handlers::McpServer;
-use crate::signal::{SignalEvent, spawn_signal_listener};
+use crate::signal::{SignalEvent, SignalEventArc, spawn_signal_listener};
 use crate::transport::Transport;
 
 // External imports (alphabetized)
-use log::debug;
 use agenterra_rmcp::{
+    ServiceExt,
     transport::{
         sse_server::{SseServer, SseServerConfig},
         stdio,
     },
-    ServiceExt,
 };
+use log::debug;
 use std::{process, sync::Arc, time::Duration};
 
 use tokio::sync::{Mutex, Notify};
@@ -55,7 +55,9 @@ pub struct SseConfig {
 /// - Uses tokio::select! to manage graceful shutdown and hot reload
 /// - Keeps logging guards alive for the duration
 pub async fn start(
-    cfg: Arc<Mutex<Config>>, file_guard: impl Send + Sync + 'static, stderr_guard: impl Send + Sync + 'static,
+    cfg: Arc<Mutex<Config>>,
+    file_guard: impl Send + Sync + 'static,
+    stderr_guard: impl Send + Sync + 'static,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mode, _sse_mode, config) = {
         let cfg_guard = cfg.lock().await;
@@ -107,7 +109,7 @@ async fn run_stdio_server(config: Config) -> Result<(), Box<dyn std::error::Erro
     debug!("[codetriever MCP] run_stdio_server acquired service, about to wait");
 
     let waiting_res = service.waiting().await;
-    debug!("[codetriever MCP] run_stdio_server waiting completed: {:?}", waiting_res);
+    debug!("[codetriever MCP] run_stdio_server waiting completed: {waiting_res:?}");
 
     waiting_res?;
     Ok(())
@@ -124,7 +126,10 @@ async fn run_sse_server(cfg: SseConfig, config: Config) -> Result<(), Box<dyn st
     };
     let (sse_server, router) = SseServer::new(sse_config);
     let _ct = sse_server.with_service(move || McpServer::new(config.clone()));
-    debug!("[codetriever MCP] Starting SSE/Axum server on {}...", cfg.addr);
+    debug!(
+        "[codetriever MCP] Starting SSE/Axum server on {}...",
+        cfg.addr
+    );
     let listener = tokio::net::TcpListener::bind(cfg.addr).await?;
     axum::serve(listener, router).await?;
     Ok(())
@@ -154,7 +159,7 @@ fn select_server_mode(cfg: &Config) -> (ServerMode, bool) {
 }
 
 /// Async signal event loop for hot reload and graceful shutdown.
-async fn signal_loop(notify: Arc<Notify>, event: Arc<Mutex<Option<SignalEvent>>>, cfg: Arc<Mutex<Config>>) {
+async fn signal_loop(notify: Arc<Notify>, event: SignalEventArc, cfg: Arc<Mutex<Config>>) {
     loop {
         notify.notified().await;
         let mut ev = event.lock().await;
@@ -170,7 +175,10 @@ async fn signal_loop(notify: Arc<Notify>, event: Arc<Mutex<Option<SignalEvent>>>
                 }
             }
             Some(SignalEvent::Shutdown) => {
-                info!(target = "signal", "Shutdown signal received – shutting down gracefully");
+                info!(
+                    target = "signal",
+                    "Shutdown signal received – shutting down gracefully"
+                );
                 process::exit(0);
             }
             None => {}

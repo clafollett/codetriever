@@ -14,10 +14,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
 /// Auto-generated parameters struct for `/index` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct IndexParams {
-}
+pub struct IndexParams {}
 
 // Implement Endpoint for generic handler
 impl Endpoint for IndexParams {
@@ -31,10 +30,10 @@ impl Endpoint for IndexParams {
 }
 
 /// Auto-generated properties struct for `/index` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct IndexProperties {
-#[schemars(description = r#" - "#)]
+    #[schemars(description = r#" - "#)]
     pub mode: Option<String>,
     #[schemars(description = r#" - Return immediately (MCP) or wait (CLI)"#)]
     pub async_: Option<bool>,
@@ -42,7 +41,7 @@ pub struct IndexProperties {
     pub paths: Option<Vec<String>>,
     #[schemars(description = r#" - Max wait time for async operations"#)]
     pub timeout_ms: Option<i32>,
-    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct IndexResponse(pub serde_json::Value);
 
@@ -115,19 +114,18 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = IndexParams {
-        };
+        let params = IndexParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 
     #[test]
     fn test_properties_struct_serialization() {
         let props = IndexProperties {
-        mode: None,
+            mode: None,
             async_: None,
             paths: None,
             timeout_ms: None,
-            };
+        };
         let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

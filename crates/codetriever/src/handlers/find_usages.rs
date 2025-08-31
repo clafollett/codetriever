@@ -14,10 +14,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
 /// Auto-generated parameters struct for `/find_usages` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct FindUsagesParams {
-}
+pub struct FindUsagesParams {}
 
 // Implement Endpoint for generic handler
 impl Endpoint for FindUsagesParams {
@@ -31,14 +30,14 @@ impl Endpoint for FindUsagesParams {
 }
 
 /// Auto-generated properties struct for `/find_usages` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct FindUsagesProperties {
-#[schemars(description = r#" - "#)]
+    #[schemars(description = r#" - "#)]
     pub symbol: Option<String>,
     #[schemars(description = r#" - "#)]
     pub type_: Option<String>,
-    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct FindUsagesResponse {
     #[schemars(description = r#" - "#)]
@@ -114,17 +113,16 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = FindUsagesParams {
-        };
+        let params = FindUsagesParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 
     #[test]
     fn test_properties_struct_serialization() {
         let props = FindUsagesProperties {
-        symbol: None,
+            symbol: None,
             type_: None,
-            };
+        };
         let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

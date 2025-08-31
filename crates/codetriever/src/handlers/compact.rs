@@ -14,10 +14,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
 /// Auto-generated parameters struct for `/compact` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct CompactParams {
-}
+pub struct CompactParams {}
 
 // Implement Endpoint for generic handler
 impl Endpoint for CompactParams {
@@ -31,10 +30,9 @@ impl Endpoint for CompactParams {
 }
 
 /// Auto-generated properties struct for `/compact` endpoint.
-/// Spec: 
+/// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct CompactProperties {
-}
+pub struct CompactProperties {}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct CompactResponse {
     #[schemars(description = r#" - "#)]
@@ -114,15 +112,13 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = CompactParams {
-        };
+        let params = CompactParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 
     #[test]
     fn test_properties_struct_serialization() {
-        let props = CompactProperties {
-        };
+        let props = CompactProperties {};
         let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

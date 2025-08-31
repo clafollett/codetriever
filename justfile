@@ -1,9 +1,9 @@
-# MAOS Development Task Runner
+# Codetriever Development Task Runner
 # Install just: https://github.com/casey/just#installation
 # Usage: just <recipe>
 
-# Don't auto-load stack.env since it has shell script logic
-set dotenv-load := false
+set dotenv-load := true
+set export := true
 
 # Default recipe (runs when you just type 'just')
 default:
@@ -23,19 +23,23 @@ check-env:
 # Show current test configuration  
 test-config:
     @echo "📋 Current Test Configuration:"
-    @echo "   Profile: ${MAOS_TEST_PROFILE:-fast}"
-    @echo "   Proptest cases: ${MAOS_TEST_SECURITY_PROPTEST_CASES:-10}"
-    @echo "   E2E timeout: ${MAOS_TEST_E2E_TIMEOUT_MS:-5000}ms"
-    @echo "   Benchmark iterations: ${MAOS_TEST_BENCHMARK_ITERATIONS:-10}"
+    @echo "   Profile: ${TEST_PROFILE:-fast}"
+    @echo "   Test timeout: ${TEST_TIMEOUT_MS:-5000}ms"
+    @echo "   Test iterations: ${TEST_ITERATIONS:-10}"
+    @echo ""
+    @echo "   Embedding backend: ${EMBEDDING_BACKEND:-native}"
+    @echo "   Embedding model: ${EMBEDDING_MODEL:-jina-embeddings-v2-base-code}"
+    @echo "   Qdrant URL: ${QDRANT_URL:-http://localhost:6334}"
+    @echo "   Use Metal: ${USE_METAL:-true}"
     @echo ""
     @echo "💡 To use different profiles:"
     @echo "   source stack.env                          # fast mode (default)"
-    @echo "   MAOS_TEST_PROFILE=thorough source stack.env && just test"
-    @echo "   MAOS_TEST_PROFILE=ci source stack.env && just test-security"
+    @echo "   TEST_PROFILE=thorough source stack.env && just test"
+    @echo "   TEST_PROFILE=ci source stack.env && just test"
 
 # Development setup and validation
 dev-setup:
-    @echo "🚀 Setting up MAOS development environment..."
+    @echo "🚀 Setting up Codetriever development environment..."
     @just check-env
     @just validate-stack
     @just install-deps
@@ -141,7 +145,7 @@ test:
     source stack.env
     echo "🧪 Running tests (profile: ${MAOS_TEST_PROFILE})..."
     echo "   Proptest cases: ${MAOS_TEST_SECURITY_PROPTEST_CASES}"
-    cargo test --package maos
+    cargo test --workspace
 
 # Run thorough tests (includes ignored tests)
 test-thorough:
@@ -150,7 +154,7 @@ test-thorough:
     source stack.env
     echo "🧪 Running thorough tests..."
     echo "   Proptest cases: ${MAOS_TEST_SECURITY_PROPTEST_CASES}"
-    cargo test --package maos -- --include-ignored
+    cargo test --workspace -- --include-ignored
 
 # Run only security fuzzing tests with CI-level thoroughness
 test-security:
@@ -159,17 +163,17 @@ test-security:
     source stack.env
     echo "🔒 Running security fuzzing tests (CI mode)..."
     echo "   Proptest cases: ${MAOS_TEST_SECURITY_PROPTEST_CASES}"
-    cargo test --package maos --test security_unit
+    cargo test --workspace --test security_unit
 
 # Run unit tests only (fastest)
 test-unit:
     @echo "⚡ Running unit tests only..."
-    cargo test --package maos --lib
+    cargo test --workspace --lib
 
 # Run integration tests only
 test-integration:
     @echo "🔧 Running integration tests..."
-    cargo test --package maos --tests
+    cargo test --workspace --tests
 
 # Run tests with coverage (requires cargo-tarpaulin)
 test-coverage:
@@ -361,3 +365,109 @@ fix: format clippy-fix
 
 # Quick check without tests
 quick: format-check lint check
+
+# ========================
+# Codetriever Commands
+# ========================
+
+# Run native development environment (Mac with Metal)
+dev:
+    #!/usr/bin/env bash
+    set -e
+    echo "🚀 Starting Codetriever native development..."
+    
+    # Check if Qdrant is installed
+    if ! command -v qdrant &> /dev/null; then
+        echo "📦 Installing Qdrant..."
+        brew install qdrant
+    fi
+    
+    # Start Qdrant in background
+    echo "Starting Qdrant..."
+    pkill qdrant || true
+    qdrant > /tmp/qdrant.log 2>&1 &
+    echo "Qdrant started (logs: /tmp/qdrant.log)"
+    
+    # Wait for Qdrant
+    sleep 2
+    
+    # Run MCP server
+    echo "Starting MCP server..."
+    cargo run --bin codetriever -- serve --mcp
+
+# Run Docker environment
+dev-docker:
+    docker-compose up --build
+
+# Stop all Codetriever services
+stop:
+    @pkill qdrant || true
+    @pkill codetriever || true
+    @docker-compose down || true
+    @echo "✅ All services stopped"
+
+# Create new API crate
+create-api:
+    cargo new --lib crates/codetriever-api
+    @echo "✅ Created codetriever-api crate"
+
+# Run tests with TDD output
+tdd:
+    cargo test --all -- --nocapture
+
+# Watch and test (Red/Green/Refactor cycle)
+tdd-watch:
+    cargo watch -x "test --all -- --nocapture"
+
+# Full quality check (format, lint, test)
+quality: fmt lint test
+    @echo "✅ Quality checks passed!"
+
+# Run Codetriever-specific tests
+test-codetriever:
+    cargo test --workspace --all-features
+
+# Build Codetriever crates
+build-codetriever:
+    cargo build --workspace --all-targets
+
+# Clean and rebuild
+rebuild: clean build
+    @echo "✅ Clean rebuild complete"
+
+# Install git hooks for quality checks
+install-hooks:
+    #!/usr/bin/env bash
+    echo "🪝 Installing Codetriever git hooks..."
+    mkdir -p .git/hooks
+    cat > .git/hooks/pre-commit << 'EOF'
+    #!/bin/sh
+    echo "🪝 Running pre-commit checks..."
+    just quality || {
+        echo "❌ Pre-commit checks failed"
+        echo "💡 Fix issues and try again"
+        exit 1
+    }
+    echo "✅ Pre-commit checks passed!"
+    EOF
+    chmod +x .git/hooks/pre-commit
+    echo "✅ Git hooks installed!"
+
+# Remove git hooks
+uninstall-hooks:
+    rm -f .git/hooks/pre-commit
+    @echo "✅ Git hooks removed"
+
+# Benchmark embeddings performance
+bench-embeddings:
+    cargo bench -p codetriever-api --bench embeddings
+
+# Show project stats
+stats:
+    @echo "📊 Codetriever Statistics:"
+    @echo "Lines of Rust code:"
+    @find crates -name "*.rs" -type f | xargs wc -l | tail -1
+    @echo "\nNumber of crates:"
+    @ls -1 crates/ 2>/dev/null | wc -l || echo "0"
+    @echo "\nNumber of tests:"
+    @grep -r "#\[test\]" --include="*.rs" crates | wc -l || echo "0"

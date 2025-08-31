@@ -6,31 +6,74 @@
 
 1. **ALWAYS follow [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md)** - All standards and processes defined there
 2. **Trunk-based development** - Commit directly to main
-3. **Vibe-based coding** - Start with what feels right, iterate
-4. **Test business logic only** - Not OS behavior or timing
-5. **Ship working code daily** - Progress > perfection
+3. **Red/Green/Refactor TDD** - Write failing test, make it pass, then refactor
+4. **Idiomatic Rust always** - Use `clippy`, follow Rust patterns, no shortcuts
+5. **Vibe-based coding** - Start with what feels right, iterate
+6. **Test business logic only** - Not OS behavior or timing
+7. **Ship working code daily** - Progress > perfection
 
 ## Technical Requirements
 
 - **Rust Edition**: Use Rust 2024 edition for all crates
 - **Workspace**: Multi-crate workspace structure
 - **Dependencies**: Define shared deps at workspace level
+- **Testing**: Red/Green/Refactor TDD cycle for all features
+- **Code Quality**: Must pass `cargo clippy` and `cargo fmt`
+- **Patterns**: Use Result<T, E>, Option<T>, iterators, and proper error handling
 
 ## Development Flow
 
 ```bash
 # Morning
 git pull
-cargo test
+just test
 
-# Code
+# Code (TDD cycle)
+just tdd-watch        # Watch mode for Red/Green/Refactor
 vim src/whatever.rs
-cargo run
+just quality          # Format, lint, test
+
+# Fix issues
+just fmt              # Format code
+just lint             # Run clippy
+just clippy-fix       # Auto-fix clippy issues
+just fix              # Fix all auto-fixable issues
 
 # Ship it
 git add -A
 git commit -m "feat: add thing that works"
 git push
+```
+
+## Essential Just Commands
+
+```bash
+# Development
+just dev              # Start native dev environment
+just dev-docker       # Start Docker environment
+just stop             # Stop all services
+
+# Testing (TDD)
+just tdd              # Run tests with output
+just tdd-watch        # Watch mode for TDD cycle
+just test             # Run all tests
+just test-codetriever # Run workspace tests
+
+# Code Quality
+just quality          # Run fmt + lint + test (pre-commit)
+just fmt              # Format all code
+just lint             # Run clippy with warnings as errors
+just clippy-fix       # Auto-fix clippy issues
+just fix              # Apply all auto-fixes
+
+# Quick Checks
+just quick            # Format check + lint + compile check
+just check            # Check compilation without building
+
+# Setup
+just dev-setup        # Complete dev environment setup
+just install-hooks    # Install git pre-commit hooks
+just validate-stack   # Validate environment configuration
 ```
 
 ## What to Test
