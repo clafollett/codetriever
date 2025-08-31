@@ -494,3 +494,43 @@ qdrant-logs:
 # Check Qdrant health
 qdrant-health:
     @curl -s http://localhost:6333 | jq '.' || echo "❌ Qdrant not responding"
+
+# Initialize Qdrant with codetriever collection
+qdrant-init:
+    @echo "🚀 Initializing Qdrant collection..."
+    @# Check if collection exists
+    @if curl -s http://localhost:6333/collections/codetriever | grep -q '"status":"ok"'; then \
+        echo "⚠️  Collection 'codetriever' already exists - run 'just qdrant-reset' to recreate"; \
+        exit 0; \
+    fi
+    @# Create collection with proper configuration (768 dims for Jina v2 base)
+    @echo "📦 Creating collection 'codetriever'..."
+    @curl -X PUT http://localhost:6333/collections/codetriever \
+        -H "Content-Type: application/json" \
+        -d '{ \
+            "vectors": { \
+                "size": 768, \
+                "distance": "Cosine" \
+            }, \
+            "optimizers_config": { \
+                "default_segment_number": 2 \
+            }, \
+            "replication_factor": 1, \
+            "write_consistency_factor": 1 \
+        }' | jq
+    @# Create payload indices for faster filtering
+    @echo "🔍 Creating payload indices..."
+    @curl -X PUT http://localhost:6333/collections/codetriever/index \
+        -H "Content-Type: application/json" \
+        -d '{"field_name": "file_path", "field_schema": "keyword"}' | jq
+    @curl -X PUT http://localhost:6333/collections/codetriever/index \
+        -H "Content-Type: application/json" \
+        -d '{"field_name": "language", "field_schema": "keyword"}' | jq
+    @echo "✅ Qdrant initialization complete!"
+
+# Reset Qdrant collection (delete and recreate)
+qdrant-reset:
+    @echo "🗑️  Resetting Qdrant collection..."
+    @curl -X DELETE http://localhost:6333/collections/codetriever 2>/dev/null || true
+    @sleep 1
+    @just qdrant-init
