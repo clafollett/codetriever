@@ -41,7 +41,9 @@ use crate::Result;
 /// use codetriever_api::parser::CodeParser;
 ///
 /// let parser = CodeParser::new();
+/// let source_code = "fn main() { println!(\"Hello!\"); }";
 /// let elements = parser.parse(source_code, "rust")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct CodeParser {
     // TODO: Add tree-sitter parsers for different languages
@@ -116,6 +118,7 @@ impl CodeParser {
     /// ```rust
     /// use codetriever_api::parser::CodeParser;
     ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let parser = CodeParser::new();
     /// let rust_code = r#"
     ///     fn hello_world() {
@@ -125,6 +128,8 @@ impl CodeParser {
     ///
     /// let elements = parser.parse(rust_code, "rust")?;
     /// // elements will contain extracted function definitions, etc.
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn parse(&self, _code: &str, _language: &str) -> Result<Vec<String>> {
         // TODO: Implement tree-sitter parsing logic

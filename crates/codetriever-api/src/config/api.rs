@@ -137,10 +137,15 @@ impl Default for Config {
             embedding_model: "jinaai/jina-embeddings-v2-base-code".to_string(),
             // Enable Metal acceleration on macOS, CPU elsewhere
             use_metal: cfg!(target_os = "macos"),
-            // Use system cache directory, fallback to local .cache if unavailable
-            cache_dir: dirs::cache_dir()
-                .unwrap_or_else(|| PathBuf::from(".cache"))
-                .join("codetriever"),
+            // Use appropriate cache directory for each platform
+            cache_dir: if cfg!(target_os = "macos") {
+                PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+                    .join("Library/Caches/codetriever")
+            } else {
+                // Linux and others use ~/.cache or /tmp/.cache
+                PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
+                    .join(".cache/codetriever")
+            },
             // 512 tokens provides good context while staying under most model limits
             max_chunk_size: 512,
             // ~10% overlap helps preserve context across chunk boundaries

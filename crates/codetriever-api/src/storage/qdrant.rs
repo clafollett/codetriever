@@ -15,11 +15,16 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use codetriever_api::storage::QdrantStorage;
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let storage = QdrantStorage::new();
+//! let query_embedding = vec![0.1, 0.2, 0.3]; // Example embedding
 //! let results = storage.search(query_embedding, 10).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::Result;
@@ -114,12 +119,16 @@ impl QdrantStorage {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use codetriever_api::storage::QdrantStorage;
     ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let storage = QdrantStorage::new();
     /// let query_vector = vec![0.1, 0.2, 0.3]; // Real embeddings are 768+ dims
     /// let results = storage.search(query_vector, 5).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Implementation Notes

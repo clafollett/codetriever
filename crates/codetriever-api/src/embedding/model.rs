@@ -225,6 +225,9 @@ impl EmbeddingModel {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = EmbeddingModel::new("all-MiniLM-L6-v2".to_string());
     ///
+    /// let query_text = "find authentication logic";
+    /// let query_embedding = model.embed(vec![query_text.to_string()]).await?;
+    ///
     /// // Process multiple code snippets at once for better throughput
     /// let code_snippets = vec![
     ///     "impl Display for User { fn fmt(&self, f: &mut Formatter) -> fmt::Result { ... } }".to_string(),
@@ -236,6 +239,8 @@ impl EmbeddingModel {
     /// let embeddings = model.embed(code_snippets).await?;
     /// assert_eq!(embeddings.len(), 4);
     ///
+    /// // Mock cosine similarity function for example
+    /// fn cosine_similarity(_a: &[f32], _b: &[f32]) -> f32 { 0.85 }
     /// // Now you can compute similarity between any pair
     /// let similarity = cosine_similarity(&embeddings[0], &embeddings[1]);
     /// # Ok(())

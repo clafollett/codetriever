@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: codetriever-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage:z
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: codetriever-api
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=codetriever
+      - EMBEDDING_MODEL=jinaai/jina-embeddings-v2-base-code
+      - USE_METAL=false  # Metal not available in Docker
+    volumes:
+      - ./cache:/app/cache
+      - ./repos:/app/repos:ro  # Read-only mount for code repositories
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  default:
+    name: codetriever-network
