@@ -242,9 +242,9 @@ impl EmbeddingModel {
             .and_then(|x| x.sqrt())
             .map_err(|e| crate::Error::Embedding(format!("Failed to normalize: {e}")))?;
 
-        let normalized = mean_pooled.broadcast_div(&norms).map_err(|e| {
-            crate::Error::Embedding(format!("Failed to normalize embeddings: {e}"))
-        })?;
+        let normalized = mean_pooled
+            .broadcast_div(&norms)
+            .map_err(|e| crate::Error::Embedding(format!("Failed to normalize embeddings: {e}")))?;
 
         // Convert to Vec<Vec<f32>> - convert to F32 for output regardless of internal dtype
         let embeddings_vec = normalized
