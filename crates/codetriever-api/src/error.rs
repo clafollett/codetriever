@@ -124,6 +124,19 @@ pub enum Error {
     /// - Search query returned no results
     #[error("Not found: {0}")]
     NotFound(String),
+
+    /// Configuration error.
+    ///
+    /// This variant indicates missing or invalid configuration required for
+    /// the application to function properly.
+    ///
+    /// Common scenarios:
+    /// - Missing environment variables (e.g., HF_TOKEN for Hugging Face)
+    /// - Invalid API keys or credentials
+    /// - Misconfigured service endpoints
+    /// - Missing required configuration files
+    #[error("Configuration error: {0}")]
+    Configuration(String),
 }
 
 /// A specialized `Result` type for Codetriever API operations.

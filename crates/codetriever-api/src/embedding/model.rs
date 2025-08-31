@@ -16,291 +16,344 @@
 //! - **Local-first**: All embedding computation happens on-device using Candle
 //! - **Privacy-focused**: No code ever leaves your machine
 //! - **Performance-oriented**: Sub-10ms embedding for real-time search
-//! - **Language-agnostic**: Works with any programming language via tree-sitter
-//!
-//! # Usage
-//!
-//! ```rust,no_run
-//! use codetriever_api::embedding::EmbeddingModel;
-//!
-//! # #[tokio::main]
-//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Initialize with a specific model
-//! let model = EmbeddingModel::new("all-MiniLM-L6-v2".to_string());
-//!
-//! // Generate embeddings for code snippets
-//! let code_snippets = vec![
-//!     "fn main() { println!(\"Hello, world!\"); }".to_string(),
-//!     "async fn fetch_data() -> Result<String> { ... }".to_string(),
-//! ];
-//!
-//! let embeddings = model.embed(code_snippets).await?;
-//! println!("Generated {} embeddings", embeddings.len());
-//! # Ok(())
-//! # }
-//! ```
-
+//! - **Language-agnostic**: Works with any programming language via transformer models
 use crate::Result;
+use crate::embedding::jina_bert_v2::{BertModel as JinaBertModel, Config as JinaBertConfig};
+use candle_core::{D, DType, Device, Tensor};
+use candle_nn::VarBuilder;
+use candle_transformers::models::bert::{BertModel, Config as BertConfig};
+use hf_hub::{Repo, RepoType, api::tokio::Api};
+use tokenizers::tokenizer::Tokenizer;
+
+/// Trait for embedding models to abstract over different BERT variants
+trait EmbedderModel: Send + Sync {
+    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor>;
+}
+
+impl EmbedderModel for BertModel {
+    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
+        let token_type_ids = token_ids.zeros_like().map_err(|e| {
+            crate::Error::Embedding(format!("Failed to create token type ids: {}", e))
+        })?;
+        // Pass attention mask through to BERT
+        self.forward(token_ids, &token_type_ids, attention_mask)
+            .map_err(|e| crate::Error::Embedding(format!("BERT forward pass failed: {}", e)))
+    }
+}
+
+impl EmbedderModel for JinaBertModel {
+    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
+        // Use our custom forward that handles attention mask
+        self.forward(token_ids, attention_mask)
+            .map_err(|e| crate::Error::Embedding(format!("JinaBERT forward pass failed: {}", e)))
+    }
+}
 
 /// Core embedding model for semantic code understanding.
 ///
+// Type alias for cleaner code
+type BoxedEmbedderModel = Box<dyn EmbedderModel>;
+
 /// `EmbeddingModel` provides high-performance, local-first vector embeddings
 /// for code snippets, enabling semantic search across large codebases without
 /// cloud dependencies. Built on Candle for efficient on-device inference.
-///
-/// # Design Goals
-///
-/// - **Fast**: Sub-10ms embedding generation for real-time search
-/// - **Private**: All computation happens locally, no data leaves your machine  
-/// - **Accurate**: Optimized for code understanding vs general text
-/// - **Efficient**: Memory-conscious for large codebase indexing
-///
-/// # Model Selection
-///
-/// The model ID determines which pre-trained embedding model to use:
-/// - `"all-MiniLM-L6-v2"`: Fast, general-purpose (recommended)
-/// - `"codebert-base"`: Code-specific understanding
-/// - Custom models via local model files
-///
-/// # Performance Characteristics
-///
-/// - **Embedding dimension**: 384 (all-MiniLM-L6-v2)
-/// - **Throughput**: ~1000 tokens/sec on M1 Mac
-/// - **Memory usage**: ~500MB for loaded model
-/// - **Startup time**: ~2s for model initialization
-///
-/// # Examples
-///
-/// ## Basic Usage
-///
-/// ```rust,no_run
-/// use codetriever_api::embedding::EmbeddingModel;
-///
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let model = EmbeddingModel::new("all-MiniLM-L6-v2".to_string());
-///
-/// let code = vec!["fn fibonacci(n: u32) -> u32 { ... }".to_string()];
-/// let embeddings = model.embed(code).await?;
-///
-/// assert_eq!(embeddings.len(), 1);
-/// assert_eq!(embeddings[0].len(), 384); // Embedding dimension
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Batch Processing
-///
-/// ```rust,no_run
-/// # use codetriever_api::embedding::EmbeddingModel;
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let model = EmbeddingModel::new("all-MiniLM-L6-v2".to_string());
-///
-/// // Process multiple functions at once for better throughput
-/// let functions = vec![
-///     "pub fn parse_json(input: &str) -> Result<Value> { ... }".to_string(),
-///     "async fn fetch_url(url: &str) -> Result<String> { ... }".to_string(),
-///     "fn validate_email(email: &str) -> bool { ... }".to_string(),
-/// ];
-///
-/// let embeddings = model.embed(functions).await?;
-/// // Each function now has a 384-dimensional semantic vector
-/// # Ok(())
-/// # }
-/// ```
 pub struct EmbeddingModel {
-    /// The identifier for the embedding model to use.
-    ///
-    /// This determines which pre-trained model will be loaded for embedding generation.
-    /// Common values include:
-    /// - `"all-MiniLM-L6-v2"`: Fast, general-purpose sentence embeddings
-    /// - `"codebert-base"`: Code-specific embeddings optimized for programming languages
-    /// - Custom model paths for local model files
-    ///
-    /// The model_id is used during initialization to load the appropriate
-    /// model weights and tokenizer configuration.
     model_id: String,
+    device: Device,
+    model: Option<BoxedEmbedderModel>,
+    tokenizer: Option<Tokenizer>,
 }
 
 impl EmbeddingModel {
     /// Creates a new embedding model instance with the specified model identifier.
     ///
-    /// This constructor initializes the model configuration but does not load
-    /// the actual model weights until the first embedding operation. This lazy
-    /// loading approach reduces startup time and memory usage.
-    ///
     /// # Arguments
     ///
-    /// * `model_id` - The identifier for the embedding model to use. See [`EmbeddingModel`]
-    ///   documentation for supported model types.
+    /// * `model_id` - The identifier for the embedding model to use (e.g., "jinaai/jina-embeddings-v2-base-code")
     ///
     /// # Returns
     ///
     /// A new `EmbeddingModel` instance ready for embedding operations.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use codetriever_api::embedding::EmbeddingModel;
-    ///
-    /// // Create with the recommended general-purpose model
-    /// let model = EmbeddingModel::new("all-MiniLM-L6-v2".to_string());
-    ///
-    /// // Or use a code-specific model for better programming language understanding
-    /// let code_model = EmbeddingModel::new("codebert-base".to_string());
-    /// ```
-    ///
-    /// # Performance Note
-    ///
-    /// Model loading happens on first use, so expect a 1-3 second delay on the
-    /// initial embedding operation while weights are loaded into memory.
     pub fn new(model_id: String) -> Self {
-        Self { model_id }
+        let device = if candle_core::utils::cuda_is_available() {
+            Device::new_cuda(0).unwrap_or(Device::Cpu)
+        } else if candle_core::utils::metal_is_available() {
+            Device::new_metal(0).unwrap_or(Device::Cpu)
+        } else {
+            Device::Cpu
+        };
+
+        Self {
+            model_id,
+            device,
+            model: None,
+            tokenizer: None,
+        }
     }
 
-    /// Returns the model identifier being used for embeddings.
-    pub fn model_id(&self) -> &str {
-        &self.model_id
-    }
-
-    /// Generates vector embeddings for a batch of text inputs.
+    /// Generate embeddings for a batch of text inputs.
     ///
-    /// This is the core method for converting code snippets, function signatures,
-    /// comments, or any text into high-dimensional vectors that capture semantic
-    /// meaning. The resulting vectors can be used for similarity search, clustering,
-    /// and other semantic operations.
+    /// This method converts text inputs into dense vector representations that capture
+    /// semantic meaning, enabling similarity-based search and retrieval.
     ///
     /// # Arguments
     ///
-    /// * `texts` - A vector of strings to embed. Each string is processed independently
-    ///   and will produce one corresponding embedding vector. Code snippets, function
-    ///   definitions, documentation, and natural language queries all work well.
+    /// * `texts` - A vector of strings to generate embeddings for
     ///
     /// # Returns
     ///
-    /// A `Result` containing a vector of embedding vectors on success, or an error
-    /// if the embedding process fails. Each inner `Vec<f32>` represents the embedding
-    /// for the corresponding input text, with dimensionality determined by the model
-    /// (typically 384 for all-MiniLM-L6-v2).
-    ///
-    /// # Performance
-    ///
-    /// - **Batch processing**: Multiple texts are processed together for better GPU/CPU utilization
-    /// - **Memory efficient**: Streaming processing prevents memory spikes on large batches
-    /// - **Async friendly**: Non-blocking operation suitable for concurrent workloads
-    ///
-    /// # Examples
-    ///
-    /// ## Single Code Function
-    ///
-    /// ```rust,no_run
-    /// # use codetriever_api::embedding::EmbeddingModel;
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let model = EmbeddingModel::new("all-MiniLM-L6-v2".to_string());
-    ///
-    /// let rust_function = vec![
-    ///     "fn calculate_fibonacci(n: u32) -> u64 {
-    ///          match n {
-    ///              0 => 0,
-    ///              1 => 1,
-    ///              _ => calculate_fibonacci(n - 1) + calculate_fibonacci(n - 2),
-    ///          }
-    ///      }".to_string()
-    /// ];
-    ///
-    /// let embeddings = model.embed(rust_function).await?;
-    /// assert_eq!(embeddings.len(), 1);
-    /// println!("Embedding dimension: {}", embeddings[0].len());
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// ## Batch Processing for Performance
-    ///
-    /// ```rust,no_run
-    /// # use codetriever_api::embedding::EmbeddingModel;
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let model = EmbeddingModel::new("all-MiniLM-L6-v2".to_string());
-    ///
-    /// let query_text = "find authentication logic";
-    /// let query_embedding = model.embed(vec![query_text.to_string()]).await?;
-    ///
-    /// // Process multiple code snippets at once for better throughput
-    /// let code_snippets = vec![
-    ///     "impl Display for User { fn fmt(&self, f: &mut Formatter) -> fmt::Result { ... } }".to_string(),
-    ///     "#[derive(Debug, Clone, Serialize)] struct ApiResponse<T> { data: T, status: u16 }".to_string(),
-    ///     "async fn handle_request(req: Request) -> Result<Response, Error> { ... }".to_string(),
-    ///     "fn validate_input(input: &str) -> bool { !input.is_empty() && input.len() < 1000 }".to_string(),
-    /// ];
-    ///
-    /// let embeddings = model.embed(code_snippets).await?;
-    /// assert_eq!(embeddings.len(), 4);
-    ///
-    /// // Mock cosine similarity function for example
-    /// fn cosine_similarity(_a: &[f32], _b: &[f32]) -> f32 { 0.85 }
-    /// // Now you can compute similarity between any pair
-    /// let similarity = cosine_similarity(&embeddings[0], &embeddings[1]);
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// ## Mixed Content Types
-    ///
-    /// ```rust,no_run
-    /// # use codetriever_api::embedding::EmbeddingModel;
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let model = EmbeddingModel::new("all-MiniLM-L6-v2".to_string());
-    ///
-    /// // Mix code, comments, and natural language queries
-    /// let mixed_inputs = vec![
-    ///     "// This function handles user authentication and session management".to_string(),
-    ///     "pub async fn authenticate_user(credentials: &Credentials) -> Result<Session>".to_string(),
-    ///     "find authentication logic in the codebase".to_string(), // Natural language query
-    ///     "login validation error handling".to_string(),
-    /// ];
-    ///
-    /// let embeddings = model.embed(mixed_inputs).await?;
-    /// // All inputs now have comparable vector representations
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// # Error Handling
-    ///
-    /// The method returns an error if:
-    /// - Model loading fails (missing model files, insufficient memory)
-    /// - Input text exceeds model limits (typically 512 tokens)
-    /// - GPU/acceleration libraries encounter issues
-    /// - System resources are exhausted
-    ///
-    /// # Implementation Status
-    ///
-    /// **Current Status**: Placeholder implementation (returns empty vectors)
-    ///
-    /// **Planned Implementation**:
-    /// - Candle-based local inference for privacy
-    /// - Support for ONNX models and Hugging Face transformers
-    /// - Hardware acceleration (Metal/CUDA) when available
-    /// - Configurable batch sizes and memory limits
-    pub async fn embed(&self, _texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        // TODO: Implement with Candle for local-first embedding generation
-        //
-        // Implementation plan:
-        // 1. Load model weights from cache or download on first use
-        // 2. Initialize tokenizer for the specified model
-        // 3. Tokenize and batch input texts efficiently
-        // 4. Run forward pass through transformer model
-        // 5. Extract embeddings (usually from [CLS] token or pooled output)
-        // 6. Normalize embeddings for cosine similarity compatibility
-        //
-        // Performance targets:
-        // - < 10ms per embedding on M1 Mac
-        // - < 500MB memory usage for loaded model
-        // - Batch processing for 100+ texts simultaneously
-        Ok(vec![])
+    /// A vector of embeddings, where each embedding is a vector of f32 values.
+    /// The dimensionality depends on the model (typically 768 for Jina models).
+    pub async fn embed(&mut self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        // Check for Hugging Face token for model downloading
+        if std::env::var("HF_TOKEN").is_err() && std::env::var("HUGGING_FACE_HUB_TOKEN").is_err() {
+            return Err(crate::Error::Configuration(
+                "HF_TOKEN or HUGGING_FACE_HUB_TOKEN environment variable required for model download".to_string(),
+            ));
+        }
+
+        // Ensure model is loaded
+        self.ensure_model_loaded().await?;
+
+        // Get the model and tokenizer
+        let model = self
+            .model
+            .as_ref()
+            .ok_or_else(|| crate::Error::Embedding("Model not loaded".to_string()))?;
+
+        let tokenizer = self
+            .tokenizer
+            .as_mut()
+            .ok_or_else(|| crate::Error::Embedding("Tokenizer not loaded".to_string()))?;
+
+        // Use F32 for all models for numerical stability
+        let dtype = DType::F32;
+
+        // Configure tokenizer
+        use tokenizers::{PaddingParams, TruncationParams};
+        tokenizer.with_padding(Some(PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            ..Default::default()
+        }));
+        tokenizer
+            .with_truncation(Some(TruncationParams {
+                max_length: 512, // More reasonable for code snippets
+                ..Default::default()
+            }))
+            .map_err(|e| crate::Error::Embedding(format!("Failed to set truncation: {}", e)))?;
+
+        // Encode texts
+        let encodings = tokenizer
+            .encode_batch(texts, true)
+            .map_err(|e| crate::Error::Embedding(format!("Tokenization failed: {}", e)))?;
+
+        // Convert to tensors
+        let batch_size = encodings.len();
+        let max_len = encodings.iter().map(|e| e.len()).max().unwrap_or(0);
+
+        let mut input_ids_vec = Vec::new();
+
+        for encoding in &encodings {
+            let ids = encoding.get_ids();
+
+            // Pad to max length
+            let mut padded_ids = ids.to_vec();
+            while padded_ids.len() < max_len {
+                padded_ids.push(0);
+            }
+
+            for id in padded_ids {
+                input_ids_vec.push(id as i64);
+            }
+        }
+
+        // Create tensors - input_ids stay as i64 as expected by embedding layer
+        let input_ids =
+            Tensor::from_vec(input_ids_vec.clone(), &[batch_size, max_len], &self.device).map_err(
+                |e| crate::Error::Embedding(format!("Failed to create input tensor: {}", e)),
+            )?;
+
+        // Create attention mask based on actual attention mask from tokenizer
+        // The tokenizer returns proper attention masks that handle CLS/SEP tokens correctly
+        // Use f16 to match model dtype for Jina models
+        let attention_mask_vec: Vec<f32> = encodings
+            .iter()
+            .flat_map(|encoding| {
+                let attention_mask = encoding.get_attention_mask();
+                let mut mask = attention_mask.to_vec();
+                // Pad to max length
+                while mask.len() < max_len {
+                    mask.push(0);
+                }
+                mask.iter().map(|&m| m as f32).collect::<Vec<_>>()
+            })
+            .collect();
+        // Create the attention mask tensor with the correct dtype
+        let attention_mask =
+            Tensor::from_vec(attention_mask_vec, &[batch_size, max_len], &self.device)
+                .and_then(|t| t.to_dtype(dtype))
+                .map_err(|e| {
+                    crate::Error::Embedding(format!("Failed to create attention mask: {}", e))
+                })?;
+
+        // Forward pass with attention mask
+        let output = model.forward(&input_ids, Some(&attention_mask))?;
+
+        // Jina models use MEAN POOLING with attention mask!
+        // Expand attention mask to match output dimensions [batch, seq_len, hidden_dim]
+        // Ensure mask is in the same dtype as output
+        let mask_expanded = attention_mask
+            .unsqueeze(2)
+            .and_then(|m| m.broadcast_as(output.shape()))
+            .and_then(|m| m.to_dtype(output.dtype()))
+            .map_err(|e| crate::Error::Embedding(format!("Failed to expand mask: {}", e)))?;
+
+        // Apply mask and sum
+        let masked_output = output
+            .broadcast_mul(&mask_expanded)
+            .map_err(|e| crate::Error::Embedding(format!("Failed to apply mask: {}", e)))?;
+        let sum_embeddings = masked_output
+            .sum(1) // Sum over sequence dimension
+            .map_err(|e| crate::Error::Embedding(format!("Failed to sum embeddings: {}", e)))?;
+
+        // Sum mask for each sequence (to get count of non-padding tokens)
+        // The Python version sums across dim 1 to get [batch, hidden_dim] -> [batch, 1]
+        // We need to sum the expanded mask across the sequence dimension only
+        let mask_sum = mask_expanded
+            .sum(1) // This gives us [batch, hidden_dim] where each value is the count of non-padding tokens
+            .map_err(|e| crate::Error::Embedding(format!("Failed to sum mask: {}", e)))?;
+
+        // Avoid division by zero - clamp to minimum of 1e-9
+        // mask_sum has shape [batch, hidden_dim] so we need to broadcast the minimum
+        let min_val = 1e-9f32;
+        let mask_sum_clamped = mask_sum
+            .clamp(min_val, f32::INFINITY)
+            .map_err(|e| crate::Error::Embedding(format!("Failed to clamp mask sum: {}", e)))?;
+
+        // Mean pooling: divide sum by number of non-padding tokens
+        let mean_pooled = sum_embeddings
+            .broadcast_div(&mask_sum_clamped)
+            .map_err(|e| crate::Error::Embedding(format!("Failed to divide for mean: {}", e)))?;
+
+        // Normalize embeddings for cosine similarity
+        let norms = mean_pooled
+            .sqr()
+            .and_then(|x| x.sum_keepdim(D::Minus1))
+            .and_then(|x| x.sqrt())
+            .map_err(|e| crate::Error::Embedding(format!("Failed to normalize: {}", e)))?;
+
+        let normalized = mean_pooled.broadcast_div(&norms).map_err(|e| {
+            crate::Error::Embedding(format!("Failed to normalize embeddings: {}", e))
+        })?;
+
+        // Convert to Vec<Vec<f32>> - convert to F32 for output regardless of internal dtype
+        let embeddings_vec = normalized
+            .to_dtype(DType::F32)
+            .and_then(|t| t.to_vec2::<f32>())
+            .map_err(|e| crate::Error::Embedding(format!("Failed to convert to vec: {}", e)))?;
+
+        Ok(embeddings_vec)
+    }
+
+    /// Ensures the model is loaded and ready for inference.
+    async fn ensure_model_loaded(&mut self) -> Result<()> {
+        if self.model.is_some() {
+            return Ok(());
+        }
+
+        // Initialize API
+        let api = Api::new()
+            .map_err(|e| crate::Error::Embedding(format!("Failed to create HF API: {}", e)))?;
+        let repo = api.repo(Repo::new(self.model_id.clone(), RepoType::Model));
+
+        // Download config
+        let config_path = repo
+            .get("config.json")
+            .await
+            .map_err(|e| crate::Error::Embedding(format!("Failed to download config: {}", e)))?;
+
+        // Parse config to determine model type
+        let config_str = std::fs::read_to_string(&config_path)
+            .map_err(|e| crate::Error::Embedding(format!("Failed to read config: {}", e)))?;
+
+        // Check if it's a Jina model by looking for specific markers
+        let is_jina = config_str.contains("\"position_embedding_type\": \"alibi\"")
+            || config_str.contains("jina")
+            || config_str.contains("JinaBert");
+
+        // Download model weights
+        let weights_path = match repo.get("model.safetensors").await {
+            Ok(path) => path,
+            Err(_) => repo.get("pytorch_model.bin").await.map_err(|e| {
+                crate::Error::Embedding(format!("Failed to download model weights: {}", e))
+            })?,
+        };
+
+        // Load model based on type
+        let model: Box<dyn EmbedderModel> = if is_jina {
+            // Parse as JinaBERT config
+            let mut config: JinaBertConfig = serde_json::from_str(&config_str).map_err(|e| {
+                crate::Error::Embedding(format!("Failed to parse Jina config: {}", e))
+            })?;
+
+            // Override max_position_embeddings to match our truncation
+            config.max_position_embeddings = 512;
+
+            // Load Jina model weights - convert to F32 for numerical stability
+            // Even though weights are stored as F16, we use F32 for computation
+            let vb = unsafe {
+                VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &self.device)
+                    .map_err(|e| {
+                        crate::Error::Embedding(format!("Failed to load Jina weights: {}", e))
+                    })?
+            };
+
+            Box::new(JinaBertModel::new(vb, &config).map_err(|e| {
+                crate::Error::Embedding(format!("Failed to initialize JinaBERT model: {}", e))
+            })?)
+        } else {
+            // Standard loading for non-Jina models
+            let vb = if weights_path.to_string_lossy().ends_with(".safetensors") {
+                unsafe {
+                    VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &self.device)
+                        .map_err(|e| {
+                            crate::Error::Embedding(format!("Failed to load safetensors: {}", e))
+                        })?
+                }
+            } else {
+                VarBuilder::from_pth(&weights_path, DType::F32, &self.device).map_err(|e| {
+                    crate::Error::Embedding(format!("Failed to load pytorch weights: {}", e))
+                })?
+            };
+
+            // Parse as standard BERT config
+            let config: BertConfig = serde_json::from_str(&config_str).map_err(|e| {
+                crate::Error::Embedding(format!("Failed to parse BERT config: {}", e))
+            })?;
+            Box::new(BertModel::load(vb, &config).map_err(|e| {
+                crate::Error::Embedding(format!("Failed to initialize BERT model: {}", e))
+            })?)
+        };
+
+        self.model = Some(model);
+
+        // Download and load tokenizer
+        let tokenizer_path = repo
+            .get("tokenizer.json")
+            .await
+            .map_err(|e| crate::Error::Embedding(format!("Failed to download tokenizer: {}", e)))?;
+        let tokenizer = Tokenizer::from_file(&tokenizer_path)
+            .map_err(|e| crate::Error::Embedding(format!("Failed to load tokenizer: {}", e)))?;
+        self.tokenizer = Some(tokenizer);
+
+        Ok(())
+    }
+}
+
+impl Default for EmbeddingModel {
+    fn default() -> Self {
+        // Using CodeBERT as it has standard RoBERTa architecture that works with Candle
+        // Jina model has convergence issues we're still debugging
+        Self::new("microsoft/codebert-base".to_string())
     }
 }
