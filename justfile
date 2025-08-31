@@ -376,19 +376,10 @@ dev:
     set -e
     echo "🚀 Starting Codetriever native development..."
     
-    # Check if Qdrant is installed
-    if ! command -v qdrant &> /dev/null; then
-        echo "📦 Installing Qdrant..."
-        brew install qdrant
-    fi
+    # Start Qdrant in Docker
+    just qdrant-start
     
-    # Start Qdrant in background
-    echo "Starting Qdrant..."
-    pkill qdrant || true
-    qdrant > /tmp/qdrant.log 2>&1 &
-    echo "Qdrant started (logs: /tmp/qdrant.log)"
-    
-    # Wait for Qdrant
+    # Wait for Qdrant to be ready
     sleep 2
     
     # Run MCP server
@@ -401,9 +392,9 @@ dev-docker:
 
 # Stop all Codetriever services
 stop:
-    @pkill qdrant || true
+    @just qdrant-stop
     @pkill codetriever || true
-    @docker-compose down || true
+    @docker-compose down 2>/dev/null || true
     @echo "✅ All services stopped"
 
 # Create new API crate
@@ -471,3 +462,35 @@ stats:
     @ls -1 crates/ 2>/dev/null | wc -l || echo "0"
     @echo "\nNumber of tests:"
     @grep -r "#\[test\]" --include="*.rs" crates | wc -l || echo "0"
+
+# === Qdrant Docker Commands ===
+
+# Start Qdrant in Docker
+qdrant-start:
+    @echo "🚀 Starting Qdrant in Docker..."
+    @docker run -d \
+        --name qdrant \
+        -p 6333:6333 \
+        -p 6334:6334 \
+        -v $(PWD)/qdrant_storage:/qdrant/storage:z \
+        qdrant/qdrant 2>/dev/null || docker start qdrant
+    @sleep 2
+    @curl -s http://localhost:6333/health >/dev/null && echo "✅ Qdrant ready on http://localhost:6333" || echo "⚠️  Qdrant starting..."
+
+# Stop Qdrant
+qdrant-stop:
+    @docker stop qdrant 2>/dev/null || true
+    @echo "✅ Qdrant stopped"
+
+# Remove Qdrant container
+qdrant-clean:
+    @docker rm -f qdrant 2>/dev/null || true
+    @echo "✅ Qdrant container removed"
+
+# Show Qdrant logs
+qdrant-logs:
+    @docker logs -f qdrant
+
+# Check Qdrant health
+qdrant-health:
+    @curl -s http://localhost:6333 | jq '.' || echo "❌ Qdrant not responding"

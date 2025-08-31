@@ -118,3 +118,6 @@ worktrees/
 
 # MAOS Local configuration
 .claude/hooks/maos/config.json
+
+# Qdrant Docker storage
+qdrant_storage/
