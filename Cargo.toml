@@ -1,8 +1,8 @@
 [workspace]
 members = [
     "crates/codetriever",
+    "crates/codetriever-api",
     # Future crates:
-    # "crates/codetriever-api",
     # "crates/codetriever-core",
 ]
 resolver = "3"
@@ -38,6 +38,7 @@ schemars = "0.8.22"
 
 # Error handling
 anyhow = "1.0"
+thiserror = "2.0"
 
 # Logging
 log = "0.4"

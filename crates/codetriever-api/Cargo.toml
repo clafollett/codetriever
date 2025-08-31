@@ -1,0 +1,74 @@
+[package]
+name = "codetriever-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+log = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Vector database
+qdrant-client = { version = "1.13" }
+
+# Embedding models
+candle-core = { version = "0.8", features = ["metal"] }
+candle-nn = { version = "0.8" }
+candle-transformers = { version = "0.8" }
+hf-hub = { version = "0.3", features = ["tokio"] }
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+# Code parsing
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-c = "0.24"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-xml = "0.7"
+tree-sitter-yaml = "0.7"
+
+# Utils
+walkdir = "2"
+glob = "0.3"
+ignore = "0.4"  # for .gitignore support
+rayon = "1.10"  # for parallel processing
+dashmap = "6"  # concurrent hashmap
+bytes = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tower = { workspace = true }
+
+[lints]
+workspace = true

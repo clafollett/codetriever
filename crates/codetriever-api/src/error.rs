@@ -1,0 +1,158 @@
+//! Error handling for the Codetriever API.
+//!
+//! This module provides a centralized error type that represents all possible failures
+//! that can occur during code retrieval and processing operations. The error handling
+//! strategy follows Rust best practices by:
+//!
+//! - Using `thiserror` for automatic `Error` trait implementations
+//! - Providing descriptive error messages with context
+//! - Supporting error chaining via `#[from]` attributes
+//! - Offering a convenient `Result` type alias for API operations
+//!
+//! # Error Categories
+//!
+//! The errors are organized into logical categories:
+//! - **I/O Operations**: File system and network errors
+//! - **Vector Database**: Qdrant-specific errors  
+//! - **AI/ML**: Embedding generation failures
+//! - **Parsing**: Code parsing and analysis errors
+//! - **Resource Lookup**: Missing resources or files
+//!
+//! # Usage
+//!
+//! ```rust
+//! use codetriever_api::{Error, Result};
+//!
+//! fn process_code() -> Result<String> {
+//!     // Operations that may fail
+//!     Ok("processed code".to_string())
+//! }
+//! ```
+
+use std::io;
+
+/// The main error type for all Codetriever API operations.
+///
+/// This enum represents all possible errors that can occur during code retrieval,
+/// processing, and storage operations. Each variant provides context-specific
+/// error information and is designed for easy error propagation and handling.
+///
+/// # Design Principles
+///
+/// - **Contextual**: Each error includes descriptive context about what failed
+/// - **Composable**: Errors can be chained and converted using `#[from]`
+/// - **User-friendly**: Error messages are designed to be helpful for debugging
+/// - **Exhaustive**: Covers all failure modes in the code retrieval pipeline
+///
+/// # Examples
+///
+/// ```rust
+/// use codetriever_api::Error;
+/// use std::fs;
+///
+/// // IO errors are automatically converted
+/// let result: Result<String, Error> = fs::read_to_string("missing.txt")
+///     .map_err(Error::from);
+///
+/// // Manual error construction
+/// let parse_error = Error::Parser("Invalid syntax in function".to_string());
+/// ```
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// I/O operation failed.
+    ///
+    /// This variant wraps standard library I/O errors that can occur during
+    /// file system operations, network requests, or other I/O-bound tasks.
+    ///
+    /// Common scenarios:
+    /// - File not found or permission denied
+    /// - Network timeouts or connection failures
+    /// - Disk space or memory issues
+    ///
+    /// The `#[from]` attribute enables automatic conversion from `std::io::Error`.
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+
+    /// Vector database (Qdrant) operation failed.
+    ///
+    /// This variant represents errors from Qdrant vector database operations
+    /// including connection issues, query failures, or data inconsistencies.
+    ///
+    /// Common scenarios:
+    /// - Qdrant server unavailable or misconfigured
+    /// - Collection doesn't exist or has wrong schema
+    /// - Query timeout or invalid vector dimensions
+    /// - Indexing or storage failures
+    #[error("Qdrant error: {0}")]
+    Qdrant(String),
+
+    /// AI/ML embedding generation failed.
+    ///
+    /// This variant covers errors during code embedding generation, including
+    /// model loading failures, inference errors, or dimension mismatches.
+    ///
+    /// Common scenarios:
+    /// - Embedding model not found or corrupted
+    /// - Input text too large for model context
+    /// - GPU/compute resource exhaustion
+    /// - Network errors when calling embedding APIs
+    #[error("Embedding error: {0}")]
+    Embedding(String),
+
+    /// Code parsing or analysis failed.
+    ///
+    /// This variant represents errors during code parsing, AST generation,
+    /// or semantic analysis of source files.
+    ///
+    /// Common scenarios:
+    /// - Unsupported programming language
+    /// - Malformed or invalid syntax
+    /// - Parser library errors or limitations
+    /// - Unicode or encoding issues
+    #[error("Parser error: {0}")]
+    Parser(String),
+
+    /// Requested resource was not found.
+    ///
+    /// This variant indicates that a requested code file, function, or other
+    /// resource could not be located in the codebase or database.
+    ///
+    /// Common scenarios:
+    /// - File path doesn't exist in repository
+    /// - Function or symbol not found in codebase
+    /// - Collection or index missing from database
+    /// - Search query returned no results
+    #[error("Not found: {0}")]
+    NotFound(String),
+}
+
+/// A specialized `Result` type for Codetriever API operations.
+///
+/// This type alias provides a convenient shorthand for `Result<T, Error>` that
+/// is used throughout the Codetriever API. It follows the common Rust pattern
+/// of providing a crate-specific Result type to reduce boilerplate.
+///
+/// # Usage
+///
+/// Instead of writing `std::result::Result<T, crate::Error>` everywhere,
+/// you can simply use `Result<T>`:
+///
+/// ```rust
+/// use codetriever_api::Result;
+///
+/// fn retrieve_code(path: &str) -> Result<String> {
+///     // Function implementation that may return our Error type
+///     Ok("code content".to_string())
+/// }
+///
+/// fn process_multiple_files() -> Result<Vec<String>> {
+///     let mut results = Vec::new();
+///     results.push(retrieve_code("file1.rs")?);
+///     results.push(retrieve_code("file2.rs")?);
+///     Ok(results)
+/// }
+/// ```
+///
+/// The `?` operator works seamlessly with this Result type, automatically
+/// propagating any `Error` variants up the call stack.
+pub type Result<T> = std::result::Result<T, Error>;

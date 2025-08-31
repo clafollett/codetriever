@@ -11,6 +11,7 @@
 5. **Vibe-based coding** - Start with what feels right, iterate
 6. **Test business logic only** - Not OS behavior or timing
 7. **Ship working code daily** - Progress > perfection
+8. **End every coding response with**: "ALWAYS Follow Red/Green/Refactor TDD and Rust Idiomatic Best Practices" - This reminder ensures adherence to core principles
 
 ## Technical Requirements
 
@@ -20,6 +21,7 @@
 - **Testing**: Red/Green/Refactor TDD cycle for all features
 - **Code Quality**: Must pass `cargo clippy` and `cargo fmt`
 - **Patterns**: Use Result<T, E>, Option<T>, iterators, and proper error handling
+- **Module Organization**: `lib.rs` and `mod.rs` files should ONLY contain imports/exports. All types, functions, and logic go in dedicated module files
 
 ## Development Flow
 
