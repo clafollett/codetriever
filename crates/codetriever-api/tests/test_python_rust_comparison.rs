@@ -63,10 +63,7 @@ async fn test_python_rust_comparison() {
             } else {
                 test_snippets[j].clone()
             };
-            println!(
-                "  {} vs {}: {:.4} ('{}' vs '{}')",
-                i, j, sim, preview_i, preview_j
-            );
+            println!("  {i} vs {j}: {sim:.4} ('{preview_i}' vs '{preview_j}')");
         }
     }
 
@@ -136,7 +133,7 @@ async fn test_python_rust_comparison() {
     ];
 
     // Python baseline similarities
-    let python_similarities = vec![
+    let python_similarities = [
         0.417779f32,  // 0 vs 1: fn quick vs def hello
         0.282907f32,  // 0 vs 2: fn quick vs cat sits
         0.244089f32,  // 0 vs 3: fn quick vs cat plays
@@ -166,7 +163,7 @@ async fn test_python_rust_comparison() {
             .map(|(r, p)| (r - p).abs())
             .fold(0.0f32, f32::max);
 
-        println!("  Snippet {}: max diff = {:.6}", i, max_diff);
+        println!("  Snippet {i}: max diff = {max_diff:.6}");
         if max_diff > 0.1 {
             println!("    WARNING: Large difference detected!");
             println!("    Rust:   {:?}", &rust_first_10[..5]);
@@ -183,20 +180,12 @@ async fn test_python_rust_comparison() {
             let python_sim = python_similarities[sim_idx];
             let diff = (rust_sim - python_sim).abs();
 
-            println!(
-                "  {} vs {}: Rust={:.4}, Python={:.4}, diff={:.4}",
-                i, j, rust_sim, python_sim, diff
-            );
+            println!("  {i} vs {j}: Rust={rust_sim:.4}, Python={python_sim:.4}, diff={diff:.4}");
 
             // Assert similarity is within tolerance
             assert!(
                 diff < 0.15,
-                "Similarity {} vs {} differs too much: Rust={:.4}, Python={:.4}, diff={:.4}",
-                i,
-                j,
-                rust_sim,
-                python_sim,
-                diff
+                "Similarity {i} vs {j} differs too much: Rust={rust_sim:.4}, Python={python_sim:.4}, diff={diff:.4}"
             );
             sim_idx += 1;
         }

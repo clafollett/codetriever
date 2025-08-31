@@ -7,14 +7,18 @@ use once_cell::sync::Lazy;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+// Type aliases for cleaner code
+type SharedModel = Arc<Mutex<EmbeddingModel>>;
+type SharedFlag = Arc<Mutex<bool>>;
+
 // Shared model instance - loaded once and reused across all tests
-static MODEL: Lazy<Arc<Mutex<EmbeddingModel>>> = Lazy::new(|| {
+static MODEL: Lazy<SharedModel> = Lazy::new(|| {
     Arc::new(Mutex::new(EmbeddingModel::new(
         "jinaai/jina-embeddings-v2-base-code".to_string(),
     )))
 });
 
-static MODEL_LOADED: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(false)));
+static MODEL_LOADED: Lazy<SharedFlag> = Lazy::new(|| Arc::new(Mutex::new(false)));
 
 async fn get_model() -> Option<Arc<Mutex<EmbeddingModel>>> {
     // Skip if no token
@@ -34,7 +38,7 @@ async fn get_model() -> Option<Arc<Mutex<EmbeddingModel>>> {
                 *loaded = true;
             }
             Err(e) => {
-                println!("Failed to load model: {}", e);
+                println!("Failed to load model: {e}");
                 return None;
             }
         }
@@ -62,8 +66,7 @@ async fn test_model_requires_huggingface_token() {
             err.to_string().contains("HF_TOKEN")
                 || err.to_string().contains("HUGGING_FACE_HUB_TOKEN")
                 || err.to_string().contains("authentication"),
-            "Error should mention missing token or authentication: {}",
-            err
+            "Error should mention missing token or authentication: {err}"
         );
     }
 }
@@ -99,9 +102,7 @@ async fn test_embedding_dimensions_match_model() {
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!(
             (norm - 1.0).abs() < 0.01,
-            "Embedding {} should be normalized, got norm={}",
-            i,
-            norm
+            "Embedding {i} should be normalized, got norm={norm}"
         );
     }
 }
@@ -171,10 +172,7 @@ async fn test_language_agnostic_embeddings() {
             let sim = cosine_similarity(&embeddings[i], &embeddings[j]);
             assert!(
                 sim > 0.7,
-                "Same function in different languages should be similar: {} vs {} = {}",
-                i,
-                j,
-                sim
+                "Same function in different languages should be similar: {i} vs {j} = {sim}"
             );
         }
     }
@@ -204,8 +202,8 @@ async fn test_semantic_similarity() {
     let sort_similarity = cosine_similarity(&embeddings[0], &embeddings[1]);
     let diff_similarity = cosine_similarity(&embeddings[0], &embeddings[2]);
 
-    println!("Similarity between sorting algorithms: {}", sort_similarity);
-    println!("Similarity between sort and email: {}", diff_similarity);
+    println!("Similarity between sorting algorithms: {sort_similarity}");
+    println!("Similarity between sort and email: {diff_similarity}");
 
     assert!(
         sort_similarity > diff_similarity + 0.15,
@@ -214,14 +212,12 @@ async fn test_semantic_similarity() {
 
     assert!(
         sort_similarity > 0.6,
-        "Similar algorithms should have decent similarity: {}",
-        sort_similarity
+        "Similar algorithms should have decent similarity: {sort_similarity}"
     );
 
     assert!(
         diff_similarity < 0.5,
-        "Different functions should have low similarity: {}",
-        diff_similarity
+        "Different functions should have low similarity: {diff_similarity}"
     );
 }
 
@@ -236,8 +232,7 @@ async fn test_handles_truncation() {
     let mut long_code = String::from("def process():\n");
     for i in 0..200 {
         long_code.push_str(&format!(
-            "    variable_{} = calculate_value_{}(input_{})\n",
-            i, i, i
+            "    variable_{i} = calculate_value_{i}(input_{i})\n"
         ));
     }
 
@@ -263,7 +258,7 @@ async fn test_batch_processing() {
     // Create batch of functions
     let mut batch = Vec::new();
     for i in 0..16 {
-        batch.push(format!("def func_{}(x): return x * {}", i, i));
+        batch.push(format!("def func_{i}(x): return x * {i}"));
     }
 
     let start = std::time::Instant::now();
@@ -277,7 +272,7 @@ async fn test_batch_processing() {
     assert_eq!(embeddings.len(), 16);
 
     // Batch should process efficiently (not 16x single processing time)
-    println!("Batch of 16 processed in {:?}", duration);
+    println!("Batch of 16 processed in {duration:?}");
     assert!(
         duration.as_secs() < 30,
         "Batch processing should complete in reasonable time"

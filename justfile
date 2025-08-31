@@ -135,7 +135,7 @@ lint:
 # Fix auto-fixable clippy issues
 clippy-fix:
     @echo "🔧 Fixing clippy issues..."
-    cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged
+    cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings -W clippy::uninlined_format_args
     @echo "✅ Applied clippy fixes"
 
 
