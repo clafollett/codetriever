@@ -188,8 +188,9 @@ test-security:
 
 # Run unit tests only (fastest)
 test-unit:
-    @echo "⚡ Running unit tests only..."
-    cargo test --workspace --lib
+    @echo "⚡ Running unit tests and doc tests..."
+    cargo test --workspace --lib --bins
+    cargo test --workspace --doc
 
 # Run integration tests only
 test-integration:
