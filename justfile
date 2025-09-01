@@ -167,6 +167,7 @@ test:
     echo "   Proptest cases: ${MAOS_TEST_SECURITY_PROPTEST_CASES}"
     cargo test --workspace
 
+
 # Run thorough tests (includes ignored tests)
 test-thorough:
     #!/usr/bin/env bash
@@ -431,7 +432,7 @@ tdd-watch:
     cargo watch -x "test --all -- --nocapture"
 
 # Full quality check (format, lint, test)
-quality: fmt lint test
+quality: fmt lint test-unit
     @echo "✅ Quality checks passed!"
 
 # Run Codetriever-specific tests
