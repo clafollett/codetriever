@@ -29,8 +29,6 @@
 //! }
 //! ```
 
-use std::io;
-
 /// The main error type for all Codetriever API operations.
 ///
 /// This enum represents all possible errors that can occur during code retrieval,
@@ -61,17 +59,16 @@ use std::io;
 pub enum Error {
     /// I/O operation failed.
     ///
-    /// This variant wraps standard library I/O errors that can occur during
-    /// file system operations, network requests, or other I/O-bound tasks.
+    /// This variant can be either a wrapped standard library I/O error or
+    /// a custom string message for I/O-related failures.
     ///
     /// Common scenarios:
     /// - File not found or permission denied
     /// - Network timeouts or connection failures
     /// - Disk space or memory issues
-    ///
-    /// The `#[from]` attribute enables automatic conversion from `std::io::Error`.
+    /// - Custom I/O error messages with context
     #[error("IO error: {0}")]
-    Io(#[from] io::Error),
+    Io(String),
 
     /// Vector database (Qdrant) operation failed.
     ///
@@ -137,6 +134,10 @@ pub enum Error {
     /// - Missing required configuration files
     #[error("Configuration error: {0}")]
     Configuration(String),
+
+    /// General anyhow error for flexible error handling
+    #[error(transparent)]
+    Anyhow(#[from] anyhow::Error),
 }
 
 /// A specialized `Result` type for Codetriever API operations.
@@ -169,3 +170,9 @@ pub enum Error {
 /// The `?` operator works seamlessly with this Result type, automatically
 /// propagating any `Error` variants up the call stack.
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::Io(err.to_string())
+    }
+}

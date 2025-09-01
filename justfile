@@ -44,6 +44,10 @@ dev-setup:
     @just validate-stack
     @just install-deps
     @just setup-git-hooks
+    @if [ -d "test-repos" ]; then \
+        echo "📚 Found test repositories, initializing..."; \
+        just init-test-repos; \
+    fi
     @just format
     @just lint
     @just test
@@ -113,6 +117,17 @@ install-deps:
     @echo "📦 Installing cargo tools..."
     cargo install cargo-audit --quiet || echo "⚠️  cargo-audit already installed"
     @echo "✅ Dependencies installed"
+
+# Initialize test repositories with shallow clones
+init-test-repos:
+    @echo "📚 Initializing test repositories..."
+    @if [ -d "test-repos" ]; then \
+        cd test-repos && ./init.sh; \
+    else \
+        echo "⚠️  test-repos directory not found. Run from repository root."; \
+        exit 1; \
+    fi
+    @echo "✅ Test repositories ready for indexing!"
 
 # Code formatting
 format:
@@ -473,31 +488,26 @@ stats:
 
 # === Qdrant Docker Commands ===
 
-# Start Qdrant in Docker
+# Start Qdrant using dedicated compose file
 qdrant-start:
-    @echo "🚀 Starting Qdrant in Docker..."
-    @docker run -d \
-        --name qdrant \
-        -p 6333:6333 \
-        -p 6334:6334 \
-        -v $(PWD)/qdrant_storage:/qdrant/storage:z \
-        qdrant/qdrant 2>/dev/null || docker start qdrant
+    @echo "🚀 Starting Qdrant..."
+    @docker-compose -f docker-compose.qdrant.yml up -d qdrant
     @sleep 2
     @curl -s http://localhost:6333/health >/dev/null && echo "✅ Qdrant ready on http://localhost:6333" || echo "⚠️  Qdrant starting..."
 
 # Stop Qdrant
 qdrant-stop:
-    @docker stop qdrant 2>/dev/null || true
+    @docker-compose -f docker-compose.qdrant.yml stop qdrant
     @echo "✅ Qdrant stopped"
 
-# Remove Qdrant container
+# Remove Qdrant container and volumes
 qdrant-clean:
-    @docker rm -f qdrant 2>/dev/null || true
-    @echo "✅ Qdrant container removed"
+    @docker-compose -f docker-compose.qdrant.yml down -v
+    @echo "✅ Qdrant container and volumes removed"
 
 # Show Qdrant logs
 qdrant-logs:
-    @docker logs -f qdrant
+    @docker-compose -f docker-compose.qdrant.yml logs -f qdrant
 
 # Check Qdrant health
 qdrant-health:
@@ -542,3 +552,12 @@ qdrant-reset:
     @curl -X DELETE http://localhost:6333/collections/codetriever 2>/dev/null || true
     @sleep 1
     @just qdrant-init
+
+# Clean up test collections
+qdrant-clean-tests:
+    @echo "🧹 Cleaning up test collections..."
+    @for collection in $(curl -s http://localhost:6333/collections | jq -r '.result.collections[].name' | grep '^test_'); do \
+        echo "  Deleting $$collection..."; \
+        curl -X DELETE "http://localhost:6333/collections/$$collection" 2>/dev/null; \
+    done
+    @echo "✅ Test collections cleaned"

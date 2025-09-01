@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   qdrant:
     image: qdrant/qdrant:latest
@@ -8,7 +6,8 @@ services:
       - "127.0.0.1:6333:6333"  # Only bind to localhost
       - "127.0.0.1:6334:6334"
     volumes:
-      - qdrant_data:/qdrant/storage
+      # TODO: Consider external volume management for production (AWS EBS, GCP PD, etc.)
+      - qdrant_storage:/qdrant/storage
     environment:
       - QDRANT__LOG_LEVEL=WARN
       - QDRANT__SERVICE__HTTP_PORT=6333
@@ -19,7 +18,7 @@ services:
       - QDRANT__STORAGE__ON_DISK_PAYLOAD=true
     restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -45,14 +44,17 @@ services:
       - MAX_CHUNK_SIZE=512
       - CHUNK_OVERLAP=50
     volumes:
+      # TODO: Consider cloud storage or persistent volume for production cache
       - api_cache:/app/cache
+      # TODO: Define REPOS_PATH strategy for production (S3, NFS, or managed volume)
       - ${REPOS_PATH:-./repos}:/app/repos:ro
     depends_on:
       qdrant:
         condition: service_healthy
     restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # TODO: Update when we implement a proper health endpoint
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -1,0 +1,25 @@
+# Pinned to commit e186482 (2024)
+[submodule "test-repos/rust-mini-redis"]
+	path = test-repos/rust-mini-redis
+	url = https://github.com/tokio-rs/mini-redis
+[submodule "test-repos/go-examples"]
+	path = test-repos/go-examples
+	url = https://github.com/golang/example
+[submodule "test-repos/python-algorithms"]
+	path = test-repos/python-algorithms
+	url = https://github.com/TheAlgorithms/Python
+[submodule "test-repos/javascript-lodash"]
+	path = test-repos/javascript-lodash
+	url = https://github.com/lodash/lodash
+[submodule "test-repos/javascript-express"]
+	path = test-repos/javascript-express
+	url = https://github.com/expressjs/express
+[submodule "test-repos/csharp-newtonsoft-json"]
+	path = test-repos/csharp-newtonsoft-json
+	url = https://github.com/JamesNK/Newtonsoft.Json
+[submodule "test-repos/csharp-entity-framework"]
+	path = test-repos/csharp-entity-framework
+	url = https://github.com/dotnet/efcore
+[submodule "test-repos/csharp-serilog"]
+	path = test-repos/csharp-serilog
+	url = https://github.com/serilog/serilog

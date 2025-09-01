@@ -36,57 +36,6 @@ pub struct Config {
     pub position_embedding_type: PositionEmbeddingType,
 }
 
-impl Config {
-    pub fn v2_base() -> Self {
-        // https://huggingface.co/jinaai/jina-embeddings-v2-base-en/blob/main/config.json
-        Self {
-            vocab_size: 30528,
-            hidden_size: 768,
-            num_hidden_layers: 12,
-            num_attention_heads: 12,
-            intermediate_size: 3072,
-            hidden_act: candle_nn::Activation::Gelu,
-            max_position_embeddings: 512, // Match our truncation length
-            type_vocab_size: 2,
-            initializer_range: 0.02,
-            layer_norm_eps: 1e-12,
-            pad_token_id: 0,
-            position_embedding_type: PositionEmbeddingType::Alibi,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        vocab_size: usize,
-        hidden_size: usize,
-        num_hidden_layers: usize,
-        num_attention_heads: usize,
-        intermediate_size: usize,
-        hidden_act: candle_nn::Activation,
-        max_position_embeddings: usize,
-        type_vocab_size: usize,
-        initializer_range: f64,
-        layer_norm_eps: f64,
-        pad_token_id: usize,
-        position_embedding_type: PositionEmbeddingType,
-    ) -> Self {
-        Config {
-            vocab_size,
-            hidden_size,
-            num_hidden_layers,
-            num_attention_heads,
-            intermediate_size,
-            hidden_act,
-            max_position_embeddings,
-            type_vocab_size,
-            initializer_range,
-            layer_norm_eps,
-            pad_token_id,
-            position_embedding_type,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct BertEmbeddings {
     word_embeddings: Embedding,

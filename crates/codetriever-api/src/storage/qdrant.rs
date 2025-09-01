@@ -20,14 +20,22 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let storage = QdrantStorage::new();
+//! let storage = QdrantStorage::new(
+//!     "http://localhost:6333".to_string(),
+//!     "codetriever".to_string()
+//! ).await?;
 //! let query_embedding = vec![0.1, 0.2, 0.3]; // Example embedding
 //! let results = storage.search(query_embedding, 10).await?;
 //! # Ok(())
 //! # }
 //! ```
 
-use crate::Result;
+use crate::{Error, Result, indexing::CodeChunk};
+use qdrant_client::qdrant::{
+    CreateCollection, Distance, PointStruct, SearchPoints, UpsertPoints, Value, VectorParams,
+};
+use qdrant_client::{Payload, Qdrant};
+use std::collections::HashMap;
 
 /// Vector database client for storing and searching code embeddings using Qdrant.
 ///
@@ -52,70 +60,32 @@ use crate::Result;
 /// - Batch operations for efficient indexing
 /// - Connection pooling and retry logic
 pub struct QdrantStorage {
-    // TODO: Add client field for Qdrant gRPC client
-    // TODO: Add connection pool for concurrent operations
-    // TODO: Add collection configuration
-}
-
-impl Default for QdrantStorage {
-    /// Creates a new `QdrantStorage` instance with default configuration.
-    ///
-    /// This provides a convenient way to initialize the storage client
-    /// when using derive macros or when explicit configuration isn't needed.
-    fn default() -> Self {
-        Self::new()
-    }
+    client: Qdrant,
+    collection_name: String,
 }
 
 impl QdrantStorage {
-    /// Creates a new `QdrantStorage` client instance.
+    /// Creates a new `QdrantStorage` client instance and ensures collection exists.
     ///
-    /// Initializes the Qdrant storage client with default settings.
-    /// In the future implementation, this will establish the connection
-    /// to the Qdrant server and set up the necessary collections.
+    /// Initializes the Qdrant storage client with the given URL and collection name.
+    /// Automatically creates the collection with proper vector configuration if it doesn't exist.
+    /// Configured for 768-dimensional Jina embeddings with cosine similarity.
+    ///
+    /// # Parameters
+    ///
+    /// * `url` - Qdrant server URL (e.g., "http://localhost:6334")
+    /// * `collection_name` - Name of the collection to store vectors in
     ///
     /// # Returns
     ///
     /// A new `QdrantStorage` instance ready for vector operations.
     ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use codetriever_api::storage::QdrantStorage;
-    ///
-    /// let storage = QdrantStorage::new();
-    /// ```
-    pub fn new() -> Self {
-        Self {
-            // TODO: Initialize Qdrant client with connection parameters
-            // TODO: Set up default collection if it doesn't exist
-        }
-    }
-
-    /// Performs semantic similarity search using vector embeddings.
-    ///
-    /// Searches for the most similar code chunks to the provided query vector
-    /// using approximate nearest neighbor search. The search is performed in
-    /// high-dimensional space where semantically similar code will have
-    /// vectors that are close together.
-    ///
-    /// # Parameters
-    ///
-    /// * `query` - The query embedding vector (typically 768 or 1536 dimensions)
-    /// * `limit` - Maximum number of results to return
-    ///
-    /// # Returns
-    ///
-    /// A vector of matching code chunk identifiers, ordered by similarity score
-    /// (most similar first). In the full implementation, this will include
-    /// metadata like file paths, function names, and similarity scores.
-    ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The vector database is unreachable
-    /// - The query vector has incorrect dimensions
-    /// - The collection doesn't exist
+    /// Returns `Error::Qdrant` if:
+    /// - Cannot connect to Qdrant server
+    /// - Collection creation fails
+    /// - Server returns error response
     ///
     /// # Example
     ///
@@ -124,25 +94,257 @@ impl QdrantStorage {
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let storage = QdrantStorage::new();
-    /// let query_vector = vec![0.1, 0.2, 0.3]; // Real embeddings are 768+ dims
-    /// let results = storage.search(query_vector, 5).await?;
+    /// let storage = QdrantStorage::new("http://localhost:6334".to_string(), "code_embeddings".to_string()).await?;
     /// # Ok(())
     /// # }
     /// ```
+    pub async fn new(url: String, collection_name: String) -> Result<Self> {
+        // Connect to Qdrant server
+        let client = Qdrant::from_url(&url)
+            .build()
+            .map_err(|e| Error::Qdrant(format!("Failed to create Qdrant client: {e}")))?;
+
+        let storage = Self {
+            client,
+            collection_name: collection_name.clone(),
+        };
+
+        // Ensure collection exists with proper vector configuration
+        storage.ensure_collection_exists().await?;
+
+        Ok(storage)
+    }
+
+    /// Ensures that the collection exists with proper vector configuration.
     ///
-    /// # Implementation Notes
+    /// Creates a collection with 768-dimensional vectors using cosine similarity
+    /// if it doesn't already exist. This is called automatically during initialization.
     ///
-    /// The search operation will:
-    /// 1. Validate the query vector dimensions
-    /// 2. Perform approximate nearest neighbor search in Qdrant
-    /// 3. Apply any filtering based on metadata (file types, projects, etc.)
-    /// 4. Return results sorted by cosine similarity score
-    pub async fn search(&self, _query: Vec<f32>, _limit: usize) -> Result<Vec<String>> {
-        // TODO: Validate query vector dimensions
-        // TODO: Perform vector similarity search in Qdrant
-        // TODO: Apply metadata filtering if specified
-        // TODO: Return structured results with scores and metadata
-        Ok(vec![])
+    /// # Errors
+    ///
+    /// Returns `Error::Qdrant` if collection creation fails or server is unreachable.
+    async fn ensure_collection_exists(&self) -> Result<()> {
+        let collection_config = CreateCollection {
+            collection_name: self.collection_name.clone(),
+            vectors_config: Some(
+                VectorParams {
+                    size: 768, // Jina BERT v2 embedding dimensions
+                    distance: Distance::Cosine as i32,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            ..Default::default()
+        };
+
+        // Try to create collection - ignore error if it already exists
+        match self.client.create_collection(collection_config).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("already exists")
+                    || error_msg.contains("Collection already exists")
+                {
+                    // Collection exists, that's fine
+                    Ok(())
+                } else {
+                    Err(Error::Qdrant(format!(
+                        "Failed to create collection: {error_msg}"
+                    )))
+                }
+            }
+        }
+    }
+
+    /// Stores code chunks with their embeddings in the vector database.
+    ///
+    /// Performs batch insertion of code chunks into Qdrant. Each chunk is stored
+    /// as a point with its embedding vector and metadata (file path, content, line numbers).
+    /// Only chunks with embeddings are stored - chunks without embeddings are skipped.
+    ///
+    /// # Parameters
+    ///
+    /// * `chunks` - Slice of CodeChunk instances to store
+    ///
+    /// # Returns
+    ///
+    /// Number of chunks successfully stored (excludes chunks without embeddings).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Qdrant` if:
+    /// - Vector database is unreachable
+    /// - Batch insertion fails
+    /// - Invalid vector dimensions
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codetriever_api::{storage::QdrantStorage, indexing::CodeChunk};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let storage = QdrantStorage::new("http://localhost:6334".to_string(), "test".to_string()).await?;
+    /// let chunks = vec![
+    ///     CodeChunk {
+    ///         file_path: "main.rs".to_string(),
+    ///         content: "fn main() {}".to_string(),
+    ///         start_line: 1,
+    ///         end_line: 1,
+    ///         embedding: Some(vec![0.1; 768]), // 768-dim embedding
+    ///     }
+    /// ];
+    /// let stored_count = storage.store_chunks(&chunks).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize> {
+        let mut points = Vec::new();
+        let mut point_id = 0u64;
+
+        // Convert chunks to Qdrant points
+        for chunk in chunks {
+            if let Some(ref embedding) = chunk.embedding {
+                let mut payload = HashMap::new();
+                payload.insert(
+                    "file_path".to_string(),
+                    Value::from(chunk.file_path.clone()),
+                );
+                payload.insert("content".to_string(), Value::from(chunk.content.clone()));
+                payload.insert(
+                    "start_line".to_string(),
+                    Value::from(chunk.start_line as i64),
+                );
+                payload.insert("end_line".to_string(), Value::from(chunk.end_line as i64));
+
+                points.push(PointStruct::new(
+                    point_id,
+                    embedding.clone(),
+                    Payload::from(payload),
+                ));
+                point_id += 1;
+            }
+        }
+
+        if points.is_empty() {
+            return Ok(0);
+        }
+
+        // Batch upsert points using new API
+        let upsert_request = UpsertPoints {
+            collection_name: self.collection_name.clone(),
+            points,
+            ..Default::default()
+        };
+
+        self.client
+            .upsert_points(upsert_request)
+            .await
+            .map_err(|e| Error::Qdrant(format!("Failed to store chunks: {e}")))?;
+
+        Ok(point_id as usize)
+    }
+
+    /// Performs semantic similarity search using vector embeddings.
+    ///
+    /// Searches for the most similar code chunks to the provided query vector
+    /// using approximate nearest neighbor search with cosine similarity.
+    /// Returns actual CodeChunk instances reconstructed from stored metadata.
+    ///
+    /// # Parameters
+    ///
+    /// * `query` - The query embedding vector (must be 768 dimensions for Jina)
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// Vector of CodeChunk instances ordered by similarity score (most similar first).
+    /// The `embedding` field in returned chunks will be None to save memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Qdrant` if:
+    /// - The vector database is unreachable
+    /// - The query vector has incorrect dimensions (must be 768)
+    /// - The collection doesn't exist or is corrupted
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use codetriever_api::storage::QdrantStorage;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let storage = QdrantStorage::new("http://localhost:6334".to_string(), "test".to_string()).await?;
+    /// let query_vector = vec![0.1; 768]; // 768-dimensional query embedding
+    /// let results = storage.search(query_vector, 5).await?;
+    ///
+    /// for chunk in results {
+    ///     println!("Found: {} (lines {}-{})", chunk.file_path, chunk.start_line, chunk.end_line);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn search(&self, query: Vec<f32>, limit: usize) -> Result<Vec<CodeChunk>> {
+        // Validate query vector dimensions
+        if query.len() != 768 {
+            return Err(Error::Qdrant(format!(
+                "Query vector must be 768 dimensions, got {}",
+                query.len()
+            )));
+        }
+
+        let search_request = SearchPoints {
+            collection_name: self.collection_name.clone(),
+            vector: query,
+            limit: limit as u64,
+            with_payload: Some(true.into()),
+            ..Default::default()
+        };
+
+        let search_result = self
+            .client
+            .search_points(search_request)
+            .await
+            .map_err(|e| Error::Qdrant(format!("Search failed: {e}")))?;
+
+        let mut results = Vec::new();
+
+        for scored_point in search_result.result {
+            let payload = &scored_point.payload;
+
+            // Extract metadata from payload
+            let file_path = payload
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
+            let content = payload
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
+            let start_line = payload
+                .get("start_line")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as usize;
+
+            let end_line = payload
+                .get("end_line")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as usize;
+
+            results.push(CodeChunk {
+                file_path,
+                content,
+                start_line,
+                end_line,
+                embedding: None, // Don't return embeddings to save memory
+            });
+        }
+
+        Ok(results)
     }
 }

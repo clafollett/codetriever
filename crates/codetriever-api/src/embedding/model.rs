@@ -49,6 +49,22 @@ impl EmbedderModel for JinaBertModel {
     }
 }
 
+/// Maximum number of tokens allowed per chunk (Jina model limit)
+/// TODO: Upgrade to jina-embeddings-v4 for massive improvements:
+///       - 32,768 token context (4x larger than current V2's 8192!)
+///       - 2048-dimensional embeddings (vs V2's 768) for richer representations
+///       - Matryoshka dimensions: 128, 256, 512, 1024, 2048 (flexibility!)
+///       - FlashAttention2 for faster processing
+///       - Supports code as first-class task type
+///       - Still runs locally - no API costs or data privacy concerns!
+///       - Would eliminate chunking for 99% of source files
+///
+/// Alternative: voyage-code-3 (32K context; 256, 512, 1024 (default), 2048 dims; but requires API)
+pub const MAX_EMBEDDING_INPUT_TOKENS: usize = 8192;
+
+/// Number of tokens to overlap between chunks when splitting large units
+pub const EMBEDDING_OVERLAP_TOKENS: usize = 512;
+
 /// Core embedding model for semantic code understanding.
 ///
 // Type alias for cleaner code
@@ -137,7 +153,7 @@ impl EmbeddingModel {
         }));
         tokenizer
             .with_truncation(Some(TruncationParams {
-                max_length: 512, // More reasonable for code snippets
+                max_length: MAX_EMBEDDING_INPUT_TOKENS,
                 ..Default::default()
             }))
             .map_err(|e| crate::Error::Embedding(format!("Failed to set truncation: {e}")))?;
@@ -296,8 +312,10 @@ impl EmbeddingModel {
                 crate::Error::Embedding(format!("Failed to parse Jina config: {e}"))
             })?;
 
-            // Override max_position_embeddings to match our truncation
-            config.max_position_embeddings = 512;
+            // Override max_position_embeddings to match our truncation limit
+            // This ensures the model's ALiBi positional encoding can handle our full 8192 token inputs
+            // (The default in jina_bert_v2::Config::v2_base() is only 512 for compatibility)
+            config.max_position_embeddings = MAX_EMBEDDING_INPUT_TOKENS;
 
             // Load Jina model weights - convert to F32 for numerical stability
             // Even though weights are stored as F16, we use F32 for computation

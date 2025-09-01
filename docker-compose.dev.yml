@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   qdrant:
     image: qdrant/qdrant:latest
@@ -8,12 +6,12 @@ services:
       - "6333:6333"
       - "6334:6334"
     volumes:
-      - ./qdrant_storage:/qdrant/storage:z
+      - ${HOME}/.codetriever/qdrant/storage:/qdrant/storage:z
     environment:
       - QDRANT__LOG_LEVEL=INFO
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -32,14 +30,15 @@ services:
       - EMBEDDING_MODEL=jinaai/jina-embeddings-v2-base-code
       - USE_METAL=false  # Metal not available in Docker
     volumes:
-      - ./cache:/app/cache
-      - ./repos:/app/repos:ro  # Read-only mount for code repositories
+      - ${HOME}/.codetriever/cache:/app/cache
+      - ${HOME}/.codetriever/repos:/app/repos:ro  # Read-only mount for code repositories
     depends_on:
       qdrant:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # TODO: Update when we implement a proper health endpoint
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 10s
       timeout: 3s
       retries: 3

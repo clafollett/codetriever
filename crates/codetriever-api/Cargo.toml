@@ -15,6 +15,7 @@ path = "src/main.rs"
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
+async-trait = "0.1.89"
 
 # Web framework
 axum = { workspace = true }
@@ -35,14 +36,14 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 # Vector database
-qdrant-client = { version = "1.15" }
+qdrant-client = { version = "1.15.0" }
 
 # Embedding models
 candle-core = { version = "0.9.1" }
 candle-nn = { version = "0.9.1" }
 candle-transformers = { version = "0.9.1" }
-hf-hub = { version = "0.4", features = ["tokio"] }
-tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+hf-hub = { version = "0.4.3", features = ["tokio"] }
+tokenizers = { version = "0.22.0", default-features = false, features = ["onig"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { version = "0.9.1", features = ["metal"] }
@@ -50,26 +51,31 @@ candle-nn = { version = "0.9.1", features = ["metal"] }
 candle-transformers = { version = "0.9.1", features = ["metal"] }
 
 # Code parsing
-tree-sitter = "0.25"
-tree-sitter-rust = "0.24"
-tree-sitter-python = "0.23"
-tree-sitter-javascript = "0.23"
-tree-sitter-typescript = "0.23"
-tree-sitter-go = "0.25"
-tree-sitter-java = "0.23"
-tree-sitter-cpp = "0.23"
-tree-sitter-c = "0.24"
-tree-sitter-c-sharp = "0.23"
-tree-sitter-json = "0.24"
-tree-sitter-xml = "0.7"
-tree-sitter-yaml = "0.7"
+tree-sitter = "0.25.8"
+tree-sitter-rust = "0.24.0"
+tree-sitter-python = "0.23.6"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-c = "0.24.1"
+tree-sitter-c-sharp = "0.23.1"
+tree-sitter-json = "0.24.8"
+tree-sitter-xml = "0.7.0"
+tree-sitter-yaml = "0.7.1"
+tree-sitter-bash = "0.25.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-powershell = "0.25.8"
+tree-sitter-sequel = "0.3.8"
 
 # Utils
-walkdir = "2"
-glob = "0.3"
-ignore = "0.4"                                       # for .gitignore support
-rayon = "1.11"                                       # for parallel processing
-dashmap = "7.0.0-rc2"                                # concurrent hashmap
+lazy_static = "1.5.0"
+walkdir = "2.5.0"
+glob = "0.3.3"
+ignore = "0.4.23"                                       # for .gitignore support
+rayon = "1.11.0"                                       # for parallel processing
+dashmap = "6.1.0"                                # concurrent hashmap
 bytes = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
