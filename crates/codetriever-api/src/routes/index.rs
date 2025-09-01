@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+// Type alias to simplify the complex indexer service type
+type IndexerServiceHandle = Arc<Mutex<dyn IndexerService>>;
+
 pub fn routes() -> Router {
     // Create the default indexer service
     let indexer_service = Arc::new(Mutex::new(ApiIndexerService::new()));
@@ -18,7 +21,7 @@ pub fn routes() -> Router {
 }
 
 /// Create routes with a specific indexer service (useful for testing)
-pub fn routes_with_indexer(indexer: Arc<Mutex<dyn IndexerService>>) -> Router {
+pub fn routes_with_indexer(indexer: IndexerServiceHandle) -> Router {
     Router::new()
         .route("/index", post(index_handler))
         .with_state(indexer)
@@ -58,7 +61,7 @@ impl IndexResponse {
 }
 
 async fn index_handler(
-    State(indexer): State<Arc<Mutex<dyn IndexerService>>>,
+    State(indexer): State<IndexerServiceHandle>,
     Json(request): Json<IndexRequest>,
 ) -> impl IntoResponse {
     let path = std::path::Path::new(&request.path);
