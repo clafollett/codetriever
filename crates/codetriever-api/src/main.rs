@@ -27,9 +27,11 @@ async fn main() -> MainResult {
     // Bind to address
     let addr: SocketAddr = "0.0.0.0:8080".parse()?;
     info!("Listening on {}", addr);
+    println!("🚀 Codetriever API server starting on http://{addr}");
 
     // Start server using axum's serve function
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    println!("✅ Server is ready to accept connections");
     axum::serve(listener, app).await?;
 
     Ok(())

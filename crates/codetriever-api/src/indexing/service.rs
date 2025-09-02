@@ -12,6 +12,9 @@ pub trait IndexerService: Send + Sync {
         path: &std::path::Path,
         recursive: bool,
     ) -> crate::Result<IndexResult>;
+
+    /// Drop the collection from storage
+    async fn drop_collection(&mut self) -> crate::Result<bool>;
 }
 
 /// Real implementation of IndexerService using the actual Indexer
@@ -49,6 +52,10 @@ impl IndexerService for ApiIndexerService {
         recursive: bool,
     ) -> crate::Result<IndexResult> {
         self.indexer.index_directory(path, recursive).await
+    }
+
+    async fn drop_collection(&mut self) -> crate::Result<bool> {
+        self.indexer.drop_collection().await
     }
 }
 
@@ -96,6 +103,14 @@ pub mod test_utils {
                     chunks_created: self.chunks_to_return,
                     chunks_stored: 0,
                 })
+            }
+        }
+
+        async fn drop_collection(&mut self) -> crate::Result<bool> {
+            if self.should_error {
+                Err(crate::Error::Io("Mock error".to_string()))
+            } else {
+                Ok(true)
             }
         }
     }

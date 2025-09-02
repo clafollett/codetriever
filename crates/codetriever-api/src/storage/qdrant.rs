@@ -32,7 +32,8 @@
 
 use crate::{Error, Result, indexing::CodeChunk};
 use qdrant_client::qdrant::{
-    CreateCollection, Distance, PointStruct, SearchPoints, UpsertPoints, Value, VectorParams,
+    CollectionExistsRequest, CreateCollection, DeleteCollection, Distance, PointStruct,
+    SearchPoints, UpsertPoints, Value, VectorParams,
 };
 use qdrant_client::{Payload, Qdrant};
 use std::collections::HashMap;
@@ -59,6 +60,7 @@ use std::collections::HashMap;
 /// - Collection management for different projects
 /// - Batch operations for efficient indexing
 /// - Connection pooling and retry logic
+#[derive(Clone)]
 pub struct QdrantStorage {
     client: Qdrant,
     collection_name: String,
@@ -115,16 +117,43 @@ impl QdrantStorage {
         Ok(storage)
     }
 
-    /// Ensures that the collection exists with proper vector configuration.
+    /// Checks if the collection exists.
     ///
-    /// Creates a collection with 768-dimensional vectors using cosine similarity
-    /// if it doesn't already exist. This is called automatically during initialization.
+    /// # Returns
+    ///
+    /// Ok(true) if the collection exists, Ok(false) if it doesn't exist
     ///
     /// # Errors
     ///
-    /// Returns `Error::Qdrant` if collection creation fails or server is unreachable.
-    async fn ensure_collection_exists(&self) -> Result<()> {
-        let collection_config = CreateCollection {
+    /// Returns error if the check fails for reasons other than non-existence.
+    pub async fn collection_exists(&self) -> Result<bool> {
+        let request = CollectionExistsRequest {
+            collection_name: self.collection_name.clone(),
+        };
+
+        match self.client.collection_exists(request).await {
+            Ok(response) => Ok(response),
+            Err(e) => Err(crate::Error::Qdrant(format!(
+                "Failed to check collection exists: {e}"
+            ))),
+        }
+    }
+
+    /// Creates the collection with proper vector configuration.
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if the collection was created successfully
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the collection creation fails for reasons other than non-existence.
+    pub async fn create_collection(&self) -> Result<()> {
+        if self.collection_exists().await? {
+            return Ok(());
+        }
+
+        let request = CreateCollection {
             collection_name: self.collection_name.clone(),
             vectors_config: Some(
                 VectorParams {
@@ -137,23 +166,66 @@ impl QdrantStorage {
             ..Default::default()
         };
 
-        // Try to create collection - ignore error if it already exists
-        match self.client.create_collection(collection_config).await {
+        match self.client.create_collection(request).await {
             Ok(_) => Ok(()),
-            Err(e) => {
-                let error_msg = e.to_string();
-                if error_msg.contains("already exists")
-                    || error_msg.contains("Collection already exists")
-                {
-                    // Collection exists, that's fine
-                    Ok(())
-                } else {
-                    Err(Error::Qdrant(format!(
-                        "Failed to create collection: {error_msg}"
-                    )))
-                }
-            }
+            Err(e) => Err(crate::Error::Qdrant(format!(
+                "Failed to create collection '{}': {e}",
+                self.collection_name
+            ))),
         }
+    }
+
+    /// Drops the collection if it exists.
+    ///
+    /// Completely removes the collection and all its data from Qdrant.
+    /// Useful for resetting the index or cleaning up test data.
+    ///
+    /// # Returns
+    ///
+    /// Ok(true) if collection was dropped, Ok(false) if it didn't exist
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the drop operation fails for reasons other than non-existence.
+    pub async fn drop_collection(&self) -> Result<bool> {
+        if !self.collection_exists().await? {
+            return Ok(false);
+        }
+
+        // Drop the collection
+        let request = DeleteCollection {
+            collection_name: self.collection_name.clone(),
+            ..Default::default()
+        };
+
+        match self.client.delete_collection(request).await {
+            Ok(_) => {
+                println!("Dropped collection '{}'", self.collection_name);
+                Ok(true)
+            }
+            Err(e) => Err(crate::Error::Qdrant(format!(
+                "Failed to drop collection '{}': {e}",
+                self.collection_name
+            ))),
+        }
+    }
+
+    /// Ensures that the collection exists with proper vector configuration.
+    ///
+    /// Creates a collection with 768-dimensional vectors using cosine similarity
+    /// if it doesn't already exist. This is called automatically during initialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Qdrant` if collection creation fails or server is unreachable.
+    async fn ensure_collection_exists(&self) -> Result<()> {
+        if self.collection_exists().await? {
+            return Ok(());
+        }
+
+        self.create_collection().await?;
+
+        Ok(())
     }
 
     /// Stores code chunks with their embeddings in the vector database.

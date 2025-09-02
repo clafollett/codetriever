@@ -5,11 +5,8 @@ use std::path::Path;
 
 #[tokio::test]
 async fn test_indexer_stores_chunks_in_qdrant() {
-    // Skip if no Qdrant available
-    if std::env::var("QDRANT_URL").is_err() {
-        println!("Skipping Qdrant integration test - QDRANT_URL not set");
-        return;
-    }
+    // Note: This test requires Qdrant to be running locally on port 6334
+    // You can start it with: docker-compose -f docker-compose.qdrant.yml up -d
 
     // Create indexer with Qdrant storage
     let config = Config::default();

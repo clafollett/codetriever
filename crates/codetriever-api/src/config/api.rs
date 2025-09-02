@@ -16,7 +16,8 @@
 //! let config = Config {
 //!     qdrant_url: "http://my-qdrant:6334".to_string(),
 //!     embedding_model: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
-//!     fallback_chunk_overlap_tokens: 512,
+//!     max_embedding_tokens: 1024,
+//!     chunk_overlap_tokens: 256,
 //!     ..Default::default()
 //! };
 //! ```
@@ -52,7 +53,8 @@ use std::path::PathBuf;
 ///     embedding_model: "jinaai/jina-embeddings-v2-base-code".to_string(),
 ///     use_metal: true,
 ///     cache_dir: PathBuf::from("/tmp/codetriever"),
-///     fallback_chunk_overlap_tokens: 256,
+///     max_embedding_tokens: 1024,
+///     chunk_overlap_tokens: 256,
 ///     split_large_semantic_units: true,
 ///     ..Default::default()
 /// };
@@ -94,12 +96,30 @@ pub struct Config {
     /// of models. Should have sufficient disk space for model files (~100MB-1GB).
     pub cache_dir: PathBuf,
 
+    /// Maximum number of tokens allowed per embedding input
+    ///
+    /// This must match the model's maximum context length. For Jina v2 models,
+    /// this is 8192 tokens. Chunks larger than this will be split or truncated.
+    /// Note: Higher values increase memory usage significantly, especially with
+    /// larger batch sizes. Consider reducing if experiencing memory issues.
+    /// TODO: Upgrade to jina-embeddings-v4 for massive improvements:
+    ///       - 32,768 token context (4x larger than current V2's 8192!)
+    ///       - 2048-dimensional embeddings (vs V2's 768) for richer representations
+    ///       - Matryoshka dimensions: 128, 256, 512, 1024, 2048 (flexibility!)
+    ///       - FlashAttention2 for faster processing
+    ///       - Supports code as first-class task type
+    ///       - Still runs locally - no API costs or data privacy concerns!
+    ///       - Would eliminate chunking for 99% of source files
+    ///
+    /// Alternative: voyage-code-3 (32K context; 256, 512, 1024 (default), 2048 dims; but requires API)
+    pub max_embedding_tokens: usize,
+
     /// Number of overlapping tokens for fallback chunking
     ///
     /// Only used when tree-sitter parsing fails and we fall back to naive chunking.
     /// Helps preserve context across chunk boundaries.
     /// Typical value: 256 tokens (provides good context continuity)
-    pub fallback_chunk_overlap_tokens: usize,
+    pub chunk_overlap_tokens: usize,
 
     /// Whether to split large semantic units that exceed token limits
     ///
@@ -107,6 +127,15 @@ pub struct Config {
     /// at logical boundaries (e.g., method boundaries for classes).
     /// When false, they will be truncated with a warning.
     pub split_large_semantic_units: bool,
+
+    /// Batch size for embedding generation
+    ///
+    /// Controls how many chunks are processed at once during embedding generation.
+    /// Lower values reduce memory usage but may be slower. Higher values use more
+    /// memory but can be faster due to better GPU utilization.
+    /// Recommended: 1-2 for Metal on MacBooks (to avoid memory pressure),
+    /// 8-16 for CUDA GPUs, 1 for CPU.
+    pub embedding_batch_size: usize,
 }
 
 impl Default for Config {
@@ -119,7 +148,8 @@ impl Default for Config {
     /// * `embedding_model`: "jinaai/jina-embeddings-v2-base-code" - Code-optimized model
     /// * `use_metal`: Enabled on macOS, disabled elsewhere
     /// * `cache_dir`: System cache directory + "codetriever" (falls back to ".cache/codetriever")
-    /// * `fallback_chunk_overlap_tokens`: 512 tokens - Context preservation for naive chunking
+    /// * `max_embedding_tokens`: 1024 tokens - Context preservation for naive chunking
+    /// * `chunk_overlap_tokens`: 256 tokens - Context preservation for naive chunking
     /// * `split_large_semantic_units`: true - Split large functions/classes at logical boundaries
     ///
     /// # Examples
@@ -129,7 +159,7 @@ impl Default for Config {
     ///
     /// let config = Config::default();
     /// assert_eq!(config.qdrant_url, "http://localhost:6334");
-    /// assert_eq!(config.fallback_chunk_overlap_tokens, 512);
+    /// assert_eq!(config.chunk_overlap_tokens, 512);
     /// assert!(config.split_large_semantic_units);
     /// ```
     fn default() -> Self {
@@ -151,10 +181,15 @@ impl Default for Config {
                 PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
                     .join(".codetriever")
             },
-            // 512 tokens overlap for fallback chunking provides good context
-            fallback_chunk_overlap_tokens: 512,
+            // Conservative token limit to avoid memory issues with Metal
+            // Can be increased to 8192 if you have sufficient RAM
+            max_embedding_tokens: 4096,
+            // 256 tokens overlap for fallback chunking provides good context
+            chunk_overlap_tokens: 512,
             // Split large functions/classes at logical boundaries
             split_large_semantic_units: true,
+            // Conservative batch size to avoid memory pressure on MacBooks
+            embedding_batch_size: 1,
         }
     }
 }

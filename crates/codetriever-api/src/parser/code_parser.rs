@@ -1,7 +1,6 @@
 //! Code parsing module for extracting meaningful code elements using tree-sitter and heuristics
 
 use crate::Result;
-use crate::embedding::model::{EMBEDDING_OVERLAP_TOKENS, MAX_EMBEDDING_INPUT_TOKENS};
 use crate::parser::languages::get_language_config;
 use std::sync::Arc;
 use tokenizers::Tokenizer;
@@ -30,14 +29,16 @@ pub struct CodeChunk {
 
 /// A code parser that uses Tree-sitter and heuristics to extract meaningful elements from source code
 pub struct CodeParser {
-    tokenizer: Option<Arc<Tokenizer>>,
+    tokenizer: Option<Arc<Tokenizer>>, // Tokenizer for counting (no truncation)
     split_large_units: bool,
-    fallback_overlap_tokens: usize,
+    max_tokens: usize,
+    overlap_tokens: usize,
 }
 
 impl Default for CodeParser {
     fn default() -> Self {
-        Self::new(None, true, EMBEDDING_OVERLAP_TOKENS)
+        // Use conservative defaults: split large units, 128 token overlap
+        Self::new(None, true, 512, 128)
     }
 }
 
@@ -46,12 +47,22 @@ impl CodeParser {
     pub fn new(
         tokenizer: Option<Arc<Tokenizer>>,
         split_large_units: bool,
-        fallback_overlap_tokens: usize,
+        max_tokens: usize,
+        overlap_tokens: usize,
     ) -> Self {
+        // Clone the tokenizer once and remove truncation for accurate counting
+        // This avoids cloning on every count_tokens() call
+        let counting_tokenizer = tokenizer.as_ref().map(|t| {
+            let mut clean_tokenizer = (**t).clone();
+            let _ = clean_tokenizer.with_truncation(None);
+            Arc::new(clean_tokenizer)
+        });
+
         Self {
-            tokenizer,
+            tokenizer: counting_tokenizer,
             split_large_units,
-            fallback_overlap_tokens,
+            max_tokens,
+            overlap_tokens,
         }
     }
 
@@ -80,10 +91,11 @@ impl CodeParser {
 
         // Warn if chunk exceeds token limit
         if let Some(count) = token_count
-            && count > MAX_EMBEDDING_INPUT_TOKENS
+            && count > self.max_tokens
         {
             log::warn!(
-                "Chunk exceeds {MAX_EMBEDDING_INPUT_TOKENS} tokens ({count} tokens) in {file_path}: lines {start_line}-{end_line}"
+                "Chunk exceeds {} tokens ({count} tokens) in {file_path}: lines {start_line}-{end_line}",
+                self.max_tokens
             );
         }
 
@@ -109,8 +121,113 @@ impl CodeParser {
         }
     }
 
+    /// Split content into token-based chunks with overlap
+    fn split_by_tokens(
+        &self,
+        content: &str,
+        file_path: &str,
+        language: &str,
+        kind: &str,
+        name: Option<String>,
+        start_line: usize,
+    ) -> Option<Vec<CodeChunk>> {
+        let tokenizer = self.tokenizer.as_ref()?;
+        let encoding = tokenizer.encode(content, false).ok()?;
+        let tokens = encoding.get_ids().to_vec();
+        let total_tokens = tokens.len();
+
+        if total_tokens <= self.max_tokens {
+            return None; // No splitting needed
+        }
+
+        let mut chunks = Vec::new();
+        let mut chunk_start = 0;
+        let mut part_num = 1;
+
+        // Track cumulative lines for accurate line numbers
+        let original_lines: Vec<&str> = content.lines().collect();
+        let total_lines = original_lines.len();
+
+        while chunk_start < total_tokens {
+            let chunk_end = (chunk_start + self.max_tokens).min(total_tokens);
+            let chunk_tokens = &tokens[chunk_start..chunk_end];
+
+            if let Ok(chunk_text) = tokenizer.decode(chunk_tokens, false) {
+                // Count lines in this chunk
+                let chunk_line_count = chunk_text.lines().count();
+
+                // Rough estimate: assume tokens are distributed evenly across lines
+                let estimated_start_line = start_line + (chunk_start * total_lines / total_tokens);
+                let estimated_end_line = estimated_start_line + chunk_line_count;
+
+                chunks.push(self.create_chunk(
+                    file_path,
+                    chunk_text,
+                    estimated_start_line,
+                    estimated_end_line,
+                    Some(format!("{kind}_part{part_num}")),
+                    language,
+                    name.clone(),
+                ));
+                part_num += 1;
+            }
+
+            // Move to next chunk with overlap
+            let next_start = chunk_end.saturating_sub(self.overlap_tokens);
+
+            // Ensure we always make progress
+            if next_start >= chunk_end || next_start <= chunk_start {
+                chunk_start = chunk_end; // Force progress
+            } else {
+                chunk_start = next_start;
+            }
+
+            // Stop if we've processed everything
+            if chunk_start >= total_tokens {
+                break;
+            }
+        }
+
+        Some(chunks)
+    }
+
+    /// Split content by lines (fallback when no tokenizer)
+    fn split_by_lines(
+        &self,
+        content: &str,
+        file_path: &str,
+        language: &str,
+        kind: &str,
+        name: Option<String>,
+        start_line: usize,
+    ) -> Vec<CodeChunk> {
+        let lines: Vec<&str> = content.lines().collect();
+        let mid_point = lines.len() / 2;
+        let overlap = 10.min(lines.len() / 10);
+
+        vec![
+            self.create_chunk(
+                file_path,
+                lines[..mid_point + overlap].join("\n"),
+                start_line,
+                start_line + mid_point + overlap,
+                Some(format!("{kind}_part1")),
+                language,
+                name.clone(),
+            ),
+            self.create_chunk(
+                file_path,
+                lines[mid_point..].join("\n"),
+                start_line + mid_point,
+                start_line + lines.len() - 1,
+                Some(format!("{kind}_part2")),
+                language,
+                name.clone(),
+            ),
+        ]
+    }
+
     /// Smart splitting for chunks that exceed token limits
-    /// Splits classes at method boundaries, large functions at logical points
     fn split_large_chunk(
         &self,
         content: &str,
@@ -153,7 +270,7 @@ impl CodeParser {
 
                     if let Some(token_count) = self.count_tokens(&current_content) {
                         // Create chunk if approaching limit
-                        if token_count >= MAX_EMBEDDING_INPUT_TOKENS - EMBEDDING_OVERLAP_TOKENS {
+                        if token_count >= self.max_tokens - self.overlap_tokens {
                             chunks.push(self.create_chunk(
                                 file_path,
                                 current_content,
@@ -188,35 +305,22 @@ impl CodeParser {
                 ));
             }
         } else {
-            // For functions or other constructs, split at statement boundaries
-            // For now, just split in half with overlap
-            let lines: Vec<&str> = content.lines().collect();
-            let mid_point = lines.len() / 2;
-            let overlap = 10.min(lines.len() / 10); // 10% overlap or 10 lines max
+            // For functions: try token-based splitting first, then fallback to lines
+            if let Some(token_chunks) =
+                self.split_by_tokens(content, file_path, language, kind, name.clone(), start_line)
+            {
+                return token_chunks;
+            }
 
-            // First half
-            let first_half = lines[..mid_point + overlap].join("\n");
-            chunks.push(self.create_chunk(
+            // Fallback to line-based splitting
+            return self.split_by_lines(
+                content,
                 file_path,
-                first_half,
+                language,
+                kind,
+                name.clone(),
                 start_line,
-                start_line + mid_point + overlap,
-                Some(format!("{kind}_part1")),
-                language,
-                name.clone(),
-            ));
-
-            // Second half
-            let second_half = lines[mid_point..].join("\n");
-            chunks.push(self.create_chunk(
-                file_path,
-                second_half,
-                start_line + mid_point,
-                start_line + lines.len() - 1,
-                Some(format!("{kind}_part2")),
-                language,
-                name.clone(),
-            ));
+            );
         }
 
         if chunks.is_empty() {
@@ -304,7 +408,14 @@ impl CodeParser {
                 // Check if chunk needs splitting based on token count
                 let content_str = content.to_string();
                 if let Some(token_count) = self.count_tokens(&content_str) {
-                    if self.split_large_units && token_count > MAX_EMBEDDING_INPUT_TOKENS {
+                    if self.split_large_units && token_count > self.max_tokens {
+                        println!(
+                            "📝 Splitting large {} '{}' ({} tokens > {} max) into smaller chunks",
+                            node.kind(),
+                            name.as_deref().unwrap_or("<unnamed>"),
+                            token_count,
+                            self.max_tokens
+                        );
                         // Use smart splitting for large chunks
                         let split_chunks = self.split_large_chunk(
                             &content_str,
@@ -487,7 +598,7 @@ impl CodeParser {
                 let current_content = current_chunk.join(line_ending);
                 if let Some(token_count) = self.count_tokens(&current_content) {
                     // Create chunk if approaching token limit (leave room for more lines)
-                    if token_count >= MAX_EMBEDDING_INPUT_TOKENS - EMBEDDING_OVERLAP_TOKENS {
+                    if token_count >= self.max_tokens - self.overlap_tokens {
                         let chunk = self.create_chunk(
                             file_path,
                             current_content,
@@ -507,7 +618,7 @@ impl CodeParser {
                         // Walk backwards through current_chunk to build overlap
                         for line in current_chunk.iter().rev() {
                             if let Some(line_tokens) = self.count_tokens(line) {
-                                if overlap_tokens + line_tokens > self.fallback_overlap_tokens {
+                                if overlap_tokens + line_tokens > self.overlap_tokens {
                                     break;
                                 }
                                 overlap_tokens += line_tokens;
@@ -701,14 +812,14 @@ mod tests {
 
     #[test]
     fn test_parser_initialization() {
-        let _parser = CodeParser::new(None, true, 256);
+        let _parser = CodeParser::new(None, true, 512, 128);
         // Parser should be created successfully
         // (parsers are now created on-demand, not stored)
     }
 
     #[test]
     fn test_rust_parsing() {
-        let parser = CodeParser::new(None, true, 256);
+        let parser = CodeParser::new(None, true, 512, 128);
         let code = r#"
 fn main() {
     println!("Hello, world!");
@@ -749,7 +860,7 @@ impl Point {
 
     #[test]
     fn test_python_parsing() {
-        let parser = CodeParser::new(None, true, 256);
+        let parser = CodeParser::new(None, true, 512, 128);
         let code = r#"
 def hello():
     print("Hello, world!")
@@ -778,7 +889,7 @@ async def async_function():
 
     #[test]
     fn test_heuristic_fallback() {
-        let parser = CodeParser::new(None, true, 256);
+        let parser = CodeParser::new(None, true, 512, 128);
         // Use a language without tree-sitter support or malformed code
         let code = r#"
 function test() {
@@ -799,7 +910,7 @@ class Example {
 
     #[test]
     fn test_chunk_metadata() {
-        let parser = CodeParser::new(None, true, 256);
+        let parser = CodeParser::new(None, true, 512, 128);
         let code = "fn test() {\n    println!(\"test\");\n}";
 
         let chunks = parser.parse(code, "rust", "/path/to/file.rs").unwrap();

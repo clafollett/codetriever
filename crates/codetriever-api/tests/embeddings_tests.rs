@@ -11,10 +11,14 @@ use tokio::sync::Mutex;
 type SharedModel = Arc<Mutex<EmbeddingModel>>;
 type SharedFlag = Arc<Mutex<bool>>;
 
+// Conservative token limit for tests to avoid memory issues
+const TEST_MAX_TOKENS: usize = 512;
+
 // Shared model instance - loaded once and reused across all tests
 static MODEL: Lazy<SharedModel> = Lazy::new(|| {
     Arc::new(Mutex::new(EmbeddingModel::new(
         "jinaai/jina-embeddings-v2-base-code".to_string(),
+        TEST_MAX_TOKENS,
     )))
 });
 
@@ -50,7 +54,10 @@ async fn get_model() -> Option<Arc<Mutex<EmbeddingModel>>> {
 #[tokio::test]
 async fn test_model_requires_huggingface_token() {
     // This test forces us to implement real model downloading
-    let mut model = EmbeddingModel::new("jinaai/jina-embeddings-v2-base-code".to_string());
+    let mut model = EmbeddingModel::new(
+        "jinaai/jina-embeddings-v2-base-code".to_string(),
+        TEST_MAX_TOKENS,
+    );
 
     let test_code = vec!["print('hello world')".to_string()];
     let result = model.embed(test_code).await;
@@ -287,7 +294,10 @@ async fn test_python_rust_comparison() {
         return;
     }
 
-    let mut model = EmbeddingModel::new("jinaai/jina-embeddings-v2-base-code".to_string());
+    let mut model = EmbeddingModel::new(
+        "jinaai/jina-embeddings-v2-base-code".to_string(),
+        TEST_MAX_TOKENS,
+    );
 
     // Same test snippets as Python
     let test_snippets = vec![

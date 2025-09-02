@@ -5,11 +5,8 @@ use std::path::Path;
 
 #[tokio::test]
 async fn test_manual_searches() {
-    // Skip if no Qdrant available
-    if std::env::var("QDRANT_URL").is_err() {
-        println!("Skipping - QDRANT_URL not set");
-        return;
-    }
+    // Note: This test requires Qdrant to be running locally on port 6334
+    // You can start it with: docker-compose -f docker-compose.qdrant.yml up -d
 
     // First, index the mini-redis repo
     let config = Config::default();
@@ -20,7 +17,21 @@ async fn test_manual_searches() {
     .await
     .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage);
+    if storage.collection_exists().await.unwrap() {
+        println!("Dropping collection to start with a clean slate...\n");
+        match storage.drop_collection().await {
+            Ok(_) => println!("Collection dropped successfully"),
+            Err(e) => println!("Failed to drop collection: {e}"),
+        }
+    }
+
+    println!("Creating collection...\n");
+    match storage.create_collection().await {
+        Ok(_) => println!("Collection created successfully"),
+        Err(e) => println!("Failed to create collection: {e}"),
+    }
+
+    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
 
     // Check if we need to index first
     let test_queries = vec![
@@ -92,6 +103,12 @@ async fn test_manual_searches() {
                 }
             }
         }
+    }
+
+    println!("\nDropping collection...\n");
+    match storage.drop_collection().await {
+        Ok(_) => println!("Collection dropped successfully"),
+        Err(e) => println!("Failed to drop collection: {e}"),
     }
 
     println!("\n{:-<80}", "");

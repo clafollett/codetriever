@@ -252,12 +252,16 @@ impl Indexer {
 
     pub fn with_config(config: &Config) -> Self {
         Self {
-            embedding_model: EmbeddingModel::new(config.embedding_model.clone()),
+            embedding_model: EmbeddingModel::new(
+                config.embedding_model.clone(),
+                config.max_embedding_tokens,
+            ),
             storage: None,
             code_parser: CodeParser::new(
-                None,
+                None, // Will be set after tokenizer loads
                 config.split_large_semantic_units,
-                config.fallback_chunk_overlap_tokens,
+                config.max_embedding_tokens,
+                config.chunk_overlap_tokens,
             ),
             config: config.clone(),
         }
@@ -265,12 +269,16 @@ impl Indexer {
 
     pub fn with_config_and_storage(config: &Config, storage: QdrantStorage) -> Self {
         Self {
-            embedding_model: EmbeddingModel::new(config.embedding_model.clone()),
+            embedding_model: EmbeddingModel::new(
+                config.embedding_model.clone(),
+                config.max_embedding_tokens,
+            ),
             storage: Some(storage),
             code_parser: CodeParser::new(
-                None,
+                None, // Will be set after tokenizer loads
                 config.split_large_semantic_units,
-                config.fallback_chunk_overlap_tokens,
+                config.max_embedding_tokens,
+                config.chunk_overlap_tokens,
             ),
             config: config.clone(),
         }
@@ -293,6 +301,27 @@ impl Indexer {
     }
 
     pub async fn index_directory(&mut self, path: &Path, recursive: bool) -> Result<IndexResult> {
+        println!("Starting index_directory for {path:?}");
+
+        // Ensure embedding model is loaded first to get tokenizer
+        println!("Loading embedding model...");
+        self.embedding_model.ensure_model_loaded().await?;
+
+        // Share tokenizer with parser (parser will configure it for counting)
+        println!("Setting up tokenizer for parser...");
+        if let Some(tokenizer) = self.embedding_model.get_tokenizer() {
+            println!("Creating CodeParser with tokenizer...");
+            self.code_parser = CodeParser::new(
+                Some(tokenizer),
+                self.config.split_large_semantic_units,
+                self.config.max_embedding_tokens,
+                self.config.chunk_overlap_tokens,
+            );
+            println!("CodeParser created");
+        } else {
+            println!("No tokenizer available from embedding model");
+        }
+
         let mut files_indexed = 0;
         let mut all_chunks = Vec::new();
 
@@ -306,21 +335,50 @@ impl Indexer {
         };
 
         // Process each file
+        println!("Processing {} files...", files.len());
         for file_path in files {
+            println!("Processing file: {file_path:?}");
             if let Ok(chunks) = self.index_file(&file_path).await {
+                println!("  Got {} chunks", chunks.len());
                 files_indexed += 1;
                 all_chunks.extend(chunks);
+            } else {
+                println!("  Failed to index file");
             }
         }
+        println!("All files processed. Total chunks: {}", all_chunks.len());
 
-        // Generate embeddings for all chunks
+        // Generate embeddings for all chunks in batches to avoid memory explosion
+        let batch_size = self.config.embedding_batch_size;
+
         if !all_chunks.is_empty() {
-            let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
-            let embeddings = self.embedding_model.embed(texts).await?;
+            println!(
+                "Generating embeddings for {} chunks in batches of {}",
+                all_chunks.len(),
+                batch_size
+            );
 
-            for (chunk, embedding) in all_chunks.iter_mut().zip(embeddings.iter()) {
-                chunk.embedding = Some(embedding.clone());
+            let total_batches = all_chunks.len().div_ceil(batch_size);
+
+            for batch_start in (0..all_chunks.len()).step_by(batch_size) {
+                let batch_end = (batch_start + batch_size).min(all_chunks.len());
+                let batch = &mut all_chunks[batch_start..batch_end];
+
+                println!(
+                    "Processing batch {}/{}",
+                    batch_start / batch_size + 1,
+                    total_batches
+                );
+
+                let texts: Vec<String> = batch.iter().map(|c| c.content.clone()).collect();
+
+                let embeddings = self.embedding_model.embed(texts).await?;
+
+                for (chunk, embedding) in batch.iter_mut().zip(embeddings.iter()) {
+                    chunk.embedding = Some(embedding.clone());
+                }
             }
+            println!("Generated embeddings for all {} chunks", all_chunks.len());
         }
 
         // Ensure storage is initialized and store chunks
@@ -335,21 +393,42 @@ impl Indexer {
             0
         };
 
-        Ok(IndexResult {
+        let result = IndexResult {
             files_indexed,
             chunks_created: all_chunks.len(),
             chunks_stored,
-        })
+        };
+
+        println!(
+            "\n📊 Indexing complete: {} files → {} chunks → {} stored",
+            result.files_indexed, result.chunks_created, result.chunks_stored
+        );
+
+        Ok(result)
+    }
+
+    /// Drop the collection from storage
+    pub async fn drop_collection(&mut self) -> Result<bool> {
+        // Ensure storage is initialized first
+        self.ensure_storage().await?;
+
+        if let Some(ref storage) = self.storage {
+            storage.drop_collection().await
+        } else {
+            Ok(false)
+        }
     }
 
     /// Ensure storage is initialized (lazy initialization)
     async fn ensure_storage(&mut self) -> Result<()> {
         if self.storage.is_none() {
+            println!("Initializing Qdrant storage at {}", self.config.qdrant_url);
             let storage = QdrantStorage::new(
                 self.config.qdrant_url.clone(),
                 self.config.qdrant_collection.clone(),
             )
             .await?;
+            println!("Qdrant storage initialized successfully");
             self.storage = Some(storage);
         }
         Ok(())

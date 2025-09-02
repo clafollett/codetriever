@@ -23,6 +23,7 @@ use candle_core::{D, DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use hf_hub::{Repo, RepoType, api::tokio::Api};
+use std::sync::Arc;
 use tokenizers::tokenizer::Tokenizer;
 
 /// Trait for embedding models to abstract over different BERT variants
@@ -49,22 +50,6 @@ impl EmbedderModel for JinaBertModel {
     }
 }
 
-/// Maximum number of tokens allowed per chunk (Jina model limit)
-/// TODO: Upgrade to jina-embeddings-v4 for massive improvements:
-///       - 32,768 token context (4x larger than current V2's 8192!)
-///       - 2048-dimensional embeddings (vs V2's 768) for richer representations
-///       - Matryoshka dimensions: 128, 256, 512, 1024, 2048 (flexibility!)
-///       - FlashAttention2 for faster processing
-///       - Supports code as first-class task type
-///       - Still runs locally - no API costs or data privacy concerns!
-///       - Would eliminate chunking for 99% of source files
-///
-/// Alternative: voyage-code-3 (32K context; 256, 512, 1024 (default), 2048 dims; but requires API)
-pub const MAX_EMBEDDING_INPUT_TOKENS: usize = 8192;
-
-/// Number of tokens to overlap between chunks when splitting large units
-pub const EMBEDDING_OVERLAP_TOKENS: usize = 512;
-
 /// Core embedding model for semantic code understanding.
 ///
 // Type alias for cleaner code
@@ -78,6 +63,7 @@ pub struct EmbeddingModel {
     device: Device,
     model: Option<BoxedEmbedderModel>,
     tokenizer: Option<Tokenizer>,
+    max_tokens: usize,
 }
 
 impl EmbeddingModel {
@@ -86,11 +72,12 @@ impl EmbeddingModel {
     /// # Arguments
     ///
     /// * `model_id` - The identifier for the embedding model to use (e.g., "jinaai/jina-embeddings-v2-base-code")
+    /// * `max_tokens` - Maximum number of tokens per embedding input
     ///
     /// # Returns
     ///
     /// A new `EmbeddingModel` instance ready for embedding operations.
-    pub fn new(model_id: String) -> Self {
+    pub fn new(model_id: String, max_tokens: usize) -> Self {
         let device = if candle_core::utils::cuda_is_available() {
             Device::new_cuda(0).unwrap_or(Device::Cpu)
         } else if candle_core::utils::metal_is_available() {
@@ -104,6 +91,7 @@ impl EmbeddingModel {
             device,
             model: None,
             tokenizer: None,
+            max_tokens,
         }
     }
 
@@ -153,15 +141,31 @@ impl EmbeddingModel {
         }));
         tokenizer
             .with_truncation(Some(TruncationParams {
-                max_length: MAX_EMBEDDING_INPUT_TOKENS,
+                max_length: self.max_tokens,
                 ..Default::default()
             }))
             .map_err(|e| crate::Error::Embedding(format!("Failed to set truncation: {e}")))?;
+
+        // Check for truncation by comparing token count to max
+        let num_texts = texts.len();
 
         // Encode texts
         let encodings = tokenizer
             .encode_batch(texts, true)
             .map_err(|e| crate::Error::Embedding(format!("Tokenization failed: {e}")))?;
+        // Count truncations for summary
+        let mut truncated_count = 0;
+        for encoding in encodings.iter() {
+            if encoding.len() >= self.max_tokens {
+                truncated_count += 1;
+            }
+        }
+        if truncated_count > 0 {
+            println!(
+                "WARNING: {} of {} texts truncated at {} tokens",
+                truncated_count, num_texts, self.max_tokens
+            );
+        }
 
         // Convert to tensors
         let batch_size = encodings.len();
@@ -271,13 +275,22 @@ impl EmbeddingModel {
         Ok(embeddings_vec)
     }
 
+    /// Get a reference to the tokenizer wrapped in Arc for sharing
+    /// Returns a fresh tokenizer WITHOUT truncation configured (for counting)
+    pub fn get_tokenizer(&self) -> Option<Arc<Tokenizer>> {
+        self.tokenizer.as_ref().map(|t| Arc::new(t.clone()))
+    }
+
     /// Ensures the model is loaded and ready for inference.
-    async fn ensure_model_loaded(&mut self) -> Result<()> {
+    pub async fn ensure_model_loaded(&mut self) -> Result<()> {
         if self.model.is_some() {
             return Ok(());
         }
 
+        println!("Loading embedding model: {}", self.model_id);
+
         // Initialize API
+        println!("Creating HuggingFace API client...");
         let api = Api::new()
             .map_err(|e| crate::Error::Embedding(format!("Failed to create HF API: {e}")))?;
         let repo = api.repo(Repo::new(self.model_id.clone(), RepoType::Model));
@@ -313,9 +326,8 @@ impl EmbeddingModel {
             })?;
 
             // Override max_position_embeddings to match our truncation limit
-            // This ensures the model's ALiBi positional encoding can handle our full 8192 token inputs
-            // (The default in jina_bert_v2::Config::v2_base() is only 512 for compatibility)
-            config.max_position_embeddings = MAX_EMBEDDING_INPUT_TOKENS;
+            // This ensures the model's ALiBi positional encoding can handle our configured token inputs
+            config.max_position_embeddings = self.max_tokens;
 
             // Load Jina model weights - convert to F32 for numerical stability
             // Even though weights are stored as F16, we use F32 for computation
@@ -370,8 +382,8 @@ impl EmbeddingModel {
 
 impl Default for EmbeddingModel {
     fn default() -> Self {
-        // Using CodeBERT as it has standard RoBERTa architecture that works with Candle
-        // Jina model has convergence issues we're still debugging
-        Self::new("microsoft/codebert-base".to_string())
+        // Using JinaBERT v2 which we've now fixed and works perfectly!
+        // Default to conservative 512 tokens for memory safety on Metal
+        Self::new("jinaai/jina-embeddings-v2-base-code".to_string(), 512)
     }
 }
