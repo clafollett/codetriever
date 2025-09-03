@@ -59,7 +59,8 @@ impl IndexerService for ApiIndexerService {
     }
 }
 
-#[cfg(test)]
+/// Test utilities for mocking IndexerService
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
     use super::*;
 

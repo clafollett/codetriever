@@ -1,12 +1,12 @@
 use super::response::ResponseStatus;
 use crate::impl_has_status;
-use crate::indexing::{ApiIndexerService, IndexerService};
 use axum::{
     Router,
     extract::{Json, State},
     response::IntoResponse,
     routing::post,
 };
+use codetriever_indexer::{ApiIndexerService, IndexerService};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -82,9 +82,9 @@ async fn index_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::indexing::MockIndexerService;
     use axum::body::Body;
     use axum::http::{StatusCode, header};
+    use codetriever_indexer::test_mocks::MockIndexerService;
     use tower::ServiceExt;
 
     #[tokio::test]

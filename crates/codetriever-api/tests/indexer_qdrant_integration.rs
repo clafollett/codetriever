@@ -1,6 +1,6 @@
 //! Integration test for indexer with Qdrant storage
 
-use codetriever_api::{config::Config, indexing::Indexer, storage::QdrantStorage};
+use codetriever_indexer::{config::Config, indexing::Indexer, storage::QdrantStorage};
 use std::path::Path;
 
 #[tokio::test]

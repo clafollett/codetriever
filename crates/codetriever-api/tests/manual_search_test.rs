@@ -1,6 +1,6 @@
 //! Manual search test to explore the indexed content
 
-use codetriever_api::{config::Config, indexing::Indexer, storage::QdrantStorage};
+use codetriever_indexer::{config::Config, indexing::Indexer, storage::QdrantStorage};
 use std::path::Path;
 
 #[tokio::test]

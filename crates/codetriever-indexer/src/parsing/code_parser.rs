@@ -1,7 +1,7 @@
 //! Code parsing module for extracting meaningful code elements using tree-sitter and heuristics
 
 use crate::Result;
-use crate::parser::languages::get_language_config;
+use crate::parsing::languages::get_language_config;
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIteratorMut};
@@ -468,7 +468,7 @@ impl CodeParser {
         code: &str,
         language: &str,
         file_path: &str,
-        config: Option<&'static crate::parser::languages::LanguageConfig>,
+        config: Option<&'static crate::parsing::languages::LanguageConfig>,
     ) -> Result<Vec<CodeChunk>> {
         let mut chunks = Vec::new();
 
@@ -667,7 +667,7 @@ impl CodeParser {
     fn is_definition_start(
         &self,
         line: &str,
-        config: Option<&'static crate::parser::languages::LanguageConfig>,
+        config: Option<&'static crate::parsing::languages::LanguageConfig>,
     ) -> bool {
         self.is_function_start(line, config) || self.is_class_start(line, config)
     }
@@ -675,7 +675,7 @@ impl CodeParser {
     fn is_function_start(
         &self,
         line: &str,
-        config: Option<&'static crate::parser::languages::LanguageConfig>,
+        config: Option<&'static crate::parsing::languages::LanguageConfig>,
     ) -> bool {
         if let Some(cfg) = config {
             cfg.function_keywords
@@ -704,7 +704,7 @@ impl CodeParser {
     fn is_class_start(
         &self,
         line: &str,
-        config: Option<&'static crate::parser::languages::LanguageConfig>,
+        config: Option<&'static crate::parsing::languages::LanguageConfig>,
     ) -> bool {
         if let Some(cfg) = config {
             cfg.class_keywords

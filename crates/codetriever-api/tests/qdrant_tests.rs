@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use codetriever_api::{indexing::CodeChunk, storage::QdrantStorage};
+    use codetriever_indexer::{indexing::CodeChunk, storage::QdrantStorage};
 
     #[tokio::test]
     async fn test_store_and_retrieve_chunks() {

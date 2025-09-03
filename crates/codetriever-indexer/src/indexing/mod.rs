@@ -6,5 +6,5 @@ pub use indexer::{CodeChunk, IndexResult, Indexer};
 pub use service::{ApiIndexerService, IndexerService};
 pub use watcher::FileWatcher;
 
-#[cfg(test)]
-pub use service::test_utils::MockIndexerService;
+#[cfg(any(test, feature = "test-utils"))]
+pub use service::test_utils;

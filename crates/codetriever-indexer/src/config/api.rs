@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```
-//! use codetriever_api::config::api::Config;
+//! use codetriever_indexer::config::api::Config;
 //!
 //! // Use default configuration
 //! let config = Config::default();
@@ -44,7 +44,7 @@ use std::path::PathBuf;
 /// # Examples
 ///
 /// ```
-/// use codetriever_api::config::api::Config;
+/// use codetriever_indexer::config::api::Config;
 /// use std::path::PathBuf;
 ///
 /// let config = Config {
@@ -155,7 +155,7 @@ impl Default for Config {
     /// # Examples
     ///
     /// ```
-    /// use codetriever_api::config::api::Config;
+    /// use codetriever_indexer::config::api::Config;
     ///
     /// let config = Config::default();
     /// assert_eq!(config.qdrant_url, "http://localhost:6334");

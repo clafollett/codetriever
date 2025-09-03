@@ -2,7 +2,7 @@
 //! These tests drive the implementation of real model loading,
 //! tokenization, and transformer-based embeddings
 
-use codetriever_api::embedding::EmbeddingModel;
+use codetriever_indexer::embedding::EmbeddingModel;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 use tokio::sync::Mutex;

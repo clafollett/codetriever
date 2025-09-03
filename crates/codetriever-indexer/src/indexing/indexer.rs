@@ -2,7 +2,7 @@ use crate::{
     Result,
     config::Config,
     embedding::EmbeddingModel,
-    parser::{CodeParser, get_language_from_extension},
+    parsing::{CodeParser, get_language_from_extension},
     storage::QdrantStorage,
 };
 use serde::{Deserialize, Serialize};

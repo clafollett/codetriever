@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use codetriever_api::storage::QdrantStorage;
+//! use codetriever_indexer::storage::QdrantStorage;
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -92,7 +92,7 @@ impl QdrantStorage {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use codetriever_api::storage::QdrantStorage;
+    /// use codetriever_indexer::storage::QdrantStorage;
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -104,7 +104,7 @@ impl QdrantStorage {
         // Connect to Qdrant server
         let client = Qdrant::from_url(&url)
             .build()
-            .map_err(|e| Error::Qdrant(format!("Failed to create Qdrant client: {e}")))?;
+            .map_err(|e| Error::Storage(format!("Failed to create Qdrant client: {e}")))?;
 
         let storage = Self {
             client,
@@ -133,7 +133,7 @@ impl QdrantStorage {
 
         match self.client.collection_exists(request).await {
             Ok(response) => Ok(response),
-            Err(e) => Err(crate::Error::Qdrant(format!(
+            Err(e) => Err(crate::Error::Storage(format!(
                 "Failed to check collection exists: {e}"
             ))),
         }
@@ -168,7 +168,7 @@ impl QdrantStorage {
 
         match self.client.create_collection(request).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(crate::Error::Qdrant(format!(
+            Err(e) => Err(crate::Error::Storage(format!(
                 "Failed to create collection '{}': {e}",
                 self.collection_name
             ))),
@@ -203,7 +203,7 @@ impl QdrantStorage {
                 println!("Dropped collection '{}'", self.collection_name);
                 Ok(true)
             }
-            Err(e) => Err(crate::Error::Qdrant(format!(
+            Err(e) => Err(crate::Error::Storage(format!(
                 "Failed to drop collection '{}': {e}",
                 self.collection_name
             ))),
@@ -252,7 +252,7 @@ impl QdrantStorage {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use codetriever_api::{storage::QdrantStorage, indexing::CodeChunk};
+    /// use codetriever_indexer::{storage::QdrantStorage, indexing::CodeChunk};
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -312,7 +312,7 @@ impl QdrantStorage {
         self.client
             .upsert_points(upsert_request)
             .await
-            .map_err(|e| Error::Qdrant(format!("Failed to store chunks: {e}")))?;
+            .map_err(|e| Error::Storage(format!("Failed to store chunks: {e}")))?;
 
         Ok(point_id as usize)
     }
@@ -343,7 +343,7 @@ impl QdrantStorage {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use codetriever_api::storage::QdrantStorage;
+    /// use codetriever_indexer::storage::QdrantStorage;
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -360,7 +360,7 @@ impl QdrantStorage {
     pub async fn search(&self, query: Vec<f32>, limit: usize) -> Result<Vec<CodeChunk>> {
         // Validate query vector dimensions
         if query.len() != 768 {
-            return Err(Error::Qdrant(format!(
+            return Err(Error::Storage(format!(
                 "Query vector must be 768 dimensions, got {}",
                 query.len()
             )));
@@ -378,7 +378,7 @@ impl QdrantStorage {
             .client
             .search_points(search_request)
             .await
-            .map_err(|e| Error::Qdrant(format!("Search failed: {e}")))?;
+            .map_err(|e| Error::Storage(format!("Search failed: {e}")))?;
 
         let mut results = Vec::new();
 
