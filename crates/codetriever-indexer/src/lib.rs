@@ -16,7 +16,7 @@ pub use error::{Error, Result};
 // Re-export main types
 pub use embedding::EmbeddingModel;
 pub use indexing::{ApiIndexerService, IndexResult, Indexer, IndexerService};
-pub use parsing::CodeParser;
+pub use parsing::{CodeChunk, CodeParser};
 
 // Re-export test utilities when test-utils feature is enabled
 #[cfg(any(test, feature = "test-utils"))]

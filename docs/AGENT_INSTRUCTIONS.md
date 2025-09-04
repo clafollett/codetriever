@@ -11,7 +11,8 @@
 5. **Vibe-based coding** - Start with what feels right, iterate
 6. **Test business logic only** - Not OS behavior or timing
 7. **Ship working code daily** - Progress > perfection
-8. **End every coding response with**: "ALWAYS Follow Red/Green/Refactor TDD and Rust Idiomatic Best Practices" - This reminder ensures adherence to core principles
+8. **Use actionable TODO comments** - Write `// TODO: <specific action>` not vague comments like "currently" or "not implemented". Be explicit about what needs to be done
+9. **End every coding response with**: "ALWAYS Follow Red/Green/Refactor TDD and Rust Idiomatic Best Practices" - This reminder ensures adherence to core principles
 
 ## Technical Requirements
 

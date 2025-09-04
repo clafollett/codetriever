@@ -1,21 +1,16 @@
+#[path = "test_utils.rs"]
+mod test_utils;
+
 #[cfg(test)]
 mod tests {
-    use codetriever_indexer::{indexing::CodeChunk, storage::QdrantStorage};
+    use super::test_utils::create_test_storage;
+    use codetriever_indexer::CodeChunk;
 
     #[tokio::test]
     async fn test_store_and_retrieve_chunks() {
-        // Skip if no Qdrant available
-        if std::env::var("QDRANT_URL").is_err() {
-            println!("Skipping Qdrant test - QDRANT_URL not set");
-            return;
-        }
-
-        let storage = QdrantStorage::new(
-            "http://localhost:6334".to_string(),
-            "test_collection".to_string(),
-        )
-        .await
-        .expect("Failed to create storage");
+        let storage = create_test_storage("qdrant_chunks")
+            .await
+            .expect("Failed to create storage");
 
         // Create test chunks with embeddings
         let chunks = vec![
@@ -24,6 +19,10 @@ mod tests {
                 content: "fn hello() { println!(\"Hello\"); }".to_string(),
                 start_line: 1,
                 end_line: 1,
+                kind: Some("function".to_string()),
+                language: "rust".to_string(),
+                name: Some("hello".to_string()),
+                token_count: Some(10),
                 embedding: Some(vec![0.1; 768]), // 768-dim embedding
             },
             CodeChunk {
@@ -31,6 +30,10 @@ mod tests {
                 content: "fn world() { println!(\"World\"); }".to_string(),
                 start_line: 2,
                 end_line: 2,
+                kind: Some("function".to_string()),
+                language: "rust".to_string(),
+                name: Some("world".to_string()),
+                token_count: Some(10),
                 embedding: Some(vec![0.2; 768]), // 768-dim embedding
             },
         ];

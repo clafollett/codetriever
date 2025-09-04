@@ -1,7 +1,11 @@
 //! Integration test for indexer with Qdrant storage
 
-use codetriever_indexer::{config::Config, indexing::Indexer, storage::QdrantStorage};
+#[path = "test_utils.rs"]
+mod test_utils;
+
+use codetriever_indexer::indexing::Indexer;
 use std::path::Path;
+use test_utils::{create_test_storage, test_config};
 
 #[tokio::test]
 async fn test_indexer_stores_chunks_in_qdrant() {
@@ -9,13 +13,10 @@ async fn test_indexer_stores_chunks_in_qdrant() {
     // You can start it with: docker-compose -f docker-compose.qdrant.yml up -d
 
     // Create indexer with Qdrant storage
-    let config = Config::default();
-    let storage = QdrantStorage::new(
-        "http://localhost:6334".to_string(),
-        "test_indexer_collection".to_string(),
-    )
-    .await
-    .expect("Failed to create storage");
+    let config = test_config();
+    let storage = create_test_storage("indexer_integration")
+        .await
+        .expect("Failed to create storage");
 
     let mut indexer = Indexer::with_config_and_storage(&config, storage);
 

@@ -2,10 +2,10 @@ use crate::{
     Result,
     config::Config,
     embedding::EmbeddingModel,
-    parsing::{CodeParser, get_language_from_extension},
+    indexing::service::FileContent,
+    parsing::{CodeChunk, CodeParser, get_language_from_extension},
     storage::QdrantStorage,
 };
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 // Supported code file extensions
@@ -215,15 +215,6 @@ pub const CODE_EXTENSIONS: &[&str] = &[
     "sol", // Solidity
 ];
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeChunk {
-    pub file_path: String,
-    pub content: String,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub embedding: Option<Vec<f32>>,
-}
-
 #[derive(Debug)]
 pub struct IndexResult {
     pub files_indexed: usize,
@@ -407,6 +398,84 @@ impl Indexer {
         Ok(result)
     }
 
+    /// Index file content directly without filesystem access
+    pub async fn index_content(
+        &mut self,
+        project_id: &str,
+        files: Vec<FileContent>,
+    ) -> Result<IndexResult> {
+        println!("Starting index_content for project: {project_id}");
+
+        // Ensure embedding model is loaded first to get tokenizer
+        println!("Loading embedding model...");
+        self.embedding_model.ensure_model_loaded().await?;
+
+        // Share tokenizer with parser
+        if let Some(tokenizer) = self.embedding_model.get_tokenizer() {
+            self.code_parser = CodeParser::new(
+                Some(tokenizer),
+                self.config.split_large_semantic_units,
+                self.config.max_embedding_tokens,
+                self.config.chunk_overlap_tokens,
+            );
+        }
+
+        // Ensure storage is initialized
+        self.ensure_storage().await?;
+
+        let mut all_chunks = Vec::new();
+        let mut files_indexed = 0;
+
+        for file in &files {
+            println!("Processing file: {}", file.path);
+
+            // Get language from file extension
+            let ext = file.path.rsplit('.').next().unwrap_or("");
+            let language = get_language_from_extension(ext).unwrap_or(ext);
+
+            // Parse the content into chunks
+            let chunks = self
+                .code_parser
+                .parse(&file.content, language, &file.path)?;
+
+            if !chunks.is_empty() {
+                files_indexed += 1;
+                println!("  Got {} chunks", chunks.len());
+                all_chunks.extend(chunks);
+            }
+        }
+
+        let chunks_created = all_chunks.len();
+        println!("Total: {files_indexed} files indexed, {chunks_created} chunks created");
+
+        // Generate embeddings and store if we have chunks
+        if !all_chunks.is_empty() {
+            println!("Generating embeddings for {} chunks...", all_chunks.len());
+
+            // Generate embeddings in batches
+            let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
+            let embeddings = self.embedding_model.embed(texts).await?;
+
+            // Add embeddings to chunks
+            for (chunk, embedding) in all_chunks.iter_mut().zip(embeddings) {
+                chunk.embedding = Some(embedding);
+            }
+
+            // Store chunks with embeddings
+            if let Some(ref storage) = self.storage {
+                println!("Storing {} chunks in vector database...", all_chunks.len());
+                storage.store_chunks(&all_chunks).await?;
+                println!("Successfully stored chunks");
+            }
+        }
+
+        Ok(IndexResult {
+            files_indexed,
+            chunks_created,
+            chunks_stored: chunks_created, // All created chunks are stored
+        })
+    }
+
     /// Drop the collection from storage
     pub async fn drop_collection(&mut self) -> Result<bool> {
         // Ensure storage is initialized first
@@ -451,20 +520,7 @@ impl Indexer {
         let file_path = path.to_string_lossy().to_string();
 
         // Use hybrid parser for intelligent chunking
-        let parser_chunks = self.code_parser.parse(&content, language, &file_path)?;
-
-        // Convert parser chunks to indexer chunks
-        let mut chunks = Vec::new();
-        for parser_chunk in parser_chunks {
-            chunks.push(CodeChunk {
-                file_path: parser_chunk.file_path,
-                content: parser_chunk.content,
-                start_line: parser_chunk.start_line,
-                end_line: parser_chunk.end_line,
-                embedding: None,
-            });
-        }
-
+        let chunks = self.code_parser.parse(&content, language, &file_path)?;
         Ok(chunks)
     }
 }

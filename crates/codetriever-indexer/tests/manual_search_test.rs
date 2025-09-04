@@ -1,7 +1,11 @@
 //! Manual search test to explore the indexed content
 
-use codetriever_indexer::{config::Config, indexing::Indexer, storage::QdrantStorage};
+#[path = "test_utils.rs"]
+mod test_utils;
+
+use codetriever_indexer::indexing::Indexer;
 use std::path::Path;
+use test_utils::{create_test_storage, test_config};
 
 #[tokio::test]
 async fn test_manual_searches() {
@@ -9,13 +13,10 @@ async fn test_manual_searches() {
     // You can start it with: docker-compose -f docker-compose.qdrant.yml up -d
 
     // First, index the mini-redis repo
-    let config = Config::default();
-    let storage = QdrantStorage::new(
-        "http://localhost:6334".to_string(),
-        "test_search_exploration".to_string(),
-    )
-    .await
-    .expect("Failed to create storage");
+    let config = test_config();
+    let storage = create_test_storage("search_exploration")
+        .await
+        .expect("Failed to create storage");
 
     if storage.collection_exists().await.unwrap() {
         println!("Dropping collection to start with a clean slate...\n");

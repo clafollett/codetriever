@@ -29,8 +29,15 @@ pub fn routes_with_indexer(indexer: IndexerServiceHandle) -> Router {
 
 #[derive(Debug, Deserialize)]
 pub struct IndexRequest {
+    pub project_id: String,
+    pub files: Vec<FileContent>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileContent {
     pub path: String,
-    pub recursive: Option<bool>,
+    pub content: String,
+    pub hash: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,13 +71,21 @@ async fn index_handler(
     State(indexer): State<IndexerServiceHandle>,
     Json(request): Json<IndexRequest>,
 ) -> impl IntoResponse {
-    let path = std::path::Path::new(&request.path);
-    let recursive = request.recursive.unwrap_or(false);
+    // Convert API FileContent to indexer FileContent
+    let files = request
+        .files
+        .into_iter()
+        .map(|f| codetriever_indexer::indexing::service::FileContent {
+            path: f.path,
+            content: f.content,
+            hash: f.hash,
+        })
+        .collect();
 
     // Use the injected indexer service
     let mut indexer = indexer.lock().await;
 
-    match indexer.index_directory(path, recursive).await {
+    match indexer.index_content(&request.project_id, files).await {
         Ok(result) => Json(IndexResponse::success(
             result.files_indexed,
             result.chunks_created,
@@ -88,12 +103,26 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn test_index_endpoint_accepts_path() {
+    async fn test_index_endpoint_accepts_content() {
         // Use mock indexer that returns predictable results
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(0, 0)));
+        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(2, 10)));
         let app = routes_with_indexer(mock_indexer);
 
-        let request_body = r#"{"path": "/test/path"}"#;
+        let request_body = r#"{
+            "project_id": "test-project",
+            "files": [
+                {
+                    "path": "src/main.rs",
+                    "content": "fn main() {\n    println!(\"Hello\");\n}",
+                    "hash": "abc123"
+                },
+                {
+                    "path": "src/lib.rs", 
+                    "content": "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}",
+                    "hash": "def456"
+                }
+            ]
+        }"#;
 
         let response = app
             .oneshot(
@@ -116,6 +145,8 @@ mod tests {
         let response: IndexResponse = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(response.status, ResponseStatus::Success);
+        assert_eq!(response.files_indexed, 2);
+        assert_eq!(response.chunks_created, 10);
     }
 
     #[tokio::test]
@@ -124,7 +155,13 @@ mod tests {
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(5, 10)));
         let app = routes_with_indexer(mock_indexer);
 
-        let request_body = r#"{"path": "/test/path", "recursive": true}"#;
+        let request_body = r#"{
+            "project_id": "test-project",
+            "files": [
+                {"path": "file1.rs", "content": "fn main() {}", "hash": "abc123"},
+                {"path": "file2.rs", "content": "fn test() {}", "hash": "def456"}
+            ]
+        }"#;
 
         let response = app
             .oneshot(
@@ -164,10 +201,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_index_endpoint_handles_empty_path() {
+    async fn test_index_endpoint_handles_empty_files() {
         let app = routes();
 
-        let request_body = r#"{"path": ""}"#;
+        let request_body = r#"{
+            "project_id": "test-project",
+            "files": []
+        }"#;
 
         let response = app
             .oneshot(
@@ -188,16 +228,20 @@ mod tests {
             .unwrap();
         let response: IndexResponse = serde_json::from_slice(&body).unwrap();
 
-        // Empty path should return 0 files
+        // Empty files list should return 0 files
         assert_eq!(response.files_indexed, 0);
     }
 
     #[tokio::test]
-    async fn test_index_endpoint_handles_nonexistent_path() {
+    async fn test_index_endpoint_handles_no_content() {
         let app = routes();
 
-        let request_body =
-            r#"{"path": "/definitely/does/not/exist/path/to/nowhere", "recursive": false}"#;
+        let request_body = r#"{
+            "project_id": "test-project",
+            "files": [
+                {"path": "file.rs", "content": "", "hash": "empty"}
+            ]
+        }"#;
 
         let response = app
             .oneshot(
@@ -218,7 +262,7 @@ mod tests {
             .unwrap();
         let response: IndexResponse = serde_json::from_slice(&body).unwrap();
 
-        // Should handle gracefully with 0 files indexed
+        // Empty content means no chunks, so file is not indexed
         assert_eq!(response.files_indexed, 0);
         assert_eq!(response.chunks_created, 0);
     }
@@ -229,7 +273,14 @@ mod tests {
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(3, 7)));
         let app = routes_with_indexer(mock_indexer);
 
-        let request_body = r#"{"path": "/any/path", "recursive": false}"#;
+        let request_body = r#"{
+            "project_id": "test-project",
+            "files": [
+                {"path": "file1.rs", "content": "code1", "hash": "h1"},
+                {"path": "file2.rs", "content": "code2", "hash": "h2"},
+                {"path": "file3.rs", "content": "code3", "hash": "h3"}
+            ]
+        }"#;
 
         let response = app
             .oneshot(
@@ -242,6 +293,8 @@ mod tests {
             )
             .await
             .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
 
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -276,7 +329,12 @@ mod tests {
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(1, 5)));
         let app = routes_with_indexer(mock_indexer);
 
-        let request_body = r#"{"path": "/test/file.py", "recursive": false}"#;
+        let request_body = r#"{
+            "project_id": "test-project",
+            "files": [
+                {"path": "file.py", "content": "def hello(): pass", "hash": "abc"}
+            ]
+        }"#;
 
         let response = app
             .oneshot(
@@ -306,7 +364,12 @@ mod tests {
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::with_error()));
         let app = routes_with_indexer(mock_indexer);
 
-        let request_body = r#"{"path": "/some/path", "recursive": true}"#;
+        let request_body = r#"{
+            "project_id": "test-project",
+            "files": [
+                {"path": "file.rs", "content": "code", "hash": "h1"}
+            ]
+        }"#;
 
         let response = app
             .oneshot(

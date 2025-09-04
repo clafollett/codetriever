@@ -55,7 +55,9 @@ candle-core = { version = "0.9.1" }
 candle-nn = { version = "0.9.1" }
 candle-transformers = { version = "0.9.1" }
 hf-hub = { version = "0.4.3", features = ["tokio"] }
-tokenizers = { version = "0.22.0", default-features = false, features = ["onig"] }
+tokenizers = { version = "0.22.0", default-features = false, features = [
+    "onig",
+] }
 
 # Utils
 walkdir = "2.5"
@@ -68,4 +70,5 @@ candle-nn = { version = "0.9.1", features = ["metal"] }
 candle-transformers = { version = "0.9.1", features = ["metal"] }
 
 [dev-dependencies]
+once_cell = "1.20"
 tempfile = { workspace = true }

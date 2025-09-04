@@ -13,8 +13,23 @@ pub trait IndexerService: Send + Sync {
         recursive: bool,
     ) -> crate::Result<IndexResult>;
 
+    /// Index file content directly without filesystem access
+    async fn index_content(
+        &mut self,
+        project_id: &str,
+        files: Vec<FileContent>,
+    ) -> crate::Result<IndexResult>;
+
     /// Drop the collection from storage
     async fn drop_collection(&mut self) -> crate::Result<bool>;
+}
+
+/// Represents a file with its content for indexing
+#[derive(Debug, Clone)]
+pub struct FileContent {
+    pub path: String,
+    pub content: String,
+    pub hash: String,
 }
 
 /// Real implementation of IndexerService using the actual Indexer
@@ -52,6 +67,14 @@ impl IndexerService for ApiIndexerService {
         recursive: bool,
     ) -> crate::Result<IndexResult> {
         self.indexer.index_directory(path, recursive).await
+    }
+
+    async fn index_content(
+        &mut self,
+        project_id: &str,
+        files: Vec<FileContent>,
+    ) -> crate::Result<IndexResult> {
+        self.indexer.index_content(project_id, files).await
     }
 
     async fn drop_collection(&mut self) -> crate::Result<bool> {
@@ -95,6 +118,22 @@ pub mod test_utils {
             &mut self,
             _path: &std::path::Path,
             _recursive: bool,
+        ) -> crate::Result<IndexResult> {
+            if self.should_error {
+                Err(crate::Error::Io("Mock error".to_string()))
+            } else {
+                Ok(IndexResult {
+                    files_indexed: self.files_to_return,
+                    chunks_created: self.chunks_to_return,
+                    chunks_stored: 0,
+                })
+            }
+        }
+
+        async fn index_content(
+            &mut self,
+            _project_id: &str,
+            _files: Vec<FileContent>,
         ) -> crate::Result<IndexResult> {
             if self.should_error {
                 Err(crate::Error::Io("Mock error".to_string()))

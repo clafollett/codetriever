@@ -30,7 +30,7 @@
 //! # }
 //! ```
 
-use crate::{Error, Result, indexing::CodeChunk};
+use crate::{Error, Result, parsing::CodeChunk};
 use qdrant_client::qdrant::{
     CollectionExistsRequest, CreateCollection, DeleteCollection, Distance, PointStruct,
     SearchPoints, UpsertPoints, Value, VectorParams,
@@ -252,7 +252,7 @@ impl QdrantStorage {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use codetriever_indexer::{storage::QdrantStorage, indexing::CodeChunk};
+    /// use codetriever_indexer::{storage::QdrantStorage, CodeChunk};
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -263,6 +263,10 @@ impl QdrantStorage {
     ///         content: "fn main() {}".to_string(),
     ///         start_line: 1,
     ///         end_line: 1,
+    ///         kind: Some("function".to_string()),
+    ///         language: "rust".to_string(),
+    ///         name: Some("main".to_string()),
+    ///         token_count: Some(5),
     ///         embedding: Some(vec![0.1; 768]), // 768-dim embedding
     ///     }
     /// ];
@@ -288,6 +292,18 @@ impl QdrantStorage {
                     Value::from(chunk.start_line as i64),
                 );
                 payload.insert("end_line".to_string(), Value::from(chunk.end_line as i64));
+                payload.insert("language".to_string(), Value::from(chunk.language.clone()));
+
+                // Store optional fields
+                if let Some(ref kind) = chunk.kind {
+                    payload.insert("kind".to_string(), Value::from(kind.clone()));
+                }
+                if let Some(ref name) = chunk.name {
+                    payload.insert("name".to_string(), Value::from(name.clone()));
+                }
+                if let Some(token_count) = chunk.token_count {
+                    payload.insert("token_count".to_string(), Value::from(token_count as i64));
+                }
 
                 points.push(PointStruct::new(
                     point_id,
@@ -408,11 +424,36 @@ impl QdrantStorage {
                 .and_then(|v| v.as_integer())
                 .unwrap_or(0) as usize;
 
+            let kind = payload
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let language = payload
+                .get("language")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
+            let name = payload
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let token_count = payload
+                .get("token_count")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as usize);
+
             results.push(CodeChunk {
-                file_path,
+                file_path: file_path.clone(),
                 content,
                 start_line,
                 end_line,
+                kind,
+                language,
+                name,
+                token_count,
                 embedding: None, // Don't return embeddings to save memory
             });
         }

@@ -25,6 +25,8 @@ pub struct CodeChunk {
     pub name: Option<String>,
     /// Number of tokens in this chunk (if calculated)
     pub token_count: Option<usize>,
+    /// Optional embedding vector (populated during indexing)
+    pub embedding: Option<Vec<f32>>,
 }
 
 /// A code parser that uses Tree-sitter and heuristics to extract meaningful elements from source code
@@ -108,6 +110,7 @@ impl CodeParser {
             language: language.to_string(),
             name,
             token_count,
+            embedding: None,
         }
     }
 
