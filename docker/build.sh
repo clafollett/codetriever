@@ -13,11 +13,11 @@ echo
 
 # Build distroless image (default, most secure)
 echo -e "${GREEN}Building distroless image (53MB, ultra-secure)...${NC}"
-docker build -f docker/Dockerfile.api -t codetriever-api:distroless -t codetriever-api:latest .
+docker build -f Dockerfile.api -t codetriever-api:distroless -t codetriever-api:latest ..
 
 # Build Chainguard glibc image (smallest)
 echo -e "${GREEN}Building Chainguard image (19MB, minimal)...${NC}"
-docker build -f docker/Dockerfile.api.chainguard -t codetriever-api:chainguard .
+docker build -f Dockerfile.api.chainguard -t codetriever-api:chainguard ..
 
 echo
 echo -e "${BLUE}Build complete! Available images:${NC}"

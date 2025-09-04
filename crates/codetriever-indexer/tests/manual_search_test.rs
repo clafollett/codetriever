@@ -10,7 +10,7 @@ use test_utils::{create_test_storage, test_config};
 #[tokio::test]
 async fn test_manual_searches() {
     // Note: This test requires Qdrant to be running locally on port 6334
-    // You can start it with: docker-compose -f docker-compose.qdrant.yml up -d
+    // You can start it with: docker-compose -f docker/docker-compose.qdrant.yml up -d
 
     // First, index the mini-redis repo
     let config = test_config();

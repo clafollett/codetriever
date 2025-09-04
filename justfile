@@ -410,13 +410,13 @@ dev:
 
 # Run Docker environment
 dev-docker:
-    docker-compose up --build
+    docker-compose -f docker/docker-compose.dev.yml up --build
 
 # Stop all Codetriever services
 stop:
     @just qdrant-stop
     @pkill codetriever || true
-    @docker-compose down 2>/dev/null || true
+    @docker-compose -f docker/docker-compose.dev.yml down 2>/dev/null || true
     @echo "✅ All services stopped"
 
 # Create new API crate
@@ -490,23 +490,23 @@ stats:
 # Start Qdrant using dedicated compose file
 qdrant-start:
     @echo "🚀 Starting Qdrant..."
-    @docker-compose -f docker-compose.qdrant.yml up -d qdrant
+    @docker-compose -f docker/docker-compose.qdrant.yml up -d qdrant
     @sleep 2
     @curl -s http://localhost:6333/health >/dev/null && echo "✅ Qdrant ready on http://localhost:6333" || echo "⚠️  Qdrant starting..."
 
 # Stop Qdrant
 qdrant-stop:
-    @docker-compose -f docker-compose.qdrant.yml stop qdrant
+    @docker-compose -f docker/docker-compose.qdrant.yml stop qdrant
     @echo "✅ Qdrant stopped"
 
 # Remove Qdrant container and volumes
 qdrant-clean:
-    @docker-compose -f docker-compose.qdrant.yml down -v
+    @docker-compose -f docker/docker-compose.qdrant.yml down -v
     @echo "✅ Qdrant container and volumes removed"
 
 # Show Qdrant logs
 qdrant-logs:
-    @docker-compose -f docker-compose.qdrant.yml logs -f qdrant
+    @docker-compose -f docker/docker-compose.qdrant.yml logs -f qdrant
 
 # Check Qdrant health
 qdrant-health:

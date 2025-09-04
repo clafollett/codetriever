@@ -10,7 +10,7 @@ use test_utils::{create_test_storage, test_config};
 #[tokio::test]
 async fn test_indexer_stores_chunks_in_qdrant() {
     // Note: This test requires Qdrant to be running locally on port 6334
-    // You can start it with: docker-compose -f docker-compose.qdrant.yml up -d
+    // You can start it with: docker-compose -f docker/docker-compose.qdrant.yml up -d
 
     // Create indexer with Qdrant storage
     let config = test_config();
