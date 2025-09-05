@@ -1,4 +1,23 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: codetriever-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=codetriever
+      - POSTGRES_PASSWORD=codetriever
+      - POSTGRES_DB=codetriever
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --locale=C
+    volumes:
+      - ${HOME}/.codetriever/postgres/data:/var/lib/postgresql/data:z
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codetriever"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   qdrant:
     image: qdrant/qdrant:latest
     container_name: codetriever-qdrant
@@ -25,6 +44,7 @@ services:
       - "8080:8080"
     environment:
       - RUST_LOG=info
+      - DATABASE_URL=postgresql://codetriever:codetriever@postgres/codetriever
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION=codetriever
       - EMBEDDING_MODEL=jinaai/jina-embeddings-v2-base-code
@@ -33,6 +53,8 @@ services:
       - ${HOME}/.codetriever/cache:/app/cache
       - ${HOME}/.codetriever/repos:/app/repos:ro  # Read-only mount for code repositories
     depends_on:
+      postgres:
+        condition: service_healthy
       qdrant:
         condition: service_healthy
     restart: unless-stopped

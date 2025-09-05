@@ -1,4 +1,30 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: codetriever-postgres
+    ports:
+      - "127.0.0.1:5432:5432"  # Only bind to localhost
+    environment:
+      - POSTGRES_USER=${DB_USER:-codetriever}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-changeme}  # MUST override in production
+      - POSTGRES_DB=${DB_NAME:-codetriever}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --locale=C
+      - POSTGRES_HOST_AUTH_METHOD=scram-sha-256
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-codetriever}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
   qdrant:
     image: qdrant/qdrant:latest
     container_name: codetriever-qdrant
@@ -37,6 +63,7 @@ services:
     environment:
       - RUST_LOG=warn
       - RUST_BACKTRACE=1
+      - DATABASE_URL=postgresql://${DB_USER:-codetriever}:${DB_PASSWORD:-changeme}@postgres/${DB_NAME:-codetriever}
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION=codetriever
       - EMBEDDING_MODEL=jinaai/jina-embeddings-v2-base-code
@@ -49,6 +76,8 @@ services:
       # TODO: Define REPOS_PATH strategy for production (S3, NFS, or managed volume)
       - ${REPOS_PATH:-./repos}:/app/repos:ro
     depends_on:
+      postgres:
+        condition: service_healthy
       qdrant:
         condition: service_healthy
     restart: always
@@ -82,6 +111,8 @@ services:
       - with-proxy
 
 volumes:
+  postgres_data:
+    driver: local
   qdrant_data:
     driver: local
   api_cache:

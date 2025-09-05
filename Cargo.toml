@@ -2,6 +2,7 @@
 members = [
     "crates/codetriever",
     "crates/codetriever-api",
+    "crates/codetriever-data",
     "crates/codetriever-indexer",
     # Future crates:
     # "crates/codetriever-core",
