@@ -3,7 +3,10 @@
 //! This module provides common testing utilities used across multiple test files.
 //! Functions are only compiled into test binaries that actually use them.
 
-use codetriever_indexer::{config::Config, storage::QdrantStorage};
+use codetriever_indexer::{
+    config::Config,
+    storage::{QdrantStorage, VectorStorage},
+};
 
 /// Get the Qdrant URL for testing, defaulting to localhost
 /// Can be overridden with QDRANT_TEST_URL environment variable
@@ -49,4 +52,14 @@ pub async fn create_test_storage(test_name: &str) -> Result<QdrantStorage, Strin
 #[allow(unused)]
 pub fn test_config() -> Config {
     Config::default()
+}
+
+/// Clean up test storage by dropping the collection
+#[allow(unused)]
+pub async fn cleanup_test_storage(storage: &QdrantStorage) -> Result<(), String> {
+    storage
+        .drop_collection()
+        .await
+        .map_err(|e| format!("Failed to drop collection: {e}"))?;
+    Ok(())
 }

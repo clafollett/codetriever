@@ -173,8 +173,8 @@ impl FileRepository for DbFileRepository {
                 r#"
                 INSERT INTO chunk_metadata (
                     chunk_id, repository_id, branch, file_path, chunk_index, generation,
-                    start_line, end_line, kind, name, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    start_line, end_line, byte_start, byte_end, kind, name, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 "#,
             )
             .bind(chunk.chunk_id)
@@ -185,12 +185,14 @@ impl FileRepository for DbFileRepository {
             .bind(chunk.generation)
             .bind(chunk.start_line)
             .bind(chunk.end_line)
+            .bind(chunk.byte_start)
+            .bind(chunk.byte_end)
             .bind(&chunk.kind)
             .bind(&chunk.name)
             .bind(chunk.created_at)
             .execute(&mut *tx)
             .await
-            .context("Failed to insert chunk")?;
+            .map_err(|e| anyhow::anyhow!("Failed to insert chunk - SQL error: {}", e))?;
         }
 
         tx.commit().await.context("Failed to commit chunks")?;
@@ -368,6 +370,8 @@ impl FileRepository for DbFileRepository {
                 generation: row.get("generation"),
                 start_line: row.get("start_line"),
                 end_line: row.get("end_line"),
+                byte_start: row.get("byte_start"),
+                byte_end: row.get("byte_end"),
                 kind: row.get("kind"),
                 name: row.get("name"),
                 created_at: row.get("created_at"),

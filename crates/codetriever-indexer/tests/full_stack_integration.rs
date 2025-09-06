@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 async fn setup_test_db() -> anyhow::Result<PgPool> {
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://codetriever:codetriever@localhost:5433/codetriever_test".to_string()
+        "postgresql://codetriever:codetriever@localhost:5433/codetriever".to_string()
     });
 
     // Create test database and run migrations
@@ -315,10 +315,10 @@ async fn test_uuid_based_chunk_deletion() {
         .await
         .expect("Failed to cleanup");
 
-    // Create test chunks with known UUIDs
+    // Create test chunks with known UUIDs using byte ranges
     let generation = 1i64;
-    let chunk1_id = generate_chunk_id(test_repo, test_branch, test_file, generation, 0);
-    let chunk2_id = generate_chunk_id(test_repo, test_branch, test_file, generation, 1);
+    let chunk1_id = generate_chunk_id(test_repo, test_branch, test_file, generation, 0, 100);
+    let chunk2_id = generate_chunk_id(test_repo, test_branch, test_file, generation, 100, 200);
 
     println!("Generated chunk IDs:");
     println!("  Chunk 1: {chunk1_id}");
@@ -331,6 +331,8 @@ async fn test_uuid_based_chunk_deletion() {
             content: "fn test1() {}".to_string(),
             start_line: 1,
             end_line: 1,
+            byte_start: 0,
+            byte_end: 100,
             language: "rust".to_string(),
             embedding: Some(vec![0.1; 768]),
             token_count: Some(5),
@@ -342,6 +344,8 @@ async fn test_uuid_based_chunk_deletion() {
             content: "fn test2() {}".to_string(),
             start_line: 2,
             end_line: 2,
+            byte_start: 100,
+            byte_end: 200,
             language: "rust".to_string(),
             embedding: Some(vec![0.2; 768]),
             token_count: Some(5),

@@ -3,6 +3,7 @@
 //! This crate contains all the indexing, parsing, and embedding logic
 //! separated from the API layer for better testing and modularity.
 
+pub mod chunking;
 pub mod config;
 pub mod embedding;
 pub mod error;

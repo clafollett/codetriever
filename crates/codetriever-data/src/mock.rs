@@ -389,9 +389,9 @@ mod tests {
     async fn test_mock_chunks() {
         let mock = MockFileRepository::new();
 
-        // Generate deterministic UUIDs for testing
-        let chunk_id1 = crate::generate_chunk_id("repo", "main", "file.rs", 1, 0);
-        let chunk_id2 = crate::generate_chunk_id("repo", "main", "file.rs", 1, 1);
+        // Generate deterministic UUIDs for testing using byte ranges
+        let chunk_id1 = crate::generate_chunk_id("repo", "main", "file.rs", 1, 0, 100);
+        let chunk_id2 = crate::generate_chunk_id("repo", "main", "file.rs", 1, 100, 200);
 
         let chunks = vec![
             ChunkMetadata {
@@ -403,6 +403,8 @@ mod tests {
                 generation: 1,
                 start_line: 1,
                 end_line: 10,
+                byte_start: 0,
+                byte_end: 100,
                 kind: None,
                 name: None,
                 created_at: Utc::now(),
@@ -416,6 +418,8 @@ mod tests {
                 generation: 1,
                 start_line: 11,
                 end_line: 20,
+                byte_start: 100,
+                byte_end: 200,
                 kind: None,
                 name: None,
                 created_at: Utc::now(),

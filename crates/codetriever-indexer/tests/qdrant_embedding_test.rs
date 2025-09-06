@@ -5,7 +5,7 @@ mod test_utils;
 
 use codetriever_indexer::indexing::Indexer;
 use std::path::Path;
-use test_utils::{create_test_storage, test_config};
+use test_utils::{cleanup_test_storage, create_test_storage, test_config};
 
 #[tokio::test]
 async fn test_indexer_stores_chunks_in_qdrant() {
@@ -18,7 +18,7 @@ async fn test_indexer_stores_chunks_in_qdrant() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage);
+    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
 
     // Index a small test repo (mini-redis has ~30 Rust files)
     // Use CARGO_MANIFEST_DIR to find the workspace root reliably
@@ -67,4 +67,8 @@ async fn test_indexer_stores_chunks_in_qdrant() {
         !search_results.is_empty(),
         "Should find results for 'redis connection'"
     );
+
+    cleanup_test_storage(&storage)
+        .await
+        .expect("Failed to cleanup");
 }

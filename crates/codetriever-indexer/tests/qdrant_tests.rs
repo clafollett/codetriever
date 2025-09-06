@@ -3,7 +3,7 @@ mod test_utils;
 
 #[cfg(test)]
 mod tests {
-    use super::test_utils::create_test_storage;
+    use super::test_utils::{cleanup_test_storage, create_test_storage};
     use codetriever_indexer::{CodeChunk, storage::VectorStorage};
 
     #[tokio::test]
@@ -19,6 +19,8 @@ mod tests {
                 content: "fn hello() { println!(\"Hello\"); }".to_string(),
                 start_line: 1,
                 end_line: 1,
+                byte_start: 0,
+                byte_end: 34,
                 kind: Some("function".to_string()),
                 language: "rust".to_string(),
                 name: Some("hello".to_string()),
@@ -30,6 +32,8 @@ mod tests {
                 content: "fn world() { println!(\"World\"); }".to_string(),
                 start_line: 2,
                 end_line: 2,
+                byte_start: 34,
+                byte_end: 68,
                 kind: Some("function".to_string()),
                 language: "rust".to_string(),
                 name: Some("world".to_string()),
@@ -55,5 +59,9 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].file_path, "test.rs");
         assert!(results[0].content.contains("hello"));
+
+        cleanup_test_storage(&storage)
+            .await
+            .expect("Failed to cleanup");
     }
 }

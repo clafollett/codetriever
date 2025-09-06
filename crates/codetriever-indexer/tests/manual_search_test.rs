@@ -5,7 +5,7 @@ mod test_utils;
 
 use codetriever_indexer::{indexing::Indexer, storage::VectorStorage};
 use std::path::Path;
-use test_utils::{create_test_storage, test_config};
+use test_utils::{cleanup_test_storage, create_test_storage, test_config};
 
 #[tokio::test]
 async fn test_manual_searches() {
@@ -106,11 +106,9 @@ async fn test_manual_searches() {
         }
     }
 
-    println!("\nDropping collection...\n");
-    match storage.drop_collection().await {
-        Ok(_) => println!("Collection dropped successfully"),
-        Err(e) => println!("Failed to drop collection: {e}"),
-    }
+    cleanup_test_storage(&storage)
+        .await
+        .expect("Failed to cleanup");
 
     println!("\n{:-<80}", "");
     println!("✅ Search exploration complete!");

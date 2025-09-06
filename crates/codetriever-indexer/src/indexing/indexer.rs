@@ -1,7 +1,7 @@
 use crate::{
     Result,
     config::Config,
-    embedding::EmbeddingModel,
+    embedding::{DefaultEmbeddingService, EmbeddingConfig, EmbeddingService},
     indexing::service::FileContent,
     parsing::{CodeChunk, CodeParser, get_language_from_extension},
     storage::{QdrantStorage, VectorStorage},
@@ -220,6 +220,7 @@ pub const CODE_EXTENSIONS: &[&str] = &[
 ];
 
 type BoxedVectorStorage = Box<dyn VectorStorage>;
+type BoxedEmbeddingService = Box<dyn EmbeddingService>;
 
 #[derive(Debug)]
 pub struct IndexResult {
@@ -229,7 +230,7 @@ pub struct IndexResult {
 }
 
 pub struct Indexer {
-    embedding_model: EmbeddingModel,
+    embedding_service: BoxedEmbeddingService,
     storage: Option<BoxedVectorStorage>, // Optional storage backend using trait
     code_parser: CodeParser,
     config: Config,                    // Store config for lazy storage initialization
@@ -249,11 +250,16 @@ impl Indexer {
     }
 
     pub fn with_config(config: &Config) -> Self {
+        let embedding_config = EmbeddingConfig {
+            model_id: config.embedding_model.clone(),
+            max_tokens: config.max_embedding_tokens,
+            batch_size: 32,
+            use_gpu: false,
+            cache_dir: None,
+        };
+
         Self {
-            embedding_model: EmbeddingModel::new(
-                config.embedding_model.clone(),
-                config.max_embedding_tokens,
-            ),
+            embedding_service: Box::new(DefaultEmbeddingService::new(embedding_config)),
             storage: None,
             code_parser: CodeParser::new(
                 None, // Will be set after tokenizer loads
@@ -267,11 +273,16 @@ impl Indexer {
     }
 
     pub fn with_config_and_storage(config: &Config, storage: QdrantStorage) -> Self {
+        let embedding_config = EmbeddingConfig {
+            model_id: config.embedding_model.clone(),
+            max_tokens: config.max_embedding_tokens,
+            batch_size: 32,
+            use_gpu: false,
+            cache_dir: None,
+        };
+
         Self {
-            embedding_model: EmbeddingModel::new(
-                config.embedding_model.clone(),
-                config.max_embedding_tokens,
-            ),
+            embedding_service: Box::new(DefaultEmbeddingService::new(embedding_config)),
             storage: Some(Box::new(storage)),
             code_parser: CodeParser::new(
                 None, // Will be set after tokenizer loads
@@ -286,11 +297,16 @@ impl Indexer {
 
     pub fn new_with_repository(repository: RepositoryRef) -> Self {
         let config = Config::default();
+        let embedding_config = EmbeddingConfig {
+            model_id: config.embedding_model.clone(),
+            max_tokens: config.max_embedding_tokens,
+            batch_size: 32,
+            use_gpu: false,
+            cache_dir: None,
+        };
+
         Self {
-            embedding_model: EmbeddingModel::new(
-                config.embedding_model.clone(),
-                config.max_embedding_tokens,
-            ),
+            embedding_service: Box::new(DefaultEmbeddingService::new(embedding_config)),
             storage: None,
             code_parser: CodeParser::new(
                 None, // Will be set after tokenizer loads
@@ -305,15 +321,20 @@ impl Indexer {
 
     pub async fn search(&mut self, query: &str, limit: usize) -> Result<Vec<CodeChunk>> {
         // Generate embedding for the query
-        let query_embedding = self.embedding_model.embed(vec![query.to_string()]).await?;
+        let embeddings = self
+            .embedding_service
+            .generate_embeddings(vec![query.to_string()])
+            .await?;
 
-        if query_embedding.is_empty() {
+        if embeddings.is_empty() {
             return Ok(vec![]);
         }
 
+        let query_embedding = embeddings.into_iter().next().unwrap();
+
         // Search in Qdrant if storage is configured
         if let Some(ref storage) = self.storage {
-            storage.search(query_embedding[0].clone(), limit).await
+            storage.search(query_embedding, limit).await
         } else {
             Ok(vec![])
         }
@@ -322,24 +343,9 @@ impl Indexer {
     pub async fn index_directory(&mut self, path: &Path, recursive: bool) -> Result<IndexResult> {
         println!("Starting index_directory for {path:?}");
 
-        // Ensure embedding model is loaded first to get tokenizer
+        // Ensure embedding provider is ready
         println!("Loading embedding model...");
-        self.embedding_model.ensure_model_loaded().await?;
-
-        // Share tokenizer with parser (parser will configure it for counting)
-        println!("Setting up tokenizer for parser...");
-        if let Some(tokenizer) = self.embedding_model.get_tokenizer() {
-            println!("Creating CodeParser with tokenizer...");
-            self.code_parser = CodeParser::new(
-                Some(tokenizer),
-                self.config.split_large_semantic_units,
-                self.config.max_embedding_tokens,
-                self.config.chunk_overlap_tokens,
-            );
-            println!("CodeParser created");
-        } else {
-            println!("No tokenizer available from embedding model");
-        }
+        self.embedding_service.provider().ensure_ready().await?;
 
         let mut files_indexed = 0;
         let mut all_chunks = Vec::new();
@@ -391,7 +397,7 @@ impl Indexer {
 
                 let texts: Vec<String> = batch.iter().map(|c| c.content.clone()).collect();
 
-                let embeddings = self.embedding_model.embed(texts).await?;
+                let embeddings = self.embedding_service.generate_embeddings(texts).await?;
 
                 for (chunk, embedding) in batch.iter_mut().zip(embeddings.iter()) {
                     chunk.embedding = Some(embedding.clone());
@@ -445,19 +451,9 @@ impl Indexer {
             (project_id.to_string(), "main".to_string())
         };
 
-        // Ensure embedding model is loaded first to get tokenizer
+        // Ensure embedding provider is ready
         println!("Loading embedding model...");
-        self.embedding_model.ensure_model_loaded().await?;
-
-        // Share tokenizer with parser
-        if let Some(tokenizer) = self.embedding_model.get_tokenizer() {
-            self.code_parser = CodeParser::new(
-                Some(tokenizer),
-                self.config.split_large_semantic_units,
-                self.config.max_embedding_tokens,
-                self.config.chunk_overlap_tokens,
-            );
-        }
+        self.embedding_service.provider().ensure_ready().await?;
 
         let mut all_chunks = Vec::new();
         let mut files_indexed = 0;
@@ -577,7 +573,7 @@ impl Indexer {
 
             // Generate embeddings in batches
             let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
-            let embeddings = self.embedding_model.embed(texts).await?;
+            let embeddings = self.embedding_service.generate_embeddings(texts).await?;
 
             // Add embeddings to chunks
             for (chunk, embedding) in all_chunks.iter_mut().zip(embeddings) {
@@ -626,10 +622,12 @@ impl Indexer {
                                                 repository_id: repository_id.clone(),
                                                 branch: branch.clone(),
                                                 file_path: chunk.file_path.clone(),
-                                                chunk_index: idx as i32,
+                                                chunk_index: idx as i32, // This is now correct per-file index
                                                 generation: file_info.generation,
                                                 start_line: chunk.start_line as i32,
                                                 end_line: chunk.end_line as i32,
+                                                byte_start: chunk.byte_start as i64,
+                                                byte_end: chunk.byte_end as i64,
                                                 kind: chunk.kind.clone(),
                                                 name: chunk.name.clone(),
                                                 created_at: chrono::Utc::now(),

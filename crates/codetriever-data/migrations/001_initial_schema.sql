@@ -40,9 +40,15 @@ CREATE TABLE IF NOT EXISTS chunk_metadata (
     chunk_index INT NOT NULL,       -- Position within file (0-based)
     generation BIGINT NOT NULL,
     
-    -- Semantic info for debugging and analysis
+    -- Line-based info for user-facing display
     start_line INT NOT NULL,
     end_line INT NOT NULL,
+    
+    -- Byte-based info for system stability
+    byte_start BIGINT NOT NULL,
+    byte_end BIGINT NOT NULL,
+    
+    -- Semantic info for debugging and analysis
     kind TEXT,                      -- "function", "class", "module", etc.
     name TEXT,                      -- Function/class/module name if applicable
     

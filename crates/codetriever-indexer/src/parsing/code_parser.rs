@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::parsing::languages::get_language_config;
+use crate::parsing::traits::ContentParser;
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIteratorMut};
@@ -17,6 +18,10 @@ pub struct CodeChunk {
     pub start_line: usize,
     /// Ending line number (1-indexed)  
     pub end_line: usize,
+    /// Byte offset from start of file
+    pub byte_start: usize,
+    /// Byte offset of end (exclusive)
+    pub byte_end: usize,
     /// Optional type/kind of code chunk (e.g., "function", "class", "impl")
     pub kind: Option<String>,
     /// Language of the code
@@ -89,6 +94,33 @@ impl CodeParser {
         language: &str,
         name: Option<String>,
     ) -> CodeChunk {
+        self.create_chunk_with_byte_offsets(
+            file_path,
+            content.clone(),
+            start_line,
+            end_line,
+            0, // For non-tree-sitter parsing, we don't have accurate byte offsets
+            content.len(),
+            kind,
+            language,
+            name,
+        )
+    }
+
+    /// Helper to create a CodeChunk with token counting and explicit byte offsets
+    #[allow(clippy::too_many_arguments)]
+    fn create_chunk_with_byte_offsets(
+        &self,
+        file_path: &str,
+        content: String,
+        start_line: usize,
+        end_line: usize,
+        byte_start: usize,
+        byte_end: usize,
+        kind: Option<String>,
+        language: &str,
+        name: Option<String>,
+    ) -> CodeChunk {
         let token_count = self.count_tokens(&content);
 
         // Warn if chunk exceeds token limit
@@ -106,6 +138,8 @@ impl CodeParser {
             content,
             start_line,
             end_line,
+            byte_start,
+            byte_end,
             kind,
             language: language.to_string(),
             name,
@@ -403,7 +437,8 @@ impl CodeParser {
                 let node = capture.node;
                 let start_line = node.start_position().row + 1;
                 let end_line = node.end_position().row + 1;
-                let content = &code[node.byte_range()];
+                let byte_range = node.byte_range();
+                let content = &code[byte_range.clone()];
 
                 // Extract name if possible
                 let name = self.extract_name_from_node(&node, code);
@@ -430,12 +465,14 @@ impl CodeParser {
                         );
                         chunks.extend(split_chunks);
                     } else {
-                        // Create normal chunk
-                        let chunk = self.create_chunk(
+                        // Create normal chunk with accurate byte offsets
+                        let chunk = self.create_chunk_with_byte_offsets(
                             file_path,
                             content_str,
                             start_line,
                             end_line,
+                            byte_range.start,
+                            byte_range.end,
                             Some(node.kind().to_string()),
                             language,
                             name,
@@ -443,12 +480,14 @@ impl CodeParser {
                         chunks.push(chunk);
                     }
                 } else {
-                    // If token counting fails, create chunk anyway
-                    let chunk = self.create_chunk(
+                    // If token counting fails, create chunk anyway with byte offsets
+                    let chunk = self.create_chunk_with_byte_offsets(
                         file_path,
                         content_str,
                         start_line,
                         end_line,
+                        byte_range.start,
+                        byte_range.end,
                         Some(node.kind().to_string()),
                         language,
                         name,
@@ -793,19 +832,70 @@ impl CodeParser {
 
             let start_line = child.start_position().row + 1;
             let end_line = child.end_position().row + 1;
-            let content = &code[child.byte_range()];
+            let byte_range = child.byte_range();
+            let content = &code[byte_range.clone()];
 
-            let chunk = self.create_chunk(
+            let chunk = self.create_chunk_with_byte_offsets(
                 file_path,
                 content.to_string(),
                 start_line,
                 end_line,
+                byte_range.start,
+                byte_range.end,
                 Some(child.kind().to_string()),
                 language,
                 self.extract_name_from_node(&child, code),
             );
             chunks.push(chunk);
         }
+    }
+}
+
+impl ContentParser for CodeParser {
+    fn name(&self) -> &str {
+        "tree-sitter-parser"
+    }
+
+    fn parse(&self, content: &str, language: &str, file_path: &str) -> Result<Vec<CodeChunk>> {
+        // Delegate to the existing parse method
+        CodeParser::parse(self, content, language, file_path)
+    }
+
+    fn supports_language(&self, language: &str) -> bool {
+        // Check if we have a language config for this
+        let config = get_language_config(language);
+        config.is_some()
+    }
+
+    fn supported_languages(&self) -> Vec<&str> {
+        vec![
+            "rust",
+            "python",
+            "javascript",
+            "typescript",
+            "go",
+            "c",
+            "cpp",
+            "java",
+            "csharp",
+            "ruby",
+            "php",
+            "swift",
+            "kotlin",
+            "scala",
+            "haskell",
+            "elixir",
+            "json",
+            "xml",
+            "yaml",
+            "toml",
+            "html",
+            "css",
+            "sql",
+            "bash",
+            "powershell",
+            "dockerfile",
+        ]
     }
 }
 

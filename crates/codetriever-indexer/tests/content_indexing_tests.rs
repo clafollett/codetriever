@@ -11,7 +11,7 @@
 mod test_utils;
 
 use codetriever_indexer::indexing::{Indexer, service::FileContent};
-use test_utils::{create_test_storage, skip_without_hf_token, test_config};
+use test_utils::{cleanup_test_storage, create_test_storage, skip_without_hf_token, test_config};
 
 #[tokio::test]
 async fn test_index_file_content_with_multiple_files() {
@@ -24,7 +24,7 @@ async fn test_index_file_content_with_multiple_files() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage);
+    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
 
     // Create test files with actual code content
     let files = vec![
@@ -146,6 +146,10 @@ def transform_item(item: Dict[str, Any]) -> Dict[str, Any]:
     println!("  Files indexed: {}", result.files_indexed);
     println!("  Chunks created: {}", result.chunks_created);
     println!("  Chunks stored: {}", result.chunks_stored);
+
+    cleanup_test_storage(&storage)
+        .await
+        .expect("Failed to cleanup");
 }
 
 #[tokio::test]
@@ -159,7 +163,7 @@ async fn test_index_file_content_creates_searchable_chunks() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage);
+    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
 
     // Index content with specific searchable terms
     let files = vec![FileContent {
@@ -222,6 +226,10 @@ impl PostgresConnection {
         "First result: {}",
         &first_result.content[..100.min(first_result.content.len())]
     );
+
+    cleanup_test_storage(&storage)
+        .await
+        .expect("Failed to cleanup");
 }
 
 #[tokio::test]
@@ -235,7 +243,7 @@ async fn test_index_file_content_handles_different_languages() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage);
+    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
 
     let files = vec![
         // JavaScript/TypeScript
@@ -320,6 +328,10 @@ def fetch_from_database():
     println!("Multi-language indexing:");
     println!("  Files: {}", result.files_indexed);
     println!("  Chunks: {}", result.chunks_created);
+
+    cleanup_test_storage(&storage)
+        .await
+        .expect("Failed to cleanup");
 }
 
 #[tokio::test]
@@ -333,7 +345,7 @@ async fn test_index_file_content_handles_large_files() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage);
+    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
 
     // Create a large file that will need chunking
     let mut large_content = String::new();
@@ -380,6 +392,10 @@ pub fn function_{i}(param: i32) -> i32 {{
 
     println!("Large file indexing:");
     println!("  Chunks created from 1 file: {}", result.chunks_created);
+
+    cleanup_test_storage(&storage)
+        .await
+        .expect("Failed to cleanup");
 }
 
 #[tokio::test]
@@ -393,7 +409,7 @@ async fn test_index_file_content_handles_empty_and_invalid_files() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage);
+    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
 
     let files = vec![
         // Empty file
@@ -454,6 +470,10 @@ async fn test_index_file_content_handles_empty_and_invalid_files() {
     println!("Edge case handling:");
     println!("  Files indexed: {}", result.files_indexed);
     println!("  Chunks created: {}", result.chunks_created);
+
+    cleanup_test_storage(&storage)
+        .await
+        .expect("Failed to cleanup");
 }
 
 #[tokio::test]
@@ -470,7 +490,7 @@ async fn test_index_file_content_without_filesystem_access() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage);
+    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
 
     // Use paths that definitely don't exist
     let files = vec![FileContent {
@@ -497,4 +517,8 @@ pub fn test_function() -> String {
     );
 
     println!("No filesystem access test passed");
+
+    cleanup_test_storage(&storage)
+        .await
+        .expect("Failed to cleanup");
 }

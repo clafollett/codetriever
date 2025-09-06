@@ -494,11 +494,25 @@ data-start:
     @sleep 2
     @curl -s http://localhost:6333/health >/dev/null && echo "✅ Qdrant ready on http://localhost:6333" || echo "⚠️  Qdrant starting..."
     @echo "✅ Postgres ready on port 5433"
+    @echo "💡 Run 'just db-migrate' to apply database migrations"
 
 # Stop data services
 data-stop:
     @docker-compose -f docker/docker-compose.data.yml stop
     @echo "✅ Data services stopped"
+
+# Run database migrations
+db-migrate:
+    @echo "🔄 Running database migrations..."
+    @DATABASE_URL="${DATABASE_URL:-postgresql://${POSTGRES_USER:-codetriever}:${POSTGRES_PASSWORD:-codetriever}@localhost:5433/${POSTGRES_DB:-codetriever}?sslmode=disable}" \
+        cargo run -p codetriever-data --example run_migrations
+    @echo "✅ Migrations completed"
+
+# Start data services and run migrations
+data-init: data-start
+    @echo "⏳ Waiting for database to be ready..."
+    @sleep 3
+    @POSTGRES_USER=codetriever POSTGRES_PASSWORD=codetriever just db-migrate
 
 # Remove data containers and volumes
 data-clean:

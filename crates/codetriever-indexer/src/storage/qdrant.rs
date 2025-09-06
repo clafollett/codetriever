@@ -252,6 +252,8 @@ impl VectorStorage for QdrantStorage {
     ///         content: "fn main() {}".to_string(),
     ///         start_line: 1,
     ///         end_line: 1,
+    ///         byte_start: 0,
+    ///         byte_end: 0,
     ///         kind: Some("function".to_string()),
     ///         language: "rust".to_string(),
     ///         name: Some("main".to_string()),
@@ -281,6 +283,14 @@ impl VectorStorage for QdrantStorage {
                     Value::from(chunk.start_line as i64),
                 );
                 payload.insert("end_line".to_string(), Value::from(chunk.end_line as i64));
+
+                // Add byte range information
+                payload.insert(
+                    "byte_start".to_string(),
+                    Value::from(chunk.byte_start as i64),
+                );
+                payload.insert("byte_end".to_string(), Value::from(chunk.byte_end as i64));
+
                 payload.insert("language".to_string(), Value::from(chunk.language.clone()));
 
                 // Store optional fields
@@ -413,6 +423,19 @@ impl VectorStorage for QdrantStorage {
                 .and_then(|v| v.as_integer())
                 .unwrap_or(0) as usize;
 
+            // Extract byte ranges from payload
+            let byte_start = payload
+                .get("byte_start")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as usize)
+                .unwrap_or(0);
+
+            let byte_end = payload
+                .get("byte_end")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as usize)
+                .unwrap_or(content.len());
+
             let kind = payload
                 .get("kind")
                 .and_then(|v| v.as_str())
@@ -439,6 +462,8 @@ impl VectorStorage for QdrantStorage {
                 content,
                 start_line,
                 end_line,
+                byte_start,
+                byte_end,
                 kind,
                 language,
                 name,
@@ -464,13 +489,14 @@ impl VectorStorage for QdrantStorage {
         // Convert chunks to Qdrant points with deterministic IDs
         for (chunk_index, chunk) in chunks.iter().enumerate() {
             if let Some(ref embedding) = chunk.embedding {
-                // Generate deterministic chunk ID
+                // Generate deterministic chunk ID using byte ranges
                 let chunk_id = codetriever_data::generate_chunk_id(
                     repository_id,
                     branch,
                     &chunk.file_path,
                     generation,
-                    chunk_index as u32,
+                    chunk.byte_start,
+                    chunk.byte_end,
                 );
 
                 chunk_ids.push(chunk_id);
@@ -494,6 +520,14 @@ impl VectorStorage for QdrantStorage {
                     Value::from(chunk.start_line as i64),
                 );
                 payload.insert("end_line".to_string(), Value::from(chunk.end_line as i64));
+
+                // Add byte range information
+                payload.insert(
+                    "byte_start".to_string(),
+                    Value::from(chunk.byte_start as i64),
+                );
+                payload.insert("byte_end".to_string(), Value::from(chunk.byte_end as i64));
+
                 payload.insert("language".to_string(), Value::from(chunk.language.clone()));
 
                 // Store optional fields

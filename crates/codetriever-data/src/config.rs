@@ -18,11 +18,24 @@ impl Default for DatabaseConfig {
             url: std::env::var("DATABASE_URL").unwrap_or_else(|_| {
                 "postgresql://codetriever:codetriever@localhost/codetriever".to_string()
             }),
-            // TODO: Add support for DB connection configuration
-            max_connections: 10,
-            min_connections: 2,
-            connect_timeout: Duration::from_secs(30),
-            idle_timeout: Duration::from_secs(600),
+            max_connections: std::env::var("DB_MAX_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10),
+            min_connections: std::env::var("DB_MIN_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2),
+            connect_timeout: std::env::var("DB_CONNECT_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .map(Duration::from_secs)
+                .unwrap_or_else(|| Duration::from_secs(30)),
+            idle_timeout: std::env::var("DB_IDLE_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .map(Duration::from_secs)
+                .unwrap_or_else(|| Duration::from_secs(600)),
         }
     }
 }

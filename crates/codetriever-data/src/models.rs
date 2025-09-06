@@ -39,9 +39,14 @@ pub struct ChunkMetadata {
     pub file_path: String,
     pub chunk_index: i32,
     pub generation: i64,
+
     // Semantic info
     pub start_line: i32,
     pub end_line: i32,
+    // Byte range info
+    pub byte_start: i64,
+    pub byte_end: i64,
+
     pub kind: Option<String>,
     pub name: Option<String>,
     pub created_at: DateTime<Utc>,

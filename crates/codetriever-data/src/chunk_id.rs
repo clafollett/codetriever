@@ -7,14 +7,17 @@ use uuid::{Uuid, uuid};
 /// This ensures our UUIDs don't collide with other systems
 const CODETRIEVER_NAMESPACE: Uuid = uuid!("a8f5c3e2-7b9d-4f2a-9e1c-3d5a7b9f1e3c");
 
-/// Generate a deterministic chunk ID based on all identifying components
+/// Generate a deterministic chunk ID based on byte ranges
 ///
 /// The ID is stable for a given combination of:
 /// - Repository ID
 /// - Branch
 /// - File path
 /// - Generation
-/// - Chunk index within the file
+/// - Byte range (start and end)
+///
+/// Using byte ranges instead of chunk index ensures stability
+/// even if the tokenizer or chunking algorithm changes
 ///
 /// Returns a UUID v5 which is deterministic based on the input
 pub fn generate_chunk_id(
@@ -22,10 +25,11 @@ pub fn generate_chunk_id(
     branch: &str,
     file_path: &str,
     generation: i64,
-    chunk_index: u32,
+    byte_start: usize,
+    byte_end: usize,
 ) -> Uuid {
     // Create a unique string from all components
-    let data = format!("{repository_id}:{branch}:{file_path}:{generation}:{chunk_index}");
+    let data = format!("{repository_id}:{branch}:{file_path}:{generation}:{byte_start}:{byte_end}");
 
     // Generate UUID v5 (deterministic) from namespace and data
     Uuid::new_v5(&CODETRIEVER_NAMESPACE, data.as_bytes())
@@ -44,8 +48,8 @@ mod tests {
 
     #[test]
     fn test_chunk_id_deterministic() {
-        let id1 = generate_chunk_id("github.com/user/repo", "main", "src/main.rs", 1, 0);
-        let id2 = generate_chunk_id("github.com/user/repo", "main", "src/main.rs", 1, 0);
+        let id1 = generate_chunk_id("github.com/user/repo", "main", "src/main.rs", 1, 0, 100);
+        let id2 = generate_chunk_id("github.com/user/repo", "main", "src/main.rs", 1, 0, 100);
 
         assert_eq!(id1, id2, "Same inputs should produce same chunk ID");
 
@@ -55,14 +59,15 @@ mod tests {
 
     #[test]
     fn test_chunk_id_unique() {
-        let id1 = generate_chunk_id("github.com/user/repo", "main", "src/main.rs", 1, 0);
+        let id1 = generate_chunk_id("github.com/user/repo", "main", "src/main.rs", 1, 0, 100);
 
         let id2 = generate_chunk_id(
             "github.com/user/repo",
             "main",
             "src/main.rs",
             1,
-            1, // Different chunk index
+            100, // Different byte start
+            200,
         );
 
         let id3 = generate_chunk_id(
@@ -71,6 +76,7 @@ mod tests {
             "src/main.rs",
             2, // Different generation
             0,
+            100,
         );
 
         let id4 = generate_chunk_id(
@@ -79,12 +85,10 @@ mod tests {
             "src/main.rs",
             1,
             0,
+            100,
         );
 
-        assert_ne!(
-            id1, id2,
-            "Different chunk index should produce different ID"
-        );
+        assert_ne!(id1, id2, "Different byte range should produce different ID");
         assert_ne!(id1, id3, "Different generation should produce different ID");
         assert_ne!(id1, id4, "Different branch should produce different ID");
     }
