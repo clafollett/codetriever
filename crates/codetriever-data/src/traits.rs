@@ -47,7 +47,7 @@ pub trait FileRepository: Send + Sync {
         branch: &str,
         file_path: &str,
         new_generation: i64,
-    ) -> Result<Vec<String>>;
+    ) -> Result<Vec<Uuid>>;
 
     /// Create new indexing job
     async fn create_indexing_job(

@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION replace_file_chunks(
     p_branch TEXT,
     p_file_path TEXT,
     p_new_generation BIGINT
-) RETURNS TABLE(deleted_chunk_id TEXT) AS $$
+) RETURNS TABLE(deleted_chunk_id UUID) AS $$
 BEGIN
     -- Return the chunk IDs that will be deleted (for Qdrant cleanup)
     RETURN QUERY

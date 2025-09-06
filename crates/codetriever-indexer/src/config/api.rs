@@ -143,7 +143,7 @@ impl Default for Config {
     ///
     /// # Default Values
     ///
-    /// * `qdrant_url`: "http://localhost:6334" - Local Qdrant instance
+    /// * `qdrant_url`: "http://localhost:6334" - Local Qdrant gRPC port
     /// * `qdrant_collection`: "codetriever" - Default collection name
     /// * `embedding_model`: "jinaai/jina-embeddings-v2-base-code" - Code-optimized model
     /// * `use_metal`: Enabled on macOS, disabled elsewhere
@@ -164,7 +164,7 @@ impl Default for Config {
     /// ```
     fn default() -> Self {
         Self {
-            // Local Qdrant instance - standard port for development
+            // Local Qdrant instance - gRPC port (Rust client uses gRPC)
             qdrant_url: "http://localhost:6334".to_string(),
             // Default collection name for code embeddings
             qdrant_collection: "codetriever".to_string(),

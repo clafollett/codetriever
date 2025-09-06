@@ -487,26 +487,46 @@ stats:
 
 # === Qdrant Docker Commands ===
 
-# Start Qdrant using dedicated compose file
-qdrant-start:
-    @echo "🚀 Starting Qdrant..."
-    @docker-compose -f docker/docker-compose.qdrant.yml up -d qdrant
+# Start data services (Postgres + Qdrant) in Docker
+data-start:
+    @echo "🚀 Starting data services..."
+    @docker-compose -f docker/docker-compose.data.yml up -d
     @sleep 2
     @curl -s http://localhost:6333/health >/dev/null && echo "✅ Qdrant ready on http://localhost:6333" || echo "⚠️  Qdrant starting..."
+    @echo "✅ Postgres ready on port 5433"
+
+# Stop data services
+data-stop:
+    @docker-compose -f docker/docker-compose.data.yml stop
+    @echo "✅ Data services stopped"
+
+# Remove data containers and volumes
+data-clean:
+    @docker-compose -f docker/docker-compose.data.yml down -v
+    @echo "✅ Data containers and volumes removed"
+
+# Show data services logs
+data-logs:
+    @docker-compose -f docker/docker-compose.data.yml logs -f
+
+# Start Qdrant using dedicated compose file (alias for compatibility)
+qdrant-start: data-start
 
 # Stop Qdrant
 qdrant-stop:
-    @docker-compose -f docker/docker-compose.qdrant.yml stop qdrant
+    @docker-compose -f docker/docker-compose.data.yml stop qdrant
     @echo "✅ Qdrant stopped"
 
 # Remove Qdrant container and volumes
 qdrant-clean:
-    @docker-compose -f docker/docker-compose.qdrant.yml down -v
+    @docker-compose -f docker/docker-compose.data.yml stop qdrant
+    @docker-compose -f docker/docker-compose.data.yml rm -f qdrant
+    @rm -rf ~/.codetriever/qdrant
     @echo "✅ Qdrant container and volumes removed"
 
 # Show Qdrant logs
 qdrant-logs:
-    @docker-compose -f docker/docker-compose.qdrant.yml logs -f qdrant
+    @docker-compose -f docker/docker-compose.data.yml logs -f qdrant
 
 # Check Qdrant health
 qdrant-health:

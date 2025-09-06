@@ -14,7 +14,7 @@ pub trait IndexerService: Send + Sync {
     ) -> crate::Result<IndexResult>;
 
     /// Index file content directly without filesystem access
-    async fn index_content(
+    async fn index_file_content(
         &mut self,
         project_id: &str,
         files: Vec<FileContent>,
@@ -69,12 +69,12 @@ impl IndexerService for ApiIndexerService {
         self.indexer.index_directory(path, recursive).await
     }
 
-    async fn index_content(
+    async fn index_file_content(
         &mut self,
         project_id: &str,
         files: Vec<FileContent>,
     ) -> crate::Result<IndexResult> {
-        self.indexer.index_content(project_id, files).await
+        self.indexer.index_file_content(project_id, files).await
     }
 
     async fn drop_collection(&mut self) -> crate::Result<bool> {
@@ -130,7 +130,7 @@ pub mod test_utils {
             }
         }
 
-        async fn index_content(
+        async fn index_file_content(
             &mut self,
             _project_id: &str,
             _files: Vec<FileContent>,

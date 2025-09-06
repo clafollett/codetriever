@@ -31,8 +31,9 @@
 //! ```
 
 use crate::{Error, Result, parsing::CodeChunk};
+use anyhow::Context;
 use qdrant_client::qdrant::{
-    CollectionExistsRequest, CreateCollection, DeleteCollection, Distance, PointStruct,
+    CollectionExistsRequest, CreateCollection, DeleteCollection, Distance, PointId, PointStruct,
     SearchPoints, UpsertPoints, Value, VectorParams,
 };
 use qdrant_client::{Payload, Qdrant};
@@ -102,6 +103,8 @@ impl QdrantStorage {
     /// ```
     pub async fn new(url: String, collection_name: String) -> Result<Self> {
         // Connect to Qdrant server
+        // Note: The message "Failed to obtain server version" is expected and can be ignored
+        // as it's just a compatibility check that may fail with certain network configurations
         let client = Qdrant::from_url(&url)
             .build()
             .map_err(|e| Error::Storage(format!("Failed to create Qdrant client: {e}")))?;
@@ -460,4 +463,127 @@ impl QdrantStorage {
 
         Ok(results)
     }
+
+    /// Store chunks with deterministic IDs based on repository, branch, file, and generation
+    pub async fn store_chunks_with_ids(
+        &self,
+        repository_id: &str,
+        branch: &str,
+        chunks: &[CodeChunk],
+        generation: i64,
+    ) -> Result<Vec<uuid::Uuid>> {
+        let mut points = Vec::new();
+        let mut chunk_ids = Vec::new();
+
+        // Convert chunks to Qdrant points with deterministic IDs
+        for (chunk_index, chunk) in chunks.iter().enumerate() {
+            if let Some(ref embedding) = chunk.embedding {
+                // Generate deterministic chunk ID
+                let chunk_id = codetriever_data::generate_chunk_id(
+                    repository_id,
+                    branch,
+                    &chunk.file_path,
+                    generation,
+                    chunk_index as u32,
+                );
+
+                chunk_ids.push(chunk_id);
+
+                let mut payload = HashMap::new();
+                payload.insert("chunk_id".to_string(), Value::from(chunk_id.to_string()));
+                payload.insert(
+                    "repository_id".to_string(),
+                    Value::from(repository_id.to_string()),
+                );
+                payload.insert("branch".to_string(), Value::from(branch.to_string()));
+                payload.insert("generation".to_string(), Value::from(generation));
+                payload.insert("chunk_index".to_string(), Value::from(chunk_index as i64));
+                payload.insert(
+                    "file_path".to_string(),
+                    Value::from(chunk.file_path.clone()),
+                );
+                payload.insert("content".to_string(), Value::from(chunk.content.clone()));
+                payload.insert(
+                    "start_line".to_string(),
+                    Value::from(chunk.start_line as i64),
+                );
+                payload.insert("end_line".to_string(), Value::from(chunk.end_line as i64));
+                payload.insert("language".to_string(), Value::from(chunk.language.clone()));
+
+                // Store optional fields
+                if let Some(ref kind) = chunk.kind {
+                    payload.insert("kind".to_string(), Value::from(kind.clone()));
+                }
+                if let Some(ref name) = chunk.name {
+                    payload.insert("name".to_string(), Value::from(name.clone()));
+                }
+                if let Some(token_count) = chunk.token_count {
+                    payload.insert("token_count".to_string(), Value::from(token_count as i64));
+                }
+
+                // Use UUID string as the point ID for Qdrant
+                points.push(PointStruct::new(
+                    chunk_id.to_string(),
+                    embedding.clone(),
+                    Payload::from(payload),
+                ));
+            }
+        }
+
+        if points.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Batch upsert points using new API
+        let upsert_request = UpsertPoints {
+            collection_name: self.collection_name.clone(),
+            points,
+            ..Default::default()
+        };
+
+        self.client
+            .upsert_points(upsert_request)
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to store chunks: {e}")))?;
+
+        Ok(chunk_ids)
+    }
+
+    /// Delete chunks from Qdrant by their IDs
+    pub async fn delete_chunks(&self, chunk_ids: &[uuid::Uuid]) -> Result<()> {
+        if chunk_ids.is_empty() {
+            return Ok(());
+        }
+
+        // Convert UUIDs to strings for Qdrant PointId
+        let point_ids: Vec<PointId> = chunk_ids
+            .iter()
+            .map(|id| PointId::from(id.to_string()))
+            .collect();
+
+        // Delete points from Qdrant using the correct API
+        use qdrant_client::qdrant::{DeletePoints, PointsIdsList};
+
+        let delete_request = DeletePoints {
+            collection_name: self.collection_name.clone(),
+            points: Some(qdrant_client::qdrant::PointsSelector {
+                points_selector_one_of: Some(
+                    qdrant_client::qdrant::points_selector::PointsSelectorOneOf::Points(
+                        PointsIdsList { ids: point_ids },
+                    ),
+                ),
+            }),
+            ..Default::default()
+        };
+
+        self.client
+            .delete_points(delete_request)
+            .await
+            .context("Failed to delete chunks from Qdrant")?;
+
+        Ok(())
+    }
 }
+
+// Integration tests are in tests/qdrant_integration.rs
+// Unit tests would go here if we had any that don't require external services

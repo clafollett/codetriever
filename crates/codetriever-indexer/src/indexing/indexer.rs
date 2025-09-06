@@ -7,6 +7,10 @@ use crate::{
     storage::QdrantStorage,
 };
 use std::path::Path;
+use std::sync::Arc;
+
+// Type alias for the repository trait object
+type RepositoryRef = Arc<dyn codetriever_data::traits::FileRepository>;
 
 // Supported code file extensions
 pub const CODE_EXTENSIONS: &[&str] = &[
@@ -226,7 +230,8 @@ pub struct Indexer {
     embedding_model: EmbeddingModel,
     storage: Option<QdrantStorage>, // Optional storage backend
     code_parser: CodeParser,
-    config: Config, // Store config for lazy storage initialization
+    config: Config,                    // Store config for lazy storage initialization
+    repository: Option<RepositoryRef>, // Optional database repository
 }
 
 impl Default for Indexer {
@@ -255,6 +260,7 @@ impl Indexer {
                 config.chunk_overlap_tokens,
             ),
             config: config.clone(),
+            repository: None,
         }
     }
 
@@ -272,6 +278,26 @@ impl Indexer {
                 config.chunk_overlap_tokens,
             ),
             config: config.clone(),
+            repository: None,
+        }
+    }
+
+    pub fn new_with_repository(repository: RepositoryRef) -> Self {
+        let config = Config::default();
+        Self {
+            embedding_model: EmbeddingModel::new(
+                config.embedding_model.clone(),
+                config.max_embedding_tokens,
+            ),
+            storage: None,
+            code_parser: CodeParser::new(
+                None, // Will be set after tokenizer loads
+                config.split_large_semantic_units,
+                config.max_embedding_tokens,
+                config.chunk_overlap_tokens,
+            ),
+            config: config.clone(),
+            repository: Some(repository),
         }
     }
 
@@ -329,7 +355,7 @@ impl Indexer {
         println!("Processing {} files...", files.len());
         for file_path in files {
             println!("Processing file: {file_path:?}");
-            if let Ok(chunks) = self.index_file(&file_path).await {
+            if let Ok(chunks) = self.index_file_path(&file_path).await {
                 println!("  Got {} chunks", chunks.len());
                 files_indexed += 1;
                 all_chunks.extend(chunks);
@@ -372,9 +398,8 @@ impl Indexer {
             println!("Generated embeddings for all {} chunks", all_chunks.len());
         }
 
-        // Ensure storage is initialized and store chunks
+        // Store chunks if storage is configured
         let chunks_stored = if !all_chunks.is_empty() {
-            self.ensure_storage().await?;
             if let Some(ref storage) = self.storage {
                 storage.store_chunks(&all_chunks).await?
             } else {
@@ -399,12 +424,24 @@ impl Indexer {
     }
 
     /// Index file content directly without filesystem access
-    pub async fn index_content(
+    /// If repository is set, will check file state and skip unchanged files
+    pub async fn index_file_content(
         &mut self,
         project_id: &str,
         files: Vec<FileContent>,
     ) -> Result<IndexResult> {
-        println!("Starting index_content for project: {project_id}");
+        println!("Starting index_file_content for project: {project_id}");
+
+        // Parse project_id to extract repository_id and branch if using database
+        let (repository_id, branch) = if project_id.contains(':') {
+            let parts: Vec<&str> = project_id.splitn(2, ':').collect();
+            (
+                parts[0].to_string(),
+                parts.get(1).unwrap_or(&"main").to_string(),
+            )
+        } else {
+            (project_id.to_string(), "main".to_string())
+        };
 
         // Ensure embedding model is loaded first to get tokenizer
         println!("Loading embedding model...");
@@ -420,14 +457,91 @@ impl Indexer {
             );
         }
 
-        // Ensure storage is initialized
-        self.ensure_storage().await?;
-
         let mut all_chunks = Vec::new();
         let mut files_indexed = 0;
 
+        // Track file metadata for database recording
+        struct FileMetadata {
+            file_path: String,
+            generation: i64,
+        }
+        let mut file_metadata_map: Vec<FileMetadata> = Vec::new();
+
+        // Ensure project branch exists if using database
+        if let Some(ref repo) = self.repository {
+            let ctx = codetriever_data::models::RepositoryContext {
+                repository_id: repository_id.clone(),
+                branch: branch.clone(),
+                repository_url: None,
+                commit_sha: None,
+                commit_message: None,
+                commit_date: None,
+                author: None,
+                is_dirty: false,
+                root_path: std::path::PathBuf::from("."),
+            };
+            repo.ensure_project_branch(&ctx).await?;
+        }
+
         for file in &files {
             println!("Processing file: {}", file.path);
+
+            let mut current_generation = 1i64;
+
+            // If we have a repository, check file state
+            if let Some(ref repo) = self.repository {
+                let content_hash = codetriever_data::hash_content(&file.content);
+                let state = repo
+                    .check_file_state(&repository_id, &branch, &file.path, &content_hash)
+                    .await?;
+
+                match state {
+                    codetriever_data::models::FileState::Unchanged => {
+                        println!("  Skipping unchanged file");
+                        continue; // Skip unchanged files
+                    }
+                    codetriever_data::models::FileState::New { generation }
+                    | codetriever_data::models::FileState::Updated {
+                        new_generation: generation,
+                        ..
+                    } => {
+                        current_generation = generation;
+
+                        // Record file indexing in database
+                        let metadata = codetriever_data::models::FileMetadata {
+                            path: file.path.clone(),
+                            content_hash: content_hash.clone(),
+                            generation,
+                            commit_sha: None,
+                            commit_message: None,
+                            commit_date: None,
+                            author: None,
+                        };
+
+                        repo.record_file_indexing(&repository_id, &branch, &metadata)
+                            .await?;
+
+                        // For updated files, delete old chunks
+                        if matches!(state, codetriever_data::models::FileState::Updated { .. }) {
+                            let deleted_ids = repo
+                                .replace_file_chunks(
+                                    &repository_id,
+                                    &branch,
+                                    &file.path,
+                                    generation,
+                                )
+                                .await?;
+                            println!("  Deleted {} old chunks from database", deleted_ids.len());
+
+                            // Also delete from Qdrant if storage is available
+                            if let Some(ref storage) = self.storage {
+                                storage.delete_chunks(&deleted_ids).await?;
+                                println!("  Deleted {} old chunks from Qdrant", deleted_ids.len());
+                            }
+                        }
+                    }
+                }
+            }
 
             // Get language from file extension
             let ext = file.path.rsplit('.').next().unwrap_or("");
@@ -441,6 +555,13 @@ impl Indexer {
             if !chunks.is_empty() {
                 files_indexed += 1;
                 println!("  Got {} chunks", chunks.len());
+
+                // Track file metadata for this file
+                file_metadata_map.push(FileMetadata {
+                    file_path: file.path.clone(),
+                    generation: current_generation,
+                });
+
                 all_chunks.extend(chunks);
             }
         }
@@ -461,10 +582,69 @@ impl Indexer {
                 chunk.embedding = Some(embedding);
             }
 
-            // Store chunks with embeddings
+            // Store chunks with embeddings if storage is configured
             if let Some(ref storage) = self.storage {
                 println!("Storing {} chunks in vector database...", all_chunks.len());
-                storage.store_chunks(&all_chunks).await?;
+
+                // If we have repository info, use deterministic IDs
+                if self.repository.is_some() {
+                    // Store chunks per file with deterministic IDs
+                    for file_info in &file_metadata_map {
+                        let file_chunks: Vec<&CodeChunk> = all_chunks
+                            .iter()
+                            .filter(|c| c.file_path == file_info.file_path)
+                            .collect();
+
+                        if !file_chunks.is_empty() {
+                            // Get embeddings for these chunks
+                            let mut chunks_with_embeddings = Vec::new();
+                            for chunk in file_chunks {
+                                chunks_with_embeddings.push(chunk.clone());
+                            }
+
+                            let chunk_ids = storage
+                                .store_chunks_with_ids(
+                                    &repository_id,
+                                    &branch,
+                                    &chunks_with_embeddings,
+                                    file_info.generation,
+                                )
+                                .await?;
+
+                            // Record chunk IDs in database
+                            if let Some(ref repo) = self.repository {
+                                let chunk_metadata: Vec<codetriever_data::models::ChunkMetadata> =
+                                    chunk_ids
+                                        .iter()
+                                        .enumerate()
+                                        .zip(&chunks_with_embeddings)
+                                        .map(|((idx, id), chunk)| {
+                                            codetriever_data::models::ChunkMetadata {
+                                                chunk_id: *id,
+                                                repository_id: repository_id.clone(),
+                                                branch: branch.clone(),
+                                                file_path: chunk.file_path.clone(),
+                                                chunk_index: idx as i32,
+                                                generation: file_info.generation,
+                                                start_line: chunk.start_line as i32,
+                                                end_line: chunk.end_line as i32,
+                                                kind: chunk.kind.clone(),
+                                                name: chunk.name.clone(),
+                                                created_at: chrono::Utc::now(),
+                                            }
+                                        })
+                                        .collect();
+
+                                repo.insert_chunks(&repository_id, &branch, chunk_metadata)
+                                    .await?;
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback to old method without deterministic IDs
+                    storage.store_chunks(&all_chunks).await?;
+                }
+
                 println!("Successfully stored chunks");
             }
         }
@@ -478,9 +658,7 @@ impl Indexer {
 
     /// Drop the collection from storage
     pub async fn drop_collection(&mut self) -> Result<bool> {
-        // Ensure storage is initialized first
-        self.ensure_storage().await?;
-
+        // Drop collection if storage is configured
         if let Some(ref storage) = self.storage {
             storage.drop_collection().await
         } else {
@@ -488,22 +666,12 @@ impl Indexer {
         }
     }
 
-    /// Ensure storage is initialized (lazy initialization)
-    async fn ensure_storage(&mut self) -> Result<()> {
-        if self.storage.is_none() {
-            println!("Initializing Qdrant storage at {}", self.config.qdrant_url);
-            let storage = QdrantStorage::new(
-                self.config.qdrant_url.clone(),
-                self.config.qdrant_collection.clone(),
-            )
-            .await?;
-            println!("Qdrant storage initialized successfully");
-            self.storage = Some(storage);
-        }
-        Ok(())
+    /// Set the storage backend for this indexer
+    pub fn set_storage(&mut self, storage: QdrantStorage) {
+        self.storage = Some(storage);
     }
 
-    async fn index_file(&self, path: &Path) -> Result<Vec<CodeChunk>> {
+    async fn index_file_path(&self, path: &Path) -> Result<Vec<CodeChunk>> {
         // Only index code files - comprehensive language support
         let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
@@ -541,4 +709,137 @@ fn collect_files(dir: &Path, recursive: bool) -> Result<Vec<std::path::PathBuf>>
     }
 
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::indexing::service::FileContent;
+    use codetriever_data::{mock::MockFileRepository, models::*, traits::FileRepository};
+
+    #[tokio::test]
+    async fn test_indexer_uses_file_repository_to_check_state() {
+        // Arrange - Create mock repository
+        let mock_repo = Arc::new(MockFileRepository::new());
+
+        // Create indexer with the mock repository
+        let mut indexer = Indexer::new_with_repository(mock_repo.clone());
+
+        // Act - Index a file using index_file_content
+        let content = r#"
+fn main() {
+    println!(\"Hello, world!\");
+}
+"#;
+        let file_content = FileContent {
+            path: "src/main.rs".to_string(),
+            content: content.to_string(),
+            hash: codetriever_data::hash_content(content),
+        };
+
+        let result = indexer
+            .index_file_content("test_repo:main", vec![file_content])
+            .await;
+
+        // Assert - Verify repository was called
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().files_indexed, 1);
+
+        // Verify file state was checked
+        let files = mock_repo
+            .get_indexed_files("test_repo", "main")
+            .await
+            .unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_path, "src/main.rs");
+    }
+
+    #[tokio::test]
+    async fn test_indexer_handles_unchanged_files() {
+        // Arrange - Create mock with existing file
+        let mock_repo = Arc::new(MockFileRepository::new());
+
+        // Pre-populate with existing file with the hash we will use
+        let content = "test content";
+        let content_hash = codetriever_data::hash_content(content);
+
+        let existing_file = FileMetadata {
+            path: "src/lib.rs".to_string(),
+            content_hash: content_hash.clone(),
+            generation: 1,
+            commit_sha: None,
+            commit_message: None,
+            commit_date: None,
+            author: None,
+        };
+
+        mock_repo
+            .record_file_indexing("test_repo", "main", &existing_file)
+            .await
+            .unwrap();
+
+        let mut indexer = Indexer::new_with_repository(mock_repo.clone());
+
+        // Act - Try to index same content (same hash)
+        let file_content = FileContent {
+            path: "src/lib.rs".to_string(),
+            content: content.to_string(),
+            hash: content_hash.clone(),
+        };
+
+        let result = indexer
+            .index_file_content("test_repo:main", vec![file_content])
+            .await;
+
+        // Assert - File should be skipped
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().files_indexed, 0); // Should not index unchanged file
+
+        let chunks = mock_repo
+            .get_file_chunks("test_repo", "main", "src/lib.rs")
+            .await
+            .unwrap();
+        assert_eq!(chunks.len(), 0); // No chunks should be created for unchanged file
+    }
+
+    #[tokio::test]
+    async fn test_indexer_increments_generation_on_change() {
+        // Arrange
+        let mock_repo = Arc::new(MockFileRepository::new());
+
+        // Index file first time
+        let mut indexer = Indexer::new_with_repository(mock_repo.clone());
+
+        let file_v1 = FileContent {
+            path: "src/main.rs".to_string(),
+            content: "content v1".to_string(),
+            hash: codetriever_data::hash_content("content v1"),
+        };
+
+        indexer
+            .index_file_content("test_repo:main", vec![file_v1])
+            .await
+            .unwrap();
+
+        // Act - Index with different content
+        let file_v2 = FileContent {
+            path: "src/main.rs".to_string(),
+            content: "content v2".to_string(),
+            hash: codetriever_data::hash_content("content v2"),
+        };
+
+        indexer
+            .index_file_content("test_repo:main", vec![file_v2])
+            .await
+            .unwrap();
+
+        // Assert - Generation should be incremented
+        let files = mock_repo
+            .get_indexed_files("test_repo", "main")
+            .await
+            .unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].generation, 2);
+    }
 }

@@ -177,7 +177,7 @@ impl FileRepository for DbFileRepository {
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 "#,
             )
-            .bind(&chunk.chunk_id)
+            .bind(chunk.chunk_id)
             .bind(repository_id)
             .bind(branch)
             .bind(&chunk.file_path)
@@ -204,7 +204,7 @@ impl FileRepository for DbFileRepository {
         branch: &str,
         file_path: &str,
         new_generation: i64,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<Uuid>> {
         let rows = sqlx::query("SELECT * FROM replace_file_chunks($1, $2, $3, $4)")
             .bind(repository_id)
             .bind(branch)
@@ -216,7 +216,7 @@ impl FileRepository for DbFileRepository {
 
         let deleted_ids = rows
             .into_iter()
-            .map(|row| row.get::<String, _>("deleted_chunk_id"))
+            .map(|row| row.get::<Uuid, _>("deleted_chunk_id"))
             .collect();
 
         Ok(deleted_ids)

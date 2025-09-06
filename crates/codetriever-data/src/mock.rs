@@ -166,11 +166,11 @@ impl FileRepository for MockFileRepository {
         branch: &str,
         file_path: &str,
         new_generation: i64,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<Uuid>> {
         self.check_fail()?;
 
         let mut chunks = self.chunks.lock().unwrap();
-        let deleted_ids: Vec<String> = chunks
+        let deleted_ids: Vec<Uuid> = chunks
             .iter()
             .filter(|c| {
                 c.repository_id == repository_id
@@ -178,7 +178,7 @@ impl FileRepository for MockFileRepository {
                     && c.file_path == file_path
                     && c.generation < new_generation
             })
-            .map(|c| c.chunk_id.clone())
+            .map(|c| c.chunk_id)
             .collect();
 
         chunks.retain(|c| {
@@ -389,9 +389,13 @@ mod tests {
     async fn test_mock_chunks() {
         let mock = MockFileRepository::new();
 
+        // Generate deterministic UUIDs for testing
+        let chunk_id1 = crate::generate_chunk_id("repo", "main", "file.rs", 1, 0);
+        let chunk_id2 = crate::generate_chunk_id("repo", "main", "file.rs", 1, 1);
+
         let chunks = vec![
             ChunkMetadata {
-                chunk_id: "chunk1".to_string(),
+                chunk_id: chunk_id1,
                 repository_id: "repo".to_string(),
                 branch: "main".to_string(),
                 file_path: "file.rs".to_string(),
@@ -404,7 +408,7 @@ mod tests {
                 created_at: Utc::now(),
             },
             ChunkMetadata {
-                chunk_id: "chunk2".to_string(),
+                chunk_id: chunk_id2,
                 repository_id: "repo".to_string(),
                 branch: "main".to_string(),
                 file_path: "file.rs".to_string(),
@@ -432,8 +436,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(deleted.len(), 2);
-        assert!(deleted.contains(&"chunk1".to_string()));
-        assert!(deleted.contains(&"chunk2".to_string()));
+        assert!(deleted.contains(&chunk_id1));
+        assert!(deleted.contains(&chunk_id2));
 
         let remaining = mock
             .get_file_chunks("repo", "main", "file.rs")

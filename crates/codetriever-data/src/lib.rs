@@ -11,7 +11,6 @@ pub mod pool;
 pub mod repository;
 pub mod traits;
 
-#[cfg(test)]
 pub mod mock;
 
 // Public exports

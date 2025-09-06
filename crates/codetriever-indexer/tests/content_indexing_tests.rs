@@ -1,6 +1,6 @@
 //! Integration tests for content-based indexing functionality
 //!
-//! These tests verify that the index_content method properly:
+//! These tests verify that the index_file_content method properly:
 //! - Accepts file content without filesystem access
 //! - Parses content into chunks
 //! - Generates embeddings
@@ -14,7 +14,7 @@ use codetriever_indexer::indexing::{Indexer, service::FileContent};
 use test_utils::{create_test_storage, skip_without_hf_token, test_config};
 
 #[tokio::test]
-async fn test_index_content_with_multiple_files() {
+async fn test_index_file_content_with_multiple_files() {
     if skip_without_hf_token().is_none() {
         return;
     }
@@ -130,7 +130,7 @@ def transform_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     // Index the content
     let result = indexer
-        .index_content("test-project", files)
+        .index_file_content("test-project", files)
         .await
         .expect("Failed to index content");
 
@@ -149,7 +149,7 @@ def transform_item(item: Dict[str, Any]) -> Dict[str, Any]:
 }
 
 #[tokio::test]
-async fn test_index_content_creates_searchable_chunks() {
+async fn test_index_file_content_creates_searchable_chunks() {
     if skip_without_hf_token().is_none() {
         return;
     }
@@ -191,7 +191,7 @@ impl PostgresConnection {
 
     // Index the content
     let index_result = indexer
-        .index_content("search-test", files)
+        .index_file_content("search-test", files)
         .await
         .expect("Failed to index");
 
@@ -225,7 +225,7 @@ impl PostgresConnection {
 }
 
 #[tokio::test]
-async fn test_index_content_handles_different_languages() {
+async fn test_index_file_content_handles_different_languages() {
     if skip_without_hf_token().is_none() {
         return;
     }
@@ -307,7 +307,7 @@ def fetch_from_database():
     ];
 
     let result = indexer
-        .index_content("multi-lang", files)
+        .index_file_content("multi-lang", files)
         .await
         .expect("Failed to index");
 
@@ -323,7 +323,7 @@ def fetch_from_database():
 }
 
 #[tokio::test]
-async fn test_index_content_handles_large_files() {
+async fn test_index_file_content_handles_large_files() {
     if skip_without_hf_token().is_none() {
         return;
     }
@@ -368,7 +368,7 @@ pub fn function_{i}(param: i32) -> i32 {{
     }];
 
     let result = indexer
-        .index_content("large-file-test", files)
+        .index_file_content("large-file-test", files)
         .await
         .expect("Failed to index large file");
 
@@ -383,7 +383,7 @@ pub fn function_{i}(param: i32) -> i32 {{
 }
 
 #[tokio::test]
-async fn test_index_content_handles_empty_and_invalid_files() {
+async fn test_index_file_content_handles_empty_and_invalid_files() {
     if skip_without_hf_token().is_none() {
         return;
     }
@@ -429,7 +429,7 @@ async fn test_index_content_handles_empty_and_invalid_files() {
     ];
 
     let result = indexer
-        .index_content("edge-cases", files)
+        .index_file_content("edge-cases", files)
         .await
         .expect("Should handle edge cases gracefully");
 
@@ -457,8 +457,8 @@ async fn test_index_content_handles_empty_and_invalid_files() {
 }
 
 #[tokio::test]
-async fn test_index_content_without_filesystem_access() {
-    // This test verifies that index_content doesn't access the filesystem
+async fn test_index_file_content_without_filesystem_access() {
+    // This test verifies that index_file_content doesn't access the filesystem
     // even if the paths in FileContent look like real files
 
     if skip_without_hf_token().is_none() {
@@ -486,7 +486,7 @@ pub fn test_function() -> String {
 
     // Should succeed even though the path doesn't exist
     let result = indexer
-        .index_content("no-filesystem-test", files)
+        .index_file_content("no-filesystem-test", files)
         .await
         .expect("Should index content without filesystem access");
 

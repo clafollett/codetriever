@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Represents a repository/branch combination
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ProjectBranch {
     pub repository_id: String,
     pub branch: String,
@@ -15,7 +15,7 @@ pub struct ProjectBranch {
 }
 
 /// Represents an indexed file in the database
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct IndexedFile {
     pub repository_id: String,
     pub branch: String,
@@ -33,7 +33,7 @@ pub struct IndexedFile {
 /// Metadata about a chunk stored in the vector database
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkMetadata {
-    pub chunk_id: String,
+    pub chunk_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub file_path: String,
@@ -129,7 +129,7 @@ pub struct RepositoryContext {
 }
 
 /// File metadata for indexing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FileMetadata {
     pub path: String, // Relative path
     pub content_hash: String,

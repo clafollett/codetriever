@@ -85,7 +85,7 @@ async fn index_handler(
     // Use the injected indexer service
     let mut indexer = indexer.lock().await;
 
-    match indexer.index_content(&request.project_id, files).await {
+    match indexer.index_file_content(&request.project_id, files).await {
         Ok(result) => Json(IndexResponse::success(
             result.files_indexed,
             result.chunks_created,
