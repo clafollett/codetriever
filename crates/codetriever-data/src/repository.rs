@@ -180,38 +180,59 @@ impl FileRepository for DbFileRepository {
             return Ok(());
         }
 
-        // Use write pool for bulk INSERT with transaction
         let pool = self.pools.write_pool();
-        let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
-        for chunk in chunks {
-            sqlx::query(
-                r#"
-                INSERT INTO chunk_metadata (
-                    chunk_id, repository_id, branch, file_path, chunk_index, generation,
-                    start_line, end_line, byte_start, byte_end, kind, name, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-                "#,
+        // Use UNNEST for bulk insert - drastically faster than loop
+        let chunk_ids: Vec<Uuid> = chunks.iter().map(|c| c.chunk_id).collect();
+        let file_paths: Vec<String> = chunks.iter().map(|c| c.file_path.clone()).collect();
+        let chunk_indices: Vec<i32> = chunks.iter().map(|c| c.chunk_index).collect();
+        let generations: Vec<i64> = chunks.iter().map(|c| c.generation).collect();
+        let start_lines: Vec<i32> = chunks.iter().map(|c| c.start_line).collect();
+        let end_lines: Vec<i32> = chunks.iter().map(|c| c.end_line).collect();
+        let byte_starts: Vec<i64> = chunks.iter().map(|c| c.byte_start).collect();
+        let byte_ends: Vec<i64> = chunks.iter().map(|c| c.byte_end).collect();
+        let kinds: Vec<Option<String>> = chunks.iter().map(|c| c.kind.clone()).collect();
+        let names: Vec<Option<String>> = chunks.iter().map(|c| c.name.clone()).collect();
+
+        sqlx::query(
+            r#"
+            INSERT INTO chunk_metadata (
+                chunk_id, repository_id, branch, file_path, chunk_index, generation,
+                start_line, end_line, byte_start, byte_end, kind, name, created_at
             )
-            .bind(chunk.chunk_id)
-            .bind(repository_id)
-            .bind(branch)
-            .bind(&chunk.file_path)
-            .bind(chunk.chunk_index)
-            .bind(chunk.generation)
-            .bind(chunk.start_line)
-            .bind(chunk.end_line)
-            .bind(chunk.byte_start)
-            .bind(chunk.byte_end)
-            .bind(&chunk.kind)
-            .bind(&chunk.name)
-            .bind(chunk.created_at)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to insert chunk - SQL error: {}", e))?;
-        }
+            SELECT 
+                unnest($1::uuid[]),
+                $2,
+                $3,
+                unnest($4::text[]),
+                unnest($5::int[]),
+                unnest($6::bigint[]),
+                unnest($7::int[]),
+                unnest($8::int[]),
+                unnest($9::bigint[]),
+                unnest($10::bigint[]),
+                unnest($11::text[]),
+                unnest($12::text[]),
+                NOW()
+            ON CONFLICT (chunk_id) DO NOTHING
+            "#,
+        )
+        .bind(&chunk_ids)
+        .bind(repository_id)
+        .bind(branch)
+        .bind(&file_paths)
+        .bind(&chunk_indices)
+        .bind(&generations)
+        .bind(&start_lines)
+        .bind(&end_lines)
+        .bind(&byte_starts)
+        .bind(&byte_ends)
+        .bind(&kinds)
+        .bind(&names)
+        .execute(pool)
+        .await
+        .context("Failed to batch insert chunks")?;
 
-        tx.commit().await.context("Failed to commit chunks")?;
         Ok(())
     }
 
