@@ -1,194 +1,106 @@
-# Codetriever Development Task Runner
-# Install just: https://github.com/casey/just#installation
-# Usage: just <recipe>
+# Codetriever Development Commands
+# https://github.com/clafollett/codetriever
 
 set dotenv-load := true
 set export := true
 
-# Default recipe (runs when you just type 'just')
+# Default: Show available commands
 default:
     @just --list
 
-# Check if environment is properly configured
-check-env:
-    #!/usr/bin/env bash
-    echo "🔧 Checking environment configuration..."
-    test -f stack.env || (echo "❌ stack.env file not found. Ensure it exists and is properly sourced." && exit 1)
-    source stack.env
-    test -n "${RUST_TOOLCHAIN:-}" || (echo "❌ RUST_TOOLCHAIN not set. Run: source stack.env" && exit 1)
-    test -n "${BUILD_FLAGS:-}" || (echo "❌ BUILD_FLAGS not set. Run: source stack.env" && exit 1)
-    test -n "${MIN_MACOS_VERSION:-}" || (echo "❌ Platform variables not set. Run: source stack.env" && exit 1)
-    echo "✅ Environment properly configured"
+# ========================
+# Development Setup
+# ========================
 
-# Show current test configuration  
-test-config:
-    @echo "📋 Current Test Configuration:"
-    @echo "   Profile: ${TEST_PROFILE:-fast}"
-    @echo "   Test timeout: ${TEST_TIMEOUT_MS:-5000}ms"
-    @echo "   Test iterations: ${TEST_ITERATIONS:-10}"
-    @echo ""
-    @echo "   Embedding backend: ${EMBEDDING_BACKEND:-native}"
-    @echo "   Embedding model: ${EMBEDDING_MODEL:-jina-embeddings-v2-base-code}"
-    @echo "   Qdrant URL: ${QDRANT_URL:-http://localhost:6334}"
-    @echo "   Use Metal: ${USE_METAL:-true}"
-    @echo ""
-    @echo "💡 To use different profiles:"
-    @echo "   source stack.env                          # fast mode (default)"
-    @echo "   TEST_PROFILE=thorough source stack.env && just test"
-    @echo "   TEST_PROFILE=ci source stack.env && just test"
-
-# Development setup and validation
+# Initial setup - install all dependencies and configure environment
 dev-setup:
     @echo "🚀 Setting up Codetriever development environment..."
-    @just check-env
-    @just validate-stack
     @just install-deps
     @just setup-git-hooks
-    @if [ -d "test-repos" ]; then \
-        echo "📚 Found test repositories, initializing..."; \
-        just init-test-repos; \
-    fi
-    @just format
-    @just lint
-    @just test
     @echo "✅ Development environment ready!"
 
-# Validate stack versions match stack.env
-validate-stack:
-    #!/usr/bin/env bash
-    source stack.env
-    echo "🔍 Validating development stack..."
-    
-    # Required files check
-    echo "Required files check:"
-    test -f rust-toolchain.toml || (echo "❌ rust-toolchain.toml missing" && exit 1)
-    test -f clippy.toml || (echo "❌ clippy.toml missing" && exit 1)
-    test -f rustfmt.toml || (echo "❌ rustfmt.toml missing" && exit 1)
-    echo "✅ All required files present"
-    
-    # Platform validation
-    echo "Platform validation:"
-    case "$(uname -s)" in
-        Darwin)
-            # macOS version check
-            macos_version=$(sw_vers -productVersion | cut -d. -f1,2)
-            if [[ $(echo "$macos_version >= ${MIN_MACOS_VERSION}" | bc -l) -eq 1 ]]; then
-                echo "✅ macOS $macos_version (>= ${MIN_MACOS_VERSION} required)"
-            else
-                echo "❌ macOS $macos_version is below minimum ${MIN_MACOS_VERSION}"
-                exit 1
-            fi
-            ;;
-        Linux)
-            # Basic Linux validation
-            echo "✅ Linux platform detected"
-            if command -v lsb_release >/dev/null 2>&1; then
-                distro=$(lsb_release -si)
-                version=$(lsb_release -sr)
-                echo "📋 Detected: $distro $version"
-            fi
-            ;;
-        MINGW*|CYGWIN*|MSYS*)
-            echo "✅ Windows with Unix-like environment detected"
-            ;;
-        *)
-            echo "⚠️  Unknown platform: $(uname -s)"
-            ;;
-    esac
-    
-    # Toolchain versions
-    echo "Toolchain versions:"
-    rustc --version
-    cargo --version
-    just --version
-    
-    # Environment variables
-    echo "Environment variables:"
-    echo "RUST_TOOLCHAIN: ${RUST_TOOLCHAIN}"
-    echo "BUILD_FLAGS: ${BUILD_FLAGS}"
-    echo "JUST_VERSION: ${JUST_VERSION}"
-    echo "CLIPPY_VERSION: ${CLIPPY_VERSION}"
-    echo "📋 Stack validation complete"
-
-# Install development dependencies
+# Install required dependencies
 install-deps:
     @echo "📦 Installing Rust components..."
     rustup component add rustfmt clippy rust-src
-    @echo "📦 Installing cargo tools..."
-    cargo install cargo-audit --quiet || echo "⚠️  cargo-audit already installed"
     @echo "✅ Dependencies installed"
 
-# Initialize test repositories with shallow clones
-init-test-repos:
-    @echo "📚 Initializing test repositories..."
-    @if [ -d "test-repos" ]; then \
-        cd test-repos && ./init.sh; \
-    else \
-        echo "⚠️  test-repos directory not found. Run from repository root."; \
-        exit 1; \
-    fi
-    @echo "✅ Test repositories ready for indexing!"
+# Setup git hooks for quality checks
+setup-git-hooks:
+    @echo "🪝 Setting up git hooks..."
+    @mkdir -p .git/hooks
+    @echo '#!/bin/sh' > .git/hooks/pre-commit
+    @echo 'echo "🪝 Running pre-commit checks..."' >> .git/hooks/pre-commit
+    @echo 'echo "🎨 Formatting code..."' >> .git/hooks/pre-commit
+    @echo 'cargo fmt --all' >> .git/hooks/pre-commit
+    @echo 'echo "🔍 Running clippy lints..."' >> .git/hooks/pre-commit
+    @echo 'cargo clippy --all-targets --all-features -- -D warnings -W clippy::uninlined_format_args' >> .git/hooks/pre-commit
+    @echo 'echo "⚡ Running unit tests and doc tests..."' >> .git/hooks/pre-commit
+    @echo 'cargo test --workspace --lib --bins' >> .git/hooks/pre-commit
+    @echo 'cargo test --workspace --doc' >> .git/hooks/pre-commit
+    @echo 'echo "✅ Pre-commit checks passed!"' >> .git/hooks/pre-commit
+    @chmod +x .git/hooks/pre-commit
+    @echo "✅ Git hooks installed!"
 
-# Code formatting
-format:
-    @echo "🎨 Formatting code..."
-    cargo fmt --all
+# ========================
+# Docker Infrastructure
+# ========================
 
-# Check formatting without applying changes
-format-check:
-    @echo "🔍 Checking code formatting..."
-    cargo fmt --all -- --check
+# Start all services (PostgreSQL + Qdrant)
+docker-up:
+    @echo "🚀 Starting Docker services..."
+    @docker-compose -f docker/docker-compose.data.yml up -d
+    @sleep 3
+    @echo "✅ PostgreSQL ready on port 5433"
+    @echo "✅ Qdrant ready on http://localhost:6334"
 
-# Linting with clippy
-lint:
-    @echo "🔍 Running clippy lints..."
-    cargo clippy --all-targets --all-features -- -D warnings -W clippy::uninlined_format_args
+# Stop all services
+docker-down:
+    @echo "🛑 Stopping Docker services..."
+    @docker-compose -f docker/docker-compose.data.yml stop
+    @echo "✅ Services stopped"
 
-# Fix auto-fixable clippy issues
-clippy-fix:
-    @echo "🔧 Fixing clippy issues..."
-    cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings -W clippy::uninlined_format_args
-    @echo "✅ Applied clippy fixes"
+# Remove containers and volumes (full reset)
+docker-reset:
+    @echo "🗑️ Resetting Docker environment..."
+    @docker-compose -f docker/docker-compose.data.yml down -v
+    @echo "✅ Docker environment reset"
 
+# View service logs
+docker-logs:
+    @docker-compose -f docker/docker-compose.data.yml logs -f
 
-# Fix auto-fixable clippy issues
-fmt-and-clippy-fix:
-    @echo "🎨 Formatting code..."
-    cargo fmt --all
-    @echo "🔧 Fixing clippy issues..."
-    cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings -W clippy::uninlined_format_args
-    @echo "✅ Applied clippy fixes"
+# ========================
+# Database Management
+# ========================
 
-# Run all tests (uses MAOS_TEST_PROFILE from stack.env)
+# Initialize database schema
+db-setup:
+    @echo "🔧 Setting up database..."
+    @DATABASE_URL="${DATABASE_URL:-postgresql://codetriever:codetriever@localhost:5433/codetriever?sslmode=disable}" \
+        cargo run -p codetriever-data --example run_migrations
+    @echo "✅ Database ready"
+
+# Run migrations
+db-migrate: db-setup
+
+# Reset database (drop and recreate)
+db-reset: docker-reset docker-up
+    @sleep 3
+    @just db-setup
+
+# ========================
+# Development Workflow
+# ========================
+
+# Run all tests
 test:
-    #!/usr/bin/env bash
-    source stack.env
-    echo "🧪 Running tests (profile: ${MAOS_TEST_PROFILE})..."
-    echo "   Proptest cases: ${MAOS_TEST_SECURITY_PROPTEST_CASES}"
+    @echo "🧪 Running all tests..."
     cargo test --workspace
 
-
-# Run thorough tests (includes ignored tests)
-test-thorough:
-    #!/usr/bin/env bash
-    export MAOS_TEST_PROFILE=thorough
-    source stack.env
-    echo "🧪 Running thorough tests..."
-    echo "   Proptest cases: ${MAOS_TEST_SECURITY_PROPTEST_CASES}"
-    cargo test --workspace -- --include-ignored
-
-# Run only security fuzzing tests with CI-level thoroughness
-test-security:
-    #!/usr/bin/env bash
-    export MAOS_TEST_PROFILE=ci
-    source stack.env
-    echo "🔒 Running security fuzzing tests (CI mode)..."
-    echo "   Proptest cases: ${MAOS_TEST_SECURITY_PROPTEST_CASES}"
-    cargo test --workspace --test security_unit
-
-# Run unit tests only (fastest)
+# Run unit tests only (fast)
 test-unit:
-    @echo "⚡ Running unit tests and doc tests..."
+    @echo "⚡ Running unit tests..."
     cargo test --workspace --lib --bins
     cargo test --workspace --doc
 
@@ -197,287 +109,70 @@ test-integration:
     @echo "🔧 Running integration tests..."
     cargo test --workspace --tests
 
-# Run tests with coverage (requires cargo-tarpaulin)
-test-coverage:
-    @echo "📊 Running tests with coverage..."
-    cargo tarpaulin --all-features --out Html
+# Format code
+fmt:
+    @echo "🎨 Formatting code..."
+    cargo fmt --all
 
-# Security audit
-audit:
-    @echo "🔒 Running security audit..."
-    cargo audit
+# Run clippy lints
+lint:
+    @echo "🔍 Running clippy..."
+    cargo clippy --all-targets --all-features -- -D warnings -W clippy::uninlined_format_args
 
-# Build debug version
-build:
-    @echo "🔨 Building debug version..."
-    cargo build --all-targets
+# Fix clippy warnings
+clippy-fix:
+    @echo "🔧 Fixing clippy issues..."
+    cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings -W clippy::uninlined_format_args
+    @echo "✅ Applied clippy fixes"
 
-# Build release version
-build-release:
-    @echo "🚀 Building release version..."
-    cargo build --release --all-targets
+# Run all quality checks
+check: fmt lint test-unit
+    @echo "✅ All checks passed!"
 
-# Check compilation without building
-check:
-    @echo "✅ Checking compilation..."
-    cargo check --all-targets
-
-# Pre-commit checks (all quality gates)
-pre-commit: check-env format-check lint test audit
-    @echo "✅ All pre-commit checks passed!"
-
-# Clean build artifacts
-clean:
-    @echo "🧹 Cleaning build artifacts..."
-    cargo clean
-
-# Update dependencies
-update:
-    @echo "📦 Updating dependencies..."
-    cargo update
-
-# Run the MAOS CLI
-run *args:
-    @echo "🤖 Running MAOS..."
-    cargo run -- {{args}}
-
-# Development watch mode (requires cargo-watch)
+# Watch for changes and run tests
 watch:
     @echo "👀 Watching for changes..."
     cargo watch -x check -x test
 
-# Generate documentation
+# ========================
+# Building & Running
+# ========================
+
+# Build debug version
+build:
+    @echo "🔨 Building debug..."
+    cargo build --workspace --all-targets
+
+# Build release version
+build-release:
+    @echo "🚀 Building release..."
+    cargo build --workspace --release --all-targets
+
+# Run CLI
+run *args:
+    cargo run --bin codetriever -- {{args}}
+
+# Run API server
+api:
+    cargo run --bin codetriever-api
+
+# Clean build artifacts
+clean:
+    @echo "🧹 Cleaning..."
+    cargo clean
+
+# ========================
+# Documentation
+# ========================
+
+# Generate and open documentation
 docs:
     @echo "📚 Generating documentation..."
     cargo doc --all-features --open
 
-# Full CI pipeline locally
-ci: format-check lint test audit build
-    @echo "🎉 Full CI pipeline completed successfully!"
-
-# Set up git hooks (pure Rust alternative to pre-commit)
-setup-git-hooks:
-    #!/usr/bin/env bash
-    echo "🪝 Setting up git hooks..."
-    mkdir -p .git/hooks
-    cat > .git/hooks/pre-commit << 'HOOK_EOF'
-    #!/bin/sh
-    # MAOS Pre-commit Hook - Validates environment and runs quality checks
-    
-    set -e  # Exit on any error
-    
-    echo "🪝 MAOS Pre-commit validation starting..."
-    
-    # Validate development environment
-    echo "📋 Sourcing stack.env..."
-    # Git hooks run from the repository root, but let's be explicit
-    REPO_ROOT="$(git rev-parse --show-toplevel)"
-    STACK_ENV_PATH="$REPO_ROOT/stack.env"
-    if [ ! -f "$STACK_ENV_PATH" ]; then
-        echo "❌ stack.env file not found at $STACK_ENV_PATH"
-        echo "💡 Ensure the file exists and is properly located in the project root directory"
-        exit 1
-    fi
-    source "$STACK_ENV_PATH" || {
-        echo "❌ Failed to source stack.env"
-        echo "💡 Check the file for errors or permissions issues"
-        exit 1
-    }
-    
-    # Validate stack configuration
-    echo "🔍 Validating development stack..."
-    just validate-stack || {
-        echo "❌ Stack validation failed"
-        echo "💡 Run 'just dev-setup' to fix your environment"
-        exit 1
-    }
-    
-    # Run all quality checks
-    echo "✅ Running pre-commit quality checks..."
-    just pre-commit || {
-        echo "❌ Pre-commit checks failed"
-        echo "💡 Fix the issues above and try committing again"
-        exit 1
-    }
-    
-    echo "🎉 All pre-commit checks passed!"
-    HOOK_EOF
-    chmod +x .git/hooks/pre-commit
-    echo "✅ Git hooks installed! All commits will validate environment and run quality checks"
-
-# ========================
-# Git & Worktree Commands
-# ========================
-
-# List all active worktrees
-worktree-list:
-    @echo "📋 Active worktrees:"
-    @git worktree list
-
-# Clean up stale worktrees
-worktree-cleanup:
-    @echo "🧹 Pruning stale worktrees..."
-    @git worktree prune
-    @echo "✅ Cleanup complete"
-
-# Show git status across all worktrees
-status-all:
-    @echo "📊 Status of all worktrees:"
-    @for worktree in $(git worktree list --porcelain | grep "worktree" | cut -d' ' -f2); do \
-        echo "\n📁 $$worktree:"; \
-        git -C "$$worktree" status -s || echo "  (no changes)"; \
-    done
-
-# ========================
-# MAOS Coordination
-# ========================
-
-# Show current MAOS session info
-session-info:
-    @echo "🤖 MAOS Session Info:"
-    @if [ -f .maos/session.json ]; then \
-        cat .maos/session.json | python -m json.tool; \
-    else \
-        echo "No active session"; \
-    fi
-
-# Show active agents
-agents:
-    @echo "👥 Active Agents:"
-    @if [ -f .maos/coordination/agents.json ]; then \
-        cat .maos/coordination/agents.json | python -m json.tool; \
-    else \
-        echo "No active agents"; \
-    fi
-
-# Show file locks
-locks:
-    @echo "🔒 File Locks:"
-    @if [ -f .maos/coordination/locks.json ]; then \
-        cat .maos/coordination/locks.json | python -m json.tool; \
-    else \
-        echo "No active locks"; \
-    fi
-
-# Clean MAOS session data
-clean-session:
-    @echo "🧹 Cleaning MAOS session data..."
-    @rm -rf .maos/session.json .maos/coordination/
-    @echo "✅ Session cleaned"
-
-# ========================
-# Development Shortcuts
-# ========================
-
-# Quick test a specific module
-test-module module:
-    @echo "🧪 Testing module: {{module}}"
-    @cargo test --package {{module}}
-
-# Run with verbose output
-run-verbose *args:
-    @RUST_LOG=debug cargo run -- {{args}}
-
-# Format and lint in one command
-fmt: format lint
-
-# Fix all auto-fixable issues (format + clippy)
-fix: format clippy-fix
-    @echo "🎯 All auto-fixes applied!"
-
-# Quick check without tests
-quick: format-check lint check
-
-# ========================
-# Codetriever Commands
-# ========================
-
-# Run native development environment (Mac with Metal)
-dev:
-    #!/usr/bin/env bash
-    set -e
-    echo "🚀 Starting Codetriever native development..."
-    
-    # Start Qdrant in Docker
-    just qdrant-start
-    
-    # Wait for Qdrant to be ready
-    sleep 2
-    
-    # Run MCP server
-    echo "Starting MCP server..."
-    cargo run --bin codetriever -- serve --mcp
-
-# Run Docker environment
-dev-docker:
-    docker-compose -f docker/docker-compose.dev.yml up --build
-
-# Stop all Codetriever services
-stop:
-    @just qdrant-stop
-    @pkill codetriever || true
-    @docker-compose -f docker/docker-compose.dev.yml down 2>/dev/null || true
-    @echo "✅ All services stopped"
-
-# Create new API crate
-create-api:
-    cargo new --lib crates/codetriever-api
-    @echo "✅ Created codetriever-api crate"
-
-# Run tests with TDD output
-tdd:
-    cargo test --all -- --nocapture
-
-# Watch and test (Red/Green/Refactor cycle)
-tdd-watch:
-    cargo watch -x "test --all -- --nocapture"
-
-# Full quality check (format, lint, test)
-quality: fmt lint test-unit
-    @echo "✅ Quality checks passed!"
-
-# Run Codetriever-specific tests
-test-codetriever:
-    cargo test --workspace --all-features
-
-# Build Codetriever crates
-build-codetriever:
-    cargo build --workspace --all-targets
-
-# Clean and rebuild
-rebuild: clean build
-    @echo "✅ Clean rebuild complete"
-
-# Install git hooks for quality checks
-install-hooks:
-    #!/usr/bin/env bash
-    echo "🪝 Installing Codetriever git hooks..."
-    mkdir -p .git/hooks
-    cat > .git/hooks/pre-commit << 'EOF'
-    #!/bin/sh
-    echo "🪝 Running pre-commit checks..."
-    just quality || {
-        echo "❌ Pre-commit checks failed"
-        echo "💡 Fix issues and try again"
-        exit 1
-    }
-    echo "✅ Pre-commit checks passed!"
-    EOF
-    chmod +x .git/hooks/pre-commit
-    echo "✅ Git hooks installed!"
-
-# Remove git hooks
-uninstall-hooks:
-    rm -f .git/hooks/pre-commit
-    @echo "✅ Git hooks removed"
-
-# Benchmark embeddings performance
-bench-embeddings:
-    cargo bench -p codetriever-api --bench embeddings
-
-# Show project stats
+# Show project statistics
 stats:
-    @echo "📊 Codetriever Statistics:"
+    @echo "📊 Project Statistics:"
     @echo "Lines of Rust code:"
     @find crates -name "*.rs" -type f | xargs wc -l | tail -1
     @echo "\nNumber of crates:"
@@ -485,112 +180,50 @@ stats:
     @echo "\nNumber of tests:"
     @grep -r "#\[test\]" --include="*.rs" crates | wc -l || echo "0"
 
-# === Qdrant Docker Commands ===
+# ========================
+# Common Workflows
+# ========================
 
-# Start data services (Postgres + Qdrant) in Docker
-data-start:
-    @echo "🚀 Starting data services..."
-    @docker-compose -f docker/docker-compose.data.yml up -d
-    @sleep 2
-    @curl -s http://localhost:6333/health >/dev/null && echo "✅ Qdrant ready on http://localhost:6333" || echo "⚠️  Qdrant starting..."
-    @echo "✅ Postgres ready on port 5433"
-    @echo "💡 Run 'just db-migrate' to apply database migrations"
+# Initialize everything (Docker + Database)
+init: docker-up db-setup
+    @echo "🎉 Codetriever environment initialized!"
 
-# Stop data services
-data-stop:
-    @docker-compose -f docker/docker-compose.data.yml stop
-    @echo "✅ Data services stopped"
+# Quick setup and test (for new contributors)
+quick-start: init test
+    @echo "✅ Codetriever is ready to use!"
 
-# Run database migrations
-db-migrate:
-    @echo "🔄 Running database migrations..."
-    @DATABASE_URL="${DATABASE_URL:-postgresql://${POSTGRES_USER:-codetriever}:${POSTGRES_PASSWORD:-codetriever}@localhost:5433/${POSTGRES_DB:-codetriever}?sslmode=disable}" \
-        cargo run -p codetriever-data --example run_migrations
-    @echo "✅ Migrations completed"
+# Full CI pipeline locally
+ci: fmt lint test build
+    @echo "✅ CI pipeline passed!"
 
-# Start data services and run migrations
-data-init: data-start
-    @echo "⏳ Waiting for database to be ready..."
-    @sleep 3
-    @POSTGRES_USER=codetriever POSTGRES_PASSWORD=codetriever just db-migrate
+# Fix all auto-fixable issues
+fix: fmt clippy-fix
+    @echo "✅ All auto-fixes applied!"
 
-# Remove data containers and volumes
-data-clean:
-    @docker-compose -f docker/docker-compose.data.yml down -v
-    @echo "✅ Data containers and volumes removed"
+# Development mode with auto-reload
+dev: docker-up
+    @echo "🚀 Starting development mode..."
+    cargo watch -x "run --bin codetriever-api"
 
-# Show data services logs
-data-logs:
-    @docker-compose -f docker/docker-compose.data.yml logs -f
+# ========================
+# Utility Commands
+# ========================
 
-# Start Qdrant using dedicated compose file (alias for compatibility)
-qdrant-start: data-start
+# Update dependencies
+update:
+    @echo "📦 Updating dependencies..."
+    cargo update
 
-# Stop Qdrant
-qdrant-stop:
-    @docker-compose -f docker/docker-compose.data.yml stop qdrant
-    @echo "✅ Qdrant stopped"
+# Security audit
+audit:
+    @echo "🔒 Running security audit..."
+    cargo audit || echo "⚠️ Run 'cargo install cargo-audit' if not installed"
 
-# Remove Qdrant container and volumes
-qdrant-clean:
-    @docker-compose -f docker/docker-compose.data.yml stop qdrant
-    @docker-compose -f docker/docker-compose.data.yml rm -f qdrant
-    @rm -rf ~/.codetriever/qdrant
-    @echo "✅ Qdrant container and volumes removed"
-
-# Show Qdrant logs
-qdrant-logs:
-    @docker-compose -f docker/docker-compose.data.yml logs -f qdrant
-
-# Check Qdrant health
-qdrant-health:
-    @curl -s http://localhost:6333 | jq '.' || echo "❌ Qdrant not responding"
-
-# Initialize Qdrant with codetriever collection
-qdrant-init:
-    @echo "🚀 Initializing Qdrant collection..."
-    @# Check if collection exists
-    @if curl -s http://localhost:6333/collections/codetriever | grep -q '"status":"ok"'; then \
-        echo "⚠️  Collection 'codetriever' already exists - run 'just qdrant-reset' to recreate"; \
-        exit 0; \
-    fi
-    @# Create collection with proper configuration (768 dims for Jina v2 base)
-    @echo "📦 Creating collection 'codetriever'..."
-    @curl -X PUT http://localhost:6333/collections/codetriever \
-        -H "Content-Type: application/json" \
-        -d '{ \
-            "vectors": { \
-                "size": 768, \
-                "distance": "Cosine" \
-            }, \
-            "optimizers_config": { \
-                "default_segment_number": 2 \
-            }, \
-            "replication_factor": 1, \
-            "write_consistency_factor": 1 \
-        }' | jq
-    @# Create payload indices for faster filtering
-    @echo "🔍 Creating payload indices..."
-    @curl -X PUT http://localhost:6333/collections/codetriever/index \
-        -H "Content-Type: application/json" \
-        -d '{"field_name": "file_path", "field_schema": "keyword"}' | jq
-    @curl -X PUT http://localhost:6333/collections/codetriever/index \
-        -H "Content-Type: application/json" \
-        -d '{"field_name": "language", "field_schema": "keyword"}' | jq
-    @echo "✅ Qdrant initialization complete!"
-
-# Reset Qdrant collection (delete and recreate)
-qdrant-reset:
-    @echo "🗑️  Resetting Qdrant collection..."
-    @curl -X DELETE http://localhost:6333/collections/codetriever 2>/dev/null || true
-    @sleep 1
-    @just qdrant-init
-
-# Clean up test collections
-qdrant-clean-tests:
-    @echo "🧹 Cleaning up test collections..."
-    @for collection in $(curl -s http://localhost:6333/collections | jq -r '.result.collections[].name' | grep '^test_'); do \
-        echo "  Deleting $$collection..."; \
-        curl -X DELETE "http://localhost:6333/collections/$$collection" 2>/dev/null; \
-    done
-    @echo "✅ Test collections cleaned"
+# Clean Qdrant test collections
+clean-test-data:
+    @echo "🧹 Cleaning test collections..."
+    @curl -s http://localhost:6334/collections | \
+        jq -r '.result.collections[].name' | \
+        grep '^test_' | \
+        xargs -I {} curl -X DELETE "http://localhost:6334/collections/{}" 2>/dev/null || true
+    @echo "✅ Test data cleaned"

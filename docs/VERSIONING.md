@@ -2,7 +2,7 @@
 
 ## Pre-1.0 Development (Current Phase)
 
-While MAOS is in pre-1.0 development:
+While Codetriever is in pre-1.0 development:
 
 - **All changes default to patch version bumps (0.1.X)**
   - Features, fixes, refactors, etc. all increment patch version
