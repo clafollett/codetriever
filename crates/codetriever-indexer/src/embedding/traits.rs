@@ -82,10 +82,11 @@ impl Default for EmbeddingConfig {
 /// caching, and provider management.
 #[async_trait]
 pub trait EmbeddingService: Send + Sync {
-    /// Generate embeddings for code chunks
+    /// Generate embeddings for code chunks using zero-copy string references
     ///
-    /// This method handles batching and ensures all chunks get embeddings.
-    async fn generate_embeddings(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
+    /// This is an optimized version that avoids cloning strings when the caller
+    /// already has string references available.
+    async fn generate_embeddings(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>>;
 
     /// Get the embedding provider being used
     fn provider(&self) -> &dyn EmbeddingProvider;

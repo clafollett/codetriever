@@ -116,7 +116,7 @@ impl DefaultEmbeddingService {
 
 #[async_trait]
 impl EmbeddingService for DefaultEmbeddingService {
-    async fn generate_embeddings(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+    async fn generate_embeddings(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
         use std::time::Instant;
 
         // Ensure provider is ready
@@ -124,13 +124,11 @@ impl EmbeddingService for DefaultEmbeddingService {
 
         let mut all_embeddings = Vec::with_capacity(texts.len());
 
-        // Process in batches
+        // Process in batches - no need to clone strings!
         for batch in texts.chunks(self.batch_size) {
             let start = Instant::now();
 
-            // Convert to &[&str] for the provider API
-            let text_refs: Vec<&str> = batch.iter().map(|s| s.as_str()).collect();
-            let embeddings = self.provider.embed_batch(&text_refs).await?;
+            let embeddings = self.provider.embed_batch(batch).await?;
 
             all_embeddings.extend(embeddings);
 
@@ -142,8 +140,8 @@ impl EmbeddingService for DefaultEmbeddingService {
 
             // Update running average
             let prev_avg = stats.avg_batch_time_ms;
-            let n = stats.total_batches as f64;
-            stats.avg_batch_time_ms = (prev_avg * (n - 1.0) + elapsed) / n;
+            let count = stats.total_batches as f64;
+            stats.avg_batch_time_ms = (prev_avg * (count - 1.0) + elapsed) / count;
         }
 
         Ok(all_embeddings)
@@ -222,13 +220,7 @@ mod tests {
         let provider = Box::new(MockEmbeddingProvider::new(768));
         let service = DefaultEmbeddingService::with_provider(provider, 2);
 
-        let texts = vec![
-            "text1".to_string(),
-            "text2".to_string(),
-            "text3".to_string(),
-            "text4".to_string(),
-            "text5".to_string(),
-        ];
+        let texts = vec!["text1", "text2", "text3", "text4", "text5"];
 
         let embeddings = service.generate_embeddings(texts).await.unwrap();
         assert_eq!(embeddings.len(), 5);
@@ -244,7 +236,7 @@ mod tests {
         let provider = Box::new(MockEmbeddingProvider::new(768).with_failure());
         let service = DefaultEmbeddingService::with_provider(provider, 2);
 
-        let texts = vec!["text1".to_string()];
+        let texts = vec!["text1"];
         let result = service.generate_embeddings(texts).await;
 
         assert!(result.is_err());

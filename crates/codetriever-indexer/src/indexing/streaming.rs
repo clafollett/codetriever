@@ -137,7 +137,7 @@ where
         }
 
         // Generate embeddings for the batch
-        let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
+        let texts: Vec<&str> = chunks.iter().map(|c| c.content.as_str()).collect();
         let embeddings = self.embedding_service.generate_embeddings(texts).await?;
 
         // Attach embeddings to chunks
@@ -209,8 +209,8 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingService for TestEmbeddingService {
-        async fn generate_embeddings(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-            // Return dummy embeddings
+        async fn generate_embeddings(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+            // Return dummy embeddings using the optimized interface
             Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
         }
 

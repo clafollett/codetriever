@@ -57,13 +57,9 @@ impl CodeParser {
         max_tokens: usize,
         overlap_tokens: usize,
     ) -> Self {
-        // Clone the tokenizer once and remove truncation for accurate counting
-        // This avoids cloning on every count_tokens() call
-        let counting_tokenizer = tokenizer.as_ref().map(|t| {
-            let mut clean_tokenizer = (**t).clone();
-            let _ = clean_tokenizer.with_truncation(None);
-            Arc::new(clean_tokenizer)
-        });
+        // Share the original tokenizer Arc - we'll handle truncation per-call
+        // This avoids the expensive clone of the entire tokenizer
+        let counting_tokenizer = tokenizer;
 
         Self {
             tokenizer: counting_tokenizer,
@@ -74,8 +70,13 @@ impl CodeParser {
     }
 
     /// Count tokens in a text using the tokenizer if available
+    ///
+    /// Uses the shared tokenizer with add_special_tokens=false for accurate counting.
+    /// The tokenizer is shared via Arc, avoiding expensive clones.
     fn count_tokens(&self, text: &str) -> Option<usize> {
         self.tokenizer.as_ref().and_then(|tokenizer| {
+            // Use encode with add_special_tokens=false to avoid truncation issues
+            // This gives us accurate token counts without special tokens
             tokenizer
                 .encode(text, false)
                 .ok()

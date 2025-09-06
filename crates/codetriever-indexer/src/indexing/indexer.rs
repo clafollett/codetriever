@@ -323,7 +323,7 @@ impl Indexer {
         // Generate embedding for the query
         let embeddings = self
             .embedding_service
-            .generate_embeddings(vec![query.to_string()])
+            .generate_embeddings(vec![query])
             .await?;
 
         if embeddings.is_empty() {
@@ -385,22 +385,18 @@ impl Indexer {
 
             let total_batches = all_chunks.len().div_ceil(batch_size);
 
-            for batch_start in (0..all_chunks.len()).step_by(batch_size) {
-                let batch_end = (batch_start + batch_size).min(all_chunks.len());
-                let batch = &mut all_chunks[batch_start..batch_end];
+            // Process chunks in batches using iterator chains - much more idiomatic!
+            for (batch_num, batch) in all_chunks.chunks_mut(batch_size).enumerate() {
+                println!("Processing batch {}/{}", batch_num + 1, total_batches);
 
-                println!(
-                    "Processing batch {}/{}",
-                    batch_start / batch_size + 1,
-                    total_batches
-                );
-
-                let texts: Vec<String> = batch.iter().map(|c| c.content.clone()).collect();
+                // Use string references instead of cloning - zero-copy FTW!
+                let texts: Vec<&str> = batch.iter().map(|c| c.content.as_str()).collect();
 
                 let embeddings = self.embedding_service.generate_embeddings(texts).await?;
 
-                for (chunk, embedding) in batch.iter_mut().zip(embeddings.iter()) {
-                    chunk.embedding = Some(embedding.clone());
+                // Move embeddings instead of cloning - much faster!
+                for (chunk, embedding) in batch.iter_mut().zip(embeddings.into_iter()) {
+                    chunk.embedding = Some(embedding);
                 }
             }
             println!("Generated embeddings for all {} chunks", all_chunks.len());
@@ -571,12 +567,12 @@ impl Indexer {
         if !all_chunks.is_empty() {
             println!("Generating embeddings for {} chunks...", all_chunks.len());
 
-            // Generate embeddings in batches
-            let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
+            // Generate embeddings using zero-copy string references
+            let texts: Vec<&str> = all_chunks.iter().map(|c| c.content.as_str()).collect();
             let embeddings = self.embedding_service.generate_embeddings(texts).await?;
 
-            // Add embeddings to chunks
-            for (chunk, embedding) in all_chunks.iter_mut().zip(embeddings) {
+            // Add embeddings to chunks using move semantics
+            for (chunk, embedding) in all_chunks.iter_mut().zip(embeddings.into_iter()) {
                 chunk.embedding = Some(embedding);
             }
 
@@ -693,22 +689,27 @@ impl Indexer {
     }
 }
 
-// Standalone function to collect files
+// Standalone function to collect files using functional iterator patterns
 fn collect_files(dir: &Path, recursive: bool) -> Result<Vec<std::path::PathBuf>> {
-    let mut files = Vec::new();
-
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.is_file() {
-                files.push(path);
-            } else if recursive && path.is_dir() {
-                files.extend(collect_files(&path, recursive)?);
-            }
-        }
-    }
-
-    Ok(files)
+    std::fs::read_dir(dir)?
+        .filter_map(|entry_result| entry_result.ok()) // Handle IO errors gracefully
+        .try_fold(
+            Vec::new(),
+            |mut acc, entry| -> Result<Vec<std::path::PathBuf>> {
+                let path = entry.path();
+                if path.is_file() {
+                    acc.push(path);
+                    Ok(acc)
+                } else if recursive && path.is_dir() {
+                    // Recursively collect files and extend the accumulator
+                    let sub_files = collect_files(&path, recursive)?;
+                    acc.extend(sub_files);
+                    Ok(acc)
+                } else {
+                    Ok(acc)
+                }
+            },
+        )
 }
 
 #[cfg(test)]
