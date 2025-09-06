@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use codetriever_indexer::storage::QdrantStorage;
+//! use codetriever_indexer::storage::{QdrantStorage, VectorStorage};
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,8 +30,9 @@
 //! # }
 //! ```
 
-use crate::{Error, Result, parsing::CodeChunk};
+use crate::{Error, Result, parsing::CodeChunk, storage::VectorStorage};
 use anyhow::Context;
+use async_trait::async_trait;
 use qdrant_client::qdrant::{
     CollectionExistsRequest, CreateCollection, DeleteCollection, Distance, PointId, PointStruct,
     SearchPoints, UpsertPoints, Value, VectorParams,
@@ -115,11 +116,14 @@ impl QdrantStorage {
         };
 
         // Ensure collection exists with proper vector configuration
-        storage.ensure_collection_exists().await?;
+        storage.ensure_collection().await?;
 
         Ok(storage)
     }
+}
 
+#[async_trait]
+impl VectorStorage for QdrantStorage {
     /// Checks if the collection exists.
     ///
     /// # Returns
@@ -129,7 +133,7 @@ impl QdrantStorage {
     /// # Errors
     ///
     /// Returns error if the check fails for reasons other than non-existence.
-    pub async fn collection_exists(&self) -> Result<bool> {
+    async fn collection_exists(&self) -> Result<bool> {
         let request = CollectionExistsRequest {
             collection_name: self.collection_name.clone(),
         };
@@ -151,7 +155,7 @@ impl QdrantStorage {
     /// # Errors
     ///
     /// Returns error if the collection creation fails for reasons other than non-existence.
-    pub async fn create_collection(&self) -> Result<()> {
+    async fn ensure_collection(&self) -> Result<()> {
         if self.collection_exists().await? {
             return Ok(());
         }
@@ -190,7 +194,7 @@ impl QdrantStorage {
     /// # Errors
     ///
     /// Returns error if the drop operation fails for reasons other than non-existence.
-    pub async fn drop_collection(&self) -> Result<bool> {
+    async fn drop_collection(&self) -> Result<bool> {
         if !self.collection_exists().await? {
             return Ok(false);
         }
@@ -211,24 +215,6 @@ impl QdrantStorage {
                 self.collection_name
             ))),
         }
-    }
-
-    /// Ensures that the collection exists with proper vector configuration.
-    ///
-    /// Creates a collection with 768-dimensional vectors using cosine similarity
-    /// if it doesn't already exist. This is called automatically during initialization.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Error::Qdrant` if collection creation fails or server is unreachable.
-    async fn ensure_collection_exists(&self) -> Result<()> {
-        if self.collection_exists().await? {
-            return Ok(());
-        }
-
-        self.create_collection().await?;
-
-        Ok(())
     }
 
     /// Stores code chunks with their embeddings in the vector database.
@@ -255,7 +241,7 @@ impl QdrantStorage {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use codetriever_indexer::{storage::QdrantStorage, CodeChunk};
+    /// use codetriever_indexer::{storage::{QdrantStorage, VectorStorage}, CodeChunk};
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -277,7 +263,7 @@ impl QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize> {
+    async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize> {
         let mut points = Vec::new();
         let mut point_id = 0u64;
 
@@ -362,7 +348,7 @@ impl QdrantStorage {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use codetriever_indexer::storage::QdrantStorage;
+    /// use codetriever_indexer::storage::{QdrantStorage, VectorStorage};
     ///
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -376,7 +362,7 @@ impl QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn search(&self, query: Vec<f32>, limit: usize) -> Result<Vec<CodeChunk>> {
+    async fn search(&self, query: Vec<f32>, limit: usize) -> Result<Vec<CodeChunk>> {
         // Validate query vector dimensions
         if query.len() != 768 {
             return Err(Error::Storage(format!(
@@ -465,7 +451,7 @@ impl QdrantStorage {
     }
 
     /// Store chunks with deterministic IDs based on repository, branch, file, and generation
-    pub async fn store_chunks_with_ids(
+    async fn store_chunks_with_ids(
         &self,
         repository_id: &str,
         branch: &str,
@@ -550,7 +536,7 @@ impl QdrantStorage {
     }
 
     /// Delete chunks from Qdrant by their IDs
-    pub async fn delete_chunks(&self, chunk_ids: &[uuid::Uuid]) -> Result<()> {
+    async fn delete_chunks(&self, chunk_ids: &[uuid::Uuid]) -> Result<()> {
         if chunk_ids.is_empty() {
             return Ok(());
         }
@@ -583,7 +569,30 @@ impl QdrantStorage {
 
         Ok(())
     }
-}
 
-// Integration tests are in tests/qdrant_integration.rs
-// Unit tests would go here if we had any that don't require external services
+    async fn get_stats(&self) -> Result<crate::storage::StorageStats> {
+        // Get collection info from Qdrant
+        use qdrant_client::qdrant::GetCollectionInfoRequest;
+
+        let request = GetCollectionInfoRequest {
+            collection_name: self.collection_name.clone(),
+        };
+
+        let info = self
+            .client
+            .collection_info(request)
+            .await
+            .context("Failed to get collection info")?;
+
+        let result = info
+            .result
+            .ok_or_else(|| Error::Other("Missing collection info result".into()))?;
+
+        Ok(crate::storage::StorageStats {
+            vector_count: result.vectors_count.unwrap_or(0) as usize,
+            storage_bytes: Some(result.payload_schema.len() as u64), // Approximation
+            collection_name: self.collection_name.clone(),
+            storage_type: "qdrant".to_string(),
+        })
+    }
+}

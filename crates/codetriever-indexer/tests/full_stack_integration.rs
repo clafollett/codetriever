@@ -11,7 +11,7 @@ use codetriever_data::{
 use codetriever_indexer::{
     indexing::{Indexer, service::FileContent},
     parsing::CodeChunk,
-    storage::QdrantStorage,
+    storage::{QdrantStorage, VectorStorage},
 };
 use sqlx::PgPool;
 use std::sync::Arc;

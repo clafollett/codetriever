@@ -4,7 +4,7 @@ mod test_utils;
 #[cfg(test)]
 mod tests {
     use super::test_utils::create_test_storage;
-    use codetriever_indexer::CodeChunk;
+    use codetriever_indexer::{CodeChunk, storage::VectorStorage};
 
     #[tokio::test]
     async fn test_store_and_retrieve_chunks() {

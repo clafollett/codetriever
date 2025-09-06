@@ -4,7 +4,7 @@ use crate::{
     embedding::EmbeddingModel,
     indexing::service::FileContent,
     parsing::{CodeChunk, CodeParser, get_language_from_extension},
-    storage::QdrantStorage,
+    storage::{QdrantStorage, VectorStorage},
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -219,6 +219,8 @@ pub const CODE_EXTENSIONS: &[&str] = &[
     "sol", // Solidity
 ];
 
+type BoxedVectorStorage = Box<dyn VectorStorage>;
+
 #[derive(Debug)]
 pub struct IndexResult {
     pub files_indexed: usize,
@@ -228,7 +230,7 @@ pub struct IndexResult {
 
 pub struct Indexer {
     embedding_model: EmbeddingModel,
-    storage: Option<QdrantStorage>, // Optional storage backend
+    storage: Option<BoxedVectorStorage>, // Optional storage backend using trait
     code_parser: CodeParser,
     config: Config,                    // Store config for lazy storage initialization
     repository: Option<RepositoryRef>, // Optional database repository
@@ -270,7 +272,7 @@ impl Indexer {
                 config.embedding_model.clone(),
                 config.max_embedding_tokens,
             ),
-            storage: Some(storage),
+            storage: Some(Box::new(storage)),
             code_parser: CodeParser::new(
                 None, // Will be set after tokenizer loads
                 config.split_large_semantic_units,
@@ -667,8 +669,8 @@ impl Indexer {
     }
 
     /// Set the storage backend for this indexer
-    pub fn set_storage(&mut self, storage: QdrantStorage) {
-        self.storage = Some(storage);
+    pub fn set_storage(&mut self, storage: impl VectorStorage + 'static) {
+        self.storage = Some(Box::new(storage));
     }
 
     async fn index_file_path(&self, path: &Path) -> Result<Vec<CodeChunk>> {

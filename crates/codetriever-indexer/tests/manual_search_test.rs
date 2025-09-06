@@ -3,7 +3,7 @@
 #[path = "test_utils.rs"]
 mod test_utils;
 
-use codetriever_indexer::indexing::Indexer;
+use codetriever_indexer::{indexing::Indexer, storage::VectorStorage};
 use std::path::Path;
 use test_utils::{create_test_storage, test_config};
 
@@ -27,8 +27,8 @@ async fn test_manual_searches() {
     }
 
     println!("Creating collection...\n");
-    match storage.create_collection().await {
-        Ok(_) => println!("Collection created successfully"),
+    match storage.ensure_collection().await {
+        Ok(_) => println!("Collection created/verified successfully"),
         Err(e) => println!("Failed to create collection: {e}"),
     }
 

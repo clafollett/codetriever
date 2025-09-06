@@ -3,7 +3,10 @@
 //! These tests require a running Qdrant instance.
 //! Run with: cargo test --test qdrant_integration -- --ignored
 
-use codetriever_indexer::{parsing::CodeChunk, storage::QdrantStorage};
+use codetriever_indexer::{
+    parsing::CodeChunk,
+    storage::{QdrantStorage, VectorStorage},
+};
 
 #[tokio::test]
 async fn test_delete_chunks_removes_points_from_collection() {

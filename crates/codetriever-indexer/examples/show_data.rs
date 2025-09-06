@@ -3,7 +3,7 @@
 use codetriever_data::{migrations::setup_database, repository::DbFileRepository};
 use codetriever_indexer::{
     indexing::{Indexer, service::FileContent},
-    storage::QdrantStorage,
+    storage::{QdrantStorage, VectorStorage},
 };
 use std::sync::Arc;
 
