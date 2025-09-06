@@ -95,20 +95,20 @@ impl EmbeddingModel {
         }
     }
 
-    /// Generate embeddings for a batch of text inputs.
+    /// Generate embeddings for a batch of text references (zero-copy optimization).
     ///
-    /// This method converts text inputs into dense vector representations that capture
-    /// semantic meaning, enabling similarity-based search and retrieval.
+    /// This is the performance-optimized version that avoids string allocations
+    /// by working directly with string references.
     ///
     /// # Arguments
     ///
-    /// * `texts` - A vector of strings to generate embeddings for
+    /// * `texts` - A slice of string references to generate embeddings for
     ///
     /// # Returns
     ///
     /// A vector of embeddings, where each embedding is a vector of f32 values.
     /// The dimensionality depends on the model (typically 768 for Jina models).
-    pub async fn embed(&mut self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+    pub async fn embed(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         // Check for Hugging Face token for model downloading
         if std::env::var("HF_TOKEN").is_err() && std::env::var("HUGGING_FACE_HUB_TOKEN").is_err() {
             return Err(crate::Error::Configuration(
@@ -149,9 +149,11 @@ impl EmbeddingModel {
         // Check for truncation by comparing token count to max
         let num_texts = texts.len();
 
-        // Encode texts
+        // Encode texts - convert to Vec for tokenizer compatibility
+        // This is still more efficient than the original approach
+        let text_vec: Vec<&str> = texts.to_vec();
         let encodings = tokenizer
-            .encode_batch(texts, true)
+            .encode_batch(text_vec, true)
             .map_err(|e| crate::Error::Embedding(format!("Tokenization failed: {e}")))?;
         // Count truncations for summary
         let mut truncated_count = 0;

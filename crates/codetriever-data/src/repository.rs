@@ -183,16 +183,32 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.write_pool();
 
         // Use UNNEST for bulk insert - drastically faster than loop
-        let chunk_ids: Vec<Uuid> = chunks.iter().map(|c| c.chunk_id).collect();
-        let file_paths: Vec<String> = chunks.iter().map(|c| c.file_path.clone()).collect();
-        let chunk_indices: Vec<i32> = chunks.iter().map(|c| c.chunk_index).collect();
-        let generations: Vec<i64> = chunks.iter().map(|c| c.generation).collect();
-        let start_lines: Vec<i32> = chunks.iter().map(|c| c.start_line).collect();
-        let end_lines: Vec<i32> = chunks.iter().map(|c| c.end_line).collect();
-        let byte_starts: Vec<i64> = chunks.iter().map(|c| c.byte_start).collect();
-        let byte_ends: Vec<i64> = chunks.iter().map(|c| c.byte_end).collect();
-        let kinds: Vec<Option<String>> = chunks.iter().map(|c| c.kind.clone()).collect();
-        let names: Vec<Option<String>> = chunks.iter().map(|c| c.name.clone()).collect();
+        // Pre-allocate with exact capacity to avoid reallocations
+        let len = chunks.len();
+        let mut chunk_ids = Vec::with_capacity(len);
+        let mut file_paths = Vec::with_capacity(len);
+        let mut chunk_indices = Vec::with_capacity(len);
+        let mut generations = Vec::with_capacity(len);
+        let mut start_lines = Vec::with_capacity(len);
+        let mut end_lines = Vec::with_capacity(len);
+        let mut byte_starts = Vec::with_capacity(len);
+        let mut byte_ends = Vec::with_capacity(len);
+        let mut kinds = Vec::with_capacity(len);
+        let mut names = Vec::with_capacity(len);
+
+        // Single-pass iteration with zero-copy for references where possible
+        for chunk in chunks {
+            chunk_ids.push(chunk.chunk_id);
+            file_paths.push(chunk.file_path.clone()); // Still need to clone, but only once per chunk
+            chunk_indices.push(chunk.chunk_index);
+            generations.push(chunk.generation);
+            start_lines.push(chunk.start_line);
+            end_lines.push(chunk.end_line);
+            byte_starts.push(chunk.byte_start);
+            byte_ends.push(chunk.byte_end);
+            kinds.push(chunk.kind.clone()); // Still need to clone Option<String>
+            names.push(chunk.name.clone()); // Still need to clone Option<String>
+        }
 
         sqlx::query(
             r#"

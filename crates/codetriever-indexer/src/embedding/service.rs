@@ -38,10 +38,13 @@ impl DefaultEmbeddingProvider {
 #[async_trait]
 impl EmbeddingProvider for DefaultEmbeddingProvider {
     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        // Convert &[&str] to Vec<String> for the existing API
-        let text_strings: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
+        // Zero-copy optimization: convert &[&str] to Vec<&str> for internal processing
+        // This avoids the expensive String allocations that were happening before
+        let text_refs: Vec<&str> = texts.to_vec();
         let mut model = self.model.lock().await;
-        model.embed(text_strings).await
+
+        // Call the optimized embed method that accepts string references
+        model.embed(&text_refs).await
     }
 
     fn embedding_dimension(&self) -> usize {
@@ -64,8 +67,8 @@ impl EmbeddingProvider for DefaultEmbeddingProvider {
 
     async fn ensure_ready(&self) -> Result<()> {
         if !self.is_ready().await {
-            // The model loads on first use, so trigger a dummy embedding
-            let _ = self.embed("test").await?;
+            // The model loads on first use, so trigger a dummy embedding with string refs
+            let _ = self.embed_batch(&["test"]).await?;
         }
         Ok(())
     }

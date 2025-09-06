@@ -359,7 +359,8 @@ impl Indexer {
             vec![]
         };
 
-        // Process each file
+        // Process each file sequentially (concurrent processing adds complexity here)
+        // The major perf wins come from the string allocation fixes, not concurrency
         println!("Processing {} files...", files.len());
         for file_path in files {
             println!("Processing file: {file_path:?}");

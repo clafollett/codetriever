@@ -18,17 +18,6 @@ pub trait EmbeddingProvider: Send + Sync {
     /// The dimensionality depends on the model being used.
     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
 
-    /// Generate a single embedding for the given text
-    ///
-    /// This is a convenience method that calls embed_batch with a single item.
-    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let embeddings = self.embed_batch(&[text]).await?;
-        embeddings
-            .into_iter()
-            .next()
-            .ok_or_else(|| crate::Error::Other("No embedding generated".into()))
-    }
-
     /// Get the dimensionality of embeddings produced by this provider
     fn embedding_dimension(&self) -> usize;
 

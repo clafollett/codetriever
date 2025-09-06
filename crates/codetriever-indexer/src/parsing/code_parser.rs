@@ -95,13 +95,15 @@ impl CodeParser {
         language: &str,
         name: Option<String>,
     ) -> CodeChunk {
+        // Store content length before moving
+        let content_len = content.len();
         self.create_chunk_with_byte_offsets(
             file_path,
-            content.clone(),
+            content, // Move instead of clone - avoid unnecessary allocation
             start_line,
             end_line,
             0, // For non-tree-sitter parsing, we don't have accurate byte offsets
-            content.len(),
+            content_len,
             kind,
             language,
             name,

@@ -140,9 +140,10 @@ where
         let texts: Vec<&str> = chunks.iter().map(|c| c.content.as_str()).collect();
         let embeddings = self.embedding_service.generate_embeddings(texts).await?;
 
-        // Attach embeddings to chunks
-        for (chunk, embedding) in chunks.iter_mut().zip(embeddings.iter()) {
-            chunk.embedding = Some(embedding.clone());
+        // Attach embeddings to chunks - use move semantics instead of clone!
+        // This eliminates expensive Vec<f32> clones in the hot path
+        for (chunk, embedding) in chunks.iter_mut().zip(embeddings.into_iter()) {
+            chunk.embedding = Some(embedding);
         }
 
         // Store the chunks

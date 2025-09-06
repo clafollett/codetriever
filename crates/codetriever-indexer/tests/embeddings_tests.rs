@@ -36,7 +36,7 @@ async fn get_model() -> Option<Arc<Mutex<EmbeddingModel>>> {
         println!("Loading model for first time (this will be reused for all tests)...");
         let mut model = MODEL.lock().await;
         // Pre-load the model by doing a dummy embed
-        match model.embed(vec!["test".to_string()]).await {
+        match model.embed(&["test"]).await {
             Ok(_) => {
                 println!("Model loaded and ready!");
                 *loaded = true;
@@ -59,8 +59,8 @@ async fn test_model_requires_huggingface_token() {
         TEST_MAX_TOKENS,
     );
 
-    let test_code = vec!["print('hello world')".to_string()];
-    let result = model.embed(test_code).await;
+    let test_code = vec!["print('hello world')"];
+    let result = model.embed(&test_code).await;
 
     // If HF_TOKEN is not set, we expect a specific error
     if std::env::var("HF_TOKEN").is_err() && std::env::var("HUGGING_FACE_HUB_TOKEN").is_err() {
@@ -86,13 +86,13 @@ async fn test_embedding_dimensions_match_model() {
     };
 
     let texts = vec![
-        "fn hello_world() { println!(\"Hello!\"); }".to_string(),
-        "async fn fetch_data() -> Result<String> { Ok(data) }".to_string(),
+        "fn hello_world() { println!(\"Hello!\"); }",
+        "async fn fetch_data() -> Result<String> { Ok(data) }",
     ];
 
     let mut model = model.lock().await;
     let embeddings = model
-        .embed(texts)
+        .embed(&texts)
         .await
         .expect("Failed to generate embeddings");
 
@@ -121,17 +121,11 @@ async fn test_embeddings_are_deterministic() {
         None => return, // Skip test if no model available
     };
 
-    let code = vec!["def factorial(n): return 1 if n <= 1 else n * factorial(n-1)".to_string()];
+    let code = vec!["def factorial(n): return 1 if n <= 1 else n * factorial(n-1)"];
 
     let mut model = model.lock().await;
-    let embed1 = model
-        .embed(code.clone())
-        .await
-        .expect("First embedding failed");
-    let embed2 = model
-        .embed(code.clone())
-        .await
-        .expect("Second embedding failed");
+    let embed1 = model.embed(&code).await.expect("First embedding failed");
+    let embed2 = model.embed(&code).await.expect("Second embedding failed");
 
     // Same input should produce identical output
     assert_eq!(embed1.len(), embed2.len());
@@ -153,16 +147,16 @@ async fn test_language_agnostic_embeddings() {
 
     // Same functionality in different languages
     let multilang_code = vec![
-        "def add(a, b): return a + b".to_string(), // Python
-        "fn add(a: i32, b: i32) -> i32 { a + b }".to_string(), // Rust
-        "function add(a, b) { return a + b; }".to_string(), // JavaScript
-        "public int add(int a, int b) { return a + b; }".to_string(), // Java
-        "func add(a, b int) int { return a + b }".to_string(), // Go
+        "def add(a, b): return a + b",                    // Python
+        "fn add(a: i32, b: i32) -> i32 { a + b }",        // Rust
+        "function add(a, b) { return a + b; }",           // JavaScript
+        "public int add(int a, int b) { return a + b; }", // Java
+        "func add(a, b int) int { return a + b }",        // Go
     ];
 
     let mut model = model.lock().await;
     let embeddings = model
-        .embed(multilang_code)
+        .embed(&multilang_code)
         .await
         .expect("Failed to generate embeddings");
 
@@ -194,15 +188,15 @@ async fn test_semantic_similarity() {
 
     let code = vec![
         // Two sorting functions (similar)
-        "def bubble_sort(arr):\n    for i in range(len(arr)):\n        for j in range(len(arr)-1):\n            if arr[j] > arr[j+1]:\n                arr[j], arr[j+1] = arr[j+1], arr[j]".to_string(),
-        "def quick_sort(arr):\n    if len(arr) <= 1: return arr\n    pivot = arr[0]\n    return quick_sort([x for x in arr[1:] if x < pivot]) + [pivot] + quick_sort([x for x in arr[1:] if x >= pivot])".to_string(),
+        "def bubble_sort(arr):\n    for i in range(len(arr)):\n        for j in range(len(arr)-1):\n            if arr[j] > arr[j+1]:\n                arr[j], arr[j+1] = arr[j+1], arr[j]",
+        "def quick_sort(arr):\n    if len(arr) <= 1: return arr\n    pivot = arr[0]\n    return quick_sort([x for x in arr[1:] if x < pivot]) + [pivot] + quick_sort([x for x in arr[1:] if x >= pivot])",
         // Completely different function
-        "def send_email(to, subject, body):\n    smtp = SMTP('localhost')\n    msg = f'Subject: {subject}\\n\\n{body}'\n    smtp.sendmail('from@example.com', to, msg)".to_string(),
+        "def send_email(to, subject, body):\n    smtp = SMTP('localhost')\n    msg = f'Subject: {subject}\\n\\n{body}'\n    smtp.sendmail('from@example.com', to, msg)",
     ];
 
     let mut model = model.lock().await;
     let embeddings = model
-        .embed(code)
+        .embed(&code)
         .await
         .expect("Failed to generate embeddings");
 
@@ -244,7 +238,7 @@ async fn test_handles_truncation() {
     }
 
     let mut model = model.lock().await;
-    let result = model.embed(vec![long_code]).await;
+    let result = model.embed(&[long_code.as_str()]).await;
     assert!(result.is_ok(), "Should handle long code with truncation");
 
     let embeddings = result.unwrap();
@@ -270,8 +264,9 @@ async fn test_batch_processing() {
 
     let start = std::time::Instant::now();
     let mut model = model.lock().await;
+    let batch_refs: Vec<&str> = batch.iter().map(|s| s.as_str()).collect();
     let embeddings = model
-        .embed(batch.clone())
+        .embed(&batch_refs)
         .await
         .expect("Batch processing failed");
     let duration = start.elapsed();
@@ -301,11 +296,11 @@ async fn test_python_rust_comparison() {
 
     // Same test snippets as Python
     let test_snippets = vec![
-        "fn quick".to_string(),
-        "def hello(): print('world')".to_string(),
-        "The cat sits outside".to_string(),
-        "The cat plays in the garden".to_string(),
-        "def quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n    pivot = arr[len(arr) // 2]\n    return quicksort([x for x in arr if x < pivot]) + [pivot] + quicksort([x for x in arr if x > pivot])".to_string(),
+        "fn quick",
+        "def hello(): print('world')",
+        "The cat sits outside",
+        "The cat plays in the garden",
+        "def quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n    pivot = arr[len(arr) // 2]\n    return quicksort([x for x in arr if x < pivot]) + [pivot] + quicksort([x for x in arr if x > pivot])",
     ];
 
     println!("{}", "=".repeat(60));
@@ -313,7 +308,7 @@ async fn test_python_rust_comparison() {
     println!("{}", "=".repeat(60));
 
     let embeddings = model
-        .embed(test_snippets.clone())
+        .embed(&test_snippets)
         .await
         .expect("Failed to generate embeddings");
 
@@ -322,7 +317,7 @@ async fn test_python_rust_comparison() {
         let preview = if text.len() > 30 {
             format!("{}...", &text[..30])
         } else {
-            text.clone()
+            text.to_string()
         };
         println!(
             "{}. '{}' -> First 5 values: {:?}",
@@ -339,12 +334,12 @@ async fn test_python_rust_comparison() {
             let preview_i = if test_snippets[i].len() > 20 {
                 format!("{}...", &test_snippets[i][..20])
             } else {
-                test_snippets[i].clone()
+                test_snippets[i].to_string()
             };
             let preview_j = if test_snippets[j].len() > 20 {
                 format!("{}...", &test_snippets[j][..20])
             } else {
-                test_snippets[j].clone()
+                test_snippets[j].to_string()
             };
             println!("  {i} vs {j}: {sim:.4} ('{preview_i}' vs '{preview_j}')");
         }
