@@ -1,31 +1,44 @@
-//! Database repository layer with generation-based versioning
+//! Database repository layer with optimized connection pool separation
+//!
+//! Uses separate connection pools for different operation types to prevent
+//! resource contention and improve performance.
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::models::{
     ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
     RepositoryContext,
 };
+use crate::pool_manager::PoolManager;
 use crate::traits::FileRepository;
 
-/// Repository for database operations
+/// Repository for database operations with optimized connection pools
 pub struct DbFileRepository {
-    pool: PgPool,
+    pools: PoolManager,
 }
 
 impl DbFileRepository {
-    /// Create new repository instance
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    /// Create new repository with optimized connection pools
+    pub fn new(pools: PoolManager) -> Self {
+        Self { pools }
+    }
+
+    /// Create from environment with optimized pools
+    pub async fn from_env() -> Result<Self> {
+        let pools = PoolManager::from_env().await?;
+        Ok(Self::new(pools))
     }
 }
 
 #[async_trait]
 impl FileRepository for DbFileRepository {
     async fn ensure_project_branch(&self, ctx: &RepositoryContext) -> Result<ProjectBranch> {
+        // Use write pool for INSERT/UPDATE operations
+        let pool = self.pools.write_pool();
+
         let row = sqlx::query(
             r#"
             INSERT INTO project_branches (repository_id, branch, repository_url)
@@ -43,7 +56,7 @@ impl FileRepository for DbFileRepository {
         .bind(&ctx.repository_id)
         .bind(&ctx.branch)
         .bind(&ctx.repository_url)
-        .fetch_one(&self.pool)
+        .fetch_one(pool)
         .await
         .context("Failed to ensure project branch")?;
 
@@ -63,6 +76,9 @@ impl FileRepository for DbFileRepository {
         file_path: &str,
         content_hash: &str,
     ) -> Result<FileState> {
+        // Use read pool for SELECT operations
+        let pool = self.pools.read_pool();
+
         let existing = sqlx::query(
             r#"
             SELECT content_hash, generation
@@ -73,7 +89,7 @@ impl FileRepository for DbFileRepository {
         .bind(repository_id)
         .bind(branch)
         .bind(file_path)
-        .fetch_optional(&self.pool)
+        .fetch_optional(pool)
         .await
         .context("Failed to check file state")?;
 
@@ -105,6 +121,9 @@ impl FileRepository for DbFileRepository {
         branch: &str,
         metadata: &FileMetadata,
     ) -> Result<IndexedFile> {
+        // Use write pool for INSERT operations
+        let pool = self.pools.write_pool();
+
         let row = sqlx::query(
             r#"
             INSERT INTO indexed_files (
@@ -133,7 +152,7 @@ impl FileRepository for DbFileRepository {
         .bind(&metadata.commit_message)
         .bind(metadata.commit_date)
         .bind(&metadata.author)
-        .fetch_one(&self.pool)
+        .fetch_one(pool)
         .await
         .context("Failed to record file indexing")?;
 
@@ -161,12 +180,9 @@ impl FileRepository for DbFileRepository {
             return Ok(());
         }
 
-        // Use transaction for batch insert
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .context("Failed to begin transaction")?;
+        // Use write pool for bulk INSERT with transaction
+        let pool = self.pools.write_pool();
+        let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
         for chunk in chunks {
             sqlx::query(
@@ -196,7 +212,6 @@ impl FileRepository for DbFileRepository {
         }
 
         tx.commit().await.context("Failed to commit chunks")?;
-
         Ok(())
     }
 
@@ -207,12 +222,15 @@ impl FileRepository for DbFileRepository {
         file_path: &str,
         new_generation: i64,
     ) -> Result<Vec<Uuid>> {
+        // Use analytics pool for operations that might affect many rows
+        let pool = self.pools.analytics_pool();
+
         let rows = sqlx::query("SELECT * FROM replace_file_chunks($1, $2, $3, $4)")
             .bind(repository_id)
             .bind(branch)
             .bind(file_path)
             .bind(new_generation)
-            .fetch_all(&self.pool)
+            .fetch_all(pool)
             .await
             .context("Failed to replace file chunks")?;
 
@@ -230,6 +248,8 @@ impl FileRepository for DbFileRepository {
         branch: &str,
         commit_sha: Option<&str>,
     ) -> Result<IndexingJob> {
+        // Use write pool for INSERT
+        let pool = self.pools.write_pool();
         let job_id = Uuid::new_v4();
 
         let row = sqlx::query(
@@ -247,7 +267,7 @@ impl FileRepository for DbFileRepository {
         .bind(branch)
         .bind(JobStatus::Running.to_string())
         .bind(commit_sha)
-        .fetch_one(&self.pool)
+        .fetch_one(pool)
         .await
         .context("Failed to create indexing job")?;
 
@@ -272,6 +292,9 @@ impl FileRepository for DbFileRepository {
         files_processed: i32,
         chunks_created: i32,
     ) -> Result<()> {
+        // Use write pool for UPDATE
+        let pool = self.pools.write_pool();
+
         sqlx::query(
             r#"
             UPDATE indexing_jobs
@@ -283,7 +306,7 @@ impl FileRepository for DbFileRepository {
         .bind(job_id)
         .bind(files_processed)
         .bind(chunks_created)
-        .execute(&self.pool)
+        .execute(pool)
         .await
         .context("Failed to update job progress")?;
 
@@ -296,6 +319,9 @@ impl FileRepository for DbFileRepository {
         status: JobStatus,
         error: Option<String>,
     ) -> Result<()> {
+        // Use write pool for UPDATE operations
+        let pool = self.pools.write_pool();
+
         sqlx::query(
             r#"
             UPDATE indexing_jobs
@@ -308,7 +334,7 @@ impl FileRepository for DbFileRepository {
         .bind(job_id)
         .bind(status.to_string())
         .bind(error)
-        .execute(&self.pool)
+        .execute(pool)
         .await
         .context("Failed to complete job")?;
 
@@ -327,7 +353,7 @@ impl FileRepository for DbFileRepository {
                 "#,
             )
             .bind(job_id)
-            .execute(&self.pool)
+            .execute(pool)
             .await
             .context("Failed to update last_indexed")?;
         }
@@ -341,12 +367,15 @@ impl FileRepository for DbFileRepository {
         branch: &str,
         file_path: &str,
     ) -> Result<Vec<ChunkMetadata>> {
+        // Use read pool for SELECT operations
+        let pool = self.pools.read_pool();
+
         let rows = sqlx::query(
             r#"
             SELECT 
                 chunk_id, repository_id, branch, file_path,
                 chunk_index, generation, start_line, end_line,
-                kind, name, created_at
+                byte_start, byte_end, kind, name, created_at
             FROM chunk_metadata
             WHERE repository_id = $1 AND branch = $2 AND file_path = $3
             ORDER BY chunk_index
@@ -355,7 +384,7 @@ impl FileRepository for DbFileRepository {
         .bind(repository_id)
         .bind(branch)
         .bind(file_path)
-        .fetch_all(&self.pool)
+        .fetch_all(pool)
         .await
         .context("Failed to get file chunks")?;
 
@@ -386,6 +415,9 @@ impl FileRepository for DbFileRepository {
         repository_id: &str,
         branch: &str,
     ) -> Result<Vec<IndexedFile>> {
+        // Use read pool for SELECT operations
+        let pool = self.pools.read_pool();
+
         let rows = sqlx::query(
             r#"
             SELECT *
@@ -396,7 +428,7 @@ impl FileRepository for DbFileRepository {
         )
         .bind(repository_id)
         .bind(branch)
-        .fetch_all(&self.pool)
+        .fetch_all(pool)
         .await
         .context("Failed to get indexed files")?;
 
@@ -420,6 +452,9 @@ impl FileRepository for DbFileRepository {
     }
 
     async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> Result<bool> {
+        // Use read pool for quick SELECT operations
+        let pool = self.pools.read_pool();
+
         let row = sqlx::query(
             r#"
             SELECT COUNT(*) as count
@@ -431,7 +466,7 @@ impl FileRepository for DbFileRepository {
         )
         .bind(repository_id)
         .bind(branch)
-        .fetch_one(&self.pool)
+        .fetch_one(pool)
         .await
         .context("Failed to check running jobs")?;
 

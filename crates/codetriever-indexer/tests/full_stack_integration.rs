@@ -6,6 +6,7 @@ use codetriever_data::{
     generate_chunk_id,
     migrations::setup_database,
     models::{IndexedFile, ProjectBranch},
+    pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
 };
 use codetriever_indexer::{
@@ -19,7 +20,7 @@ use uuid::Uuid;
 
 async fn setup_test_db() -> anyhow::Result<PgPool> {
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://codetriever:codetriever@localhost:5433/codetriever".to_string()
+        "postgresql://codetriever:codetriever@localhost:5433/codetriever_test".to_string()
     });
 
     // Create test database and run migrations
@@ -42,7 +43,15 @@ async fn test_full_stack_indexing_with_postgres_and_qdrant() {
     let pool = setup_test_db()
         .await
         .expect("Failed to setup test database");
-    let repository = Arc::new(DbFileRepository::new(pool.clone()));
+    // Create pool manager from the test pool
+    let pool_config = PoolConfig::default();
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgresql://codetriever:codetriever@localhost:5433/codetriever_test".to_string()
+    });
+    let pools = PoolManager::new(&database_url, pool_config)
+        .await
+        .expect("Failed to create pool manager");
+    let repository = Arc::new(DbFileRepository::new(pools));
 
     let qdrant_url =
         std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
@@ -298,7 +307,15 @@ async fn test_uuid_based_chunk_deletion() {
     let pool = setup_test_db()
         .await
         .expect("Failed to setup test database");
-    let _repository = Arc::new(DbFileRepository::new(pool.clone()));
+    // Create pool manager from the test pool
+    let pool_config = PoolConfig::default();
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgresql://codetriever:codetriever@localhost:5433/codetriever_test".to_string()
+    });
+    let pools = PoolManager::new(&database_url, pool_config)
+        .await
+        .expect("Failed to create pool manager");
+    let _repository = Arc::new(DbFileRepository::new(pools));
 
     let qdrant_url =
         std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());

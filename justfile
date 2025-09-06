@@ -75,7 +75,7 @@ docker-logs:
 # ========================
 
 # Initialize database schema
-db-setup:
+db-setup: docker-up
     @echo "🔧 Setting up database..."
     @DATABASE_URL="${DATABASE_URL:-postgresql://codetriever:codetriever@localhost:5433/codetriever?sslmode=disable}" \
         cargo run -p codetriever-data --example run_migrations
@@ -110,6 +110,13 @@ test-integration:
     cargo test --workspace --tests
 
 # Format code
+
+# Fix clippy warnings
+clippy-fix:
+    @echo "🔧 Fixing clippy issues..."
+    cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings -W clippy::uninlined_format_args
+    @echo "✅ Applied clippy fixes"
+
 fmt:
     @echo "🎨 Formatting code..."
     cargo fmt --all
@@ -119,11 +126,9 @@ lint:
     @echo "🔍 Running clippy..."
     cargo clippy --all-targets --all-features -- -D warnings -W clippy::uninlined_format_args
 
-# Fix clippy warnings
-clippy-fix:
-    @echo "🔧 Fixing clippy issues..."
-    cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings -W clippy::uninlined_format_args
-    @echo "✅ Applied clippy fixes"
+# Fix all auto-fixable issues
+fix: fmt clippy-fix
+    @echo "✅ All auto-fixes applied!"
 
 # Run all quality checks
 check: fmt lint test-unit
@@ -195,10 +200,6 @@ quick-start: init test
 # Full CI pipeline locally
 ci: fmt lint test build
     @echo "✅ CI pipeline passed!"
-
-# Fix all auto-fixable issues
-fix: fmt clippy-fix
-    @echo "✅ All auto-fixes applied!"
 
 # Development mode with auto-reload
 dev: docker-up

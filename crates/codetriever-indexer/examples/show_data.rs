@@ -1,6 +1,10 @@
 //! Example to index data and show what's stored in PostgreSQL and Qdrant
 
-use codetriever_data::{migrations::setup_database, repository::DbFileRepository};
+use codetriever_data::{
+    migrations::setup_database,
+    pool_manager::{PoolConfig, PoolManager},
+    repository::DbFileRepository,
+};
 use codetriever_indexer::{
     indexing::{Indexer, service::FileContent},
     storage::{QdrantStorage, VectorStorage},
@@ -24,8 +28,11 @@ type ChunkRow = (
 async fn main() -> anyhow::Result<()> {
     // Setup database
     let database_url = "postgresql://codetriever:codetriever@localhost:5433/codetriever";
-    let pool = setup_database(database_url).await?;
-    let repository = Arc::new(DbFileRepository::new(pool.clone()));
+    let _pool = setup_database(database_url).await?;
+
+    // Create pool manager
+    let pools = PoolManager::new(database_url, PoolConfig::default()).await?;
+    let repository = Arc::new(DbFileRepository::new(pools.clone()));
 
     // Setup Qdrant
     let storage = QdrantStorage::new(
@@ -84,7 +91,7 @@ mod tests {
     // Project branches
     let branches: Vec<BranchRow> =
         sqlx::query_as("SELECT repository_id, branch, repository_url FROM project_branches")
-            .fetch_all(&pool)
+            .fetch_all(pools.read_pool())
             .await?;
 
     println!("Project Branches:");
@@ -96,7 +103,7 @@ mod tests {
     let files: Vec<FileRow> = sqlx::query_as(
         "SELECT repository_id, branch, file_path, content_hash, generation FROM indexed_files",
     )
-    .fetch_all(&pool)
+    .fetch_all(pools.read_pool())
     .await?;
 
     println!("\nIndexed Files:");
@@ -116,7 +123,7 @@ mod tests {
         "SELECT chunk_id, file_path, chunk_index, start_line, end_line, kind, name 
              FROM chunk_metadata ORDER BY file_path, chunk_index",
     )
-    .fetch_all(&pool)
+    .fetch_all(pools.read_pool())
     .await?;
 
     println!("\nChunk Metadata:");

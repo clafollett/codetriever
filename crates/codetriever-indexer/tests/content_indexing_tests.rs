@@ -24,7 +24,7 @@ async fn test_index_file_content_with_multiple_files() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
+    let mut indexer = Indexer::with_config_and_storage(&config, Box::new(storage.clone()));
 
     // Create test files with actual code content
     let files = vec![
@@ -163,7 +163,7 @@ async fn test_index_file_content_creates_searchable_chunks() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
+    let mut indexer = Indexer::with_config_and_storage(&config, Box::new(storage.clone()));
 
     // Index content with specific searchable terms
     let files = vec![FileContent {
@@ -243,7 +243,7 @@ async fn test_index_file_content_handles_different_languages() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
+    let mut indexer = Indexer::with_config_and_storage(&config, Box::new(storage.clone()));
 
     let files = vec![
         // JavaScript/TypeScript
@@ -345,7 +345,7 @@ async fn test_index_file_content_handles_large_files() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
+    let mut indexer = Indexer::with_config_and_storage(&config, Box::new(storage.clone()));
 
     // Create a large file that will need chunking
     let mut large_content = String::new();
@@ -409,7 +409,7 @@ async fn test_index_file_content_handles_empty_and_invalid_files() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
+    let mut indexer = Indexer::with_config_and_storage(&config, Box::new(storage.clone()));
 
     let files = vec![
         // Empty file
@@ -490,7 +490,7 @@ async fn test_index_file_content_without_filesystem_access() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
+    let mut indexer = Indexer::with_config_and_storage(&config, Box::new(storage.clone()));
 
     // Use paths that definitely don't exist
     let files = vec![FileContent {

@@ -18,7 +18,7 @@ async fn test_indexer_stores_chunks_in_qdrant() {
         .await
         .expect("Failed to create storage");
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
+    let mut indexer = Indexer::with_config_and_storage(&config, Box::new(storage.clone()));
 
     // Index a small test repo (mini-redis has ~30 Rust files)
     // Use CARGO_MANIFEST_DIR to find the workspace root reliably

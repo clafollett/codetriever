@@ -8,6 +8,7 @@ pub mod git;
 pub mod migrations;
 pub mod models;
 pub mod pool;
+pub mod pool_manager;
 pub mod repository;
 pub mod traits;
 

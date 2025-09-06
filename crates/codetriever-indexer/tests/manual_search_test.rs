@@ -32,7 +32,7 @@ async fn test_manual_searches() {
         Err(e) => println!("Failed to create collection: {e}"),
     }
 
-    let mut indexer = Indexer::with_config_and_storage(&config, storage.clone());
+    let mut indexer = Indexer::with_config_and_storage(&config, Box::new(storage.clone()));
 
     // Check if we need to index first
     let test_queries = vec![

@@ -4,7 +4,7 @@ use crate::{
     embedding::{DefaultEmbeddingService, EmbeddingConfig, EmbeddingService},
     indexing::service::FileContent,
     parsing::{CodeChunk, CodeParser, get_language_from_extension},
-    storage::{QdrantStorage, VectorStorage},
+    storage::VectorStorage,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -272,7 +272,7 @@ impl Indexer {
         }
     }
 
-    pub fn with_config_and_storage(config: &Config, storage: QdrantStorage) -> Self {
+    pub fn with_config_and_storage(config: &Config, storage: BoxedVectorStorage) -> Self {
         let embedding_config = EmbeddingConfig {
             model_id: config.embedding_model.clone(),
             max_tokens: config.max_embedding_tokens,
@@ -283,7 +283,7 @@ impl Indexer {
 
         Self {
             embedding_service: Box::new(DefaultEmbeddingService::new(embedding_config)),
-            storage: Some(Box::new(storage)),
+            storage: Some(storage),
             code_parser: CodeParser::new(
                 None, // Will be set after tokenizer loads
                 config.split_large_semantic_units,

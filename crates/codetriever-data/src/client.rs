@@ -1,29 +1,29 @@
-//! Database client combining pool and repository
+//! Database client combining pool manager and repository
 
 use anyhow::Result;
-use sqlx::PgPool;
 
 use crate::config::DatabaseConfig;
-use crate::pool::initialize_database;
+use crate::pool_manager::{PoolConfig, PoolManager};
 use crate::repository::DbFileRepository;
 
-/// Database client combining pool and repository
+/// Database client combining pool manager and repository
 pub struct DataClient {
-    pool: PgPool,
+    pools: PoolManager,
     repository: DbFileRepository,
 }
 
 impl DataClient {
-    /// Create new data client from pool
-    pub fn new(pool: PgPool) -> Self {
-        let repository = DbFileRepository::new(pool.clone());
-        Self { pool, repository }
+    /// Create new data client from pool manager
+    pub fn new(pools: PoolManager) -> Self {
+        let repository = DbFileRepository::new(pools.clone());
+        Self { pools, repository }
     }
 
-    /// Initialize with config
+    /// Initialize with config using optimized pools
     pub async fn initialize(config: &DatabaseConfig) -> Result<Self> {
-        let pool = initialize_database(config).await?;
-        Ok(Self::new(pool))
+        let pool_config = PoolConfig::default();
+        let pools = PoolManager::new(&config.url, pool_config).await?;
+        Ok(Self::new(pools))
     }
 
     /// Get repository for database operations
@@ -31,8 +31,8 @@ impl DataClient {
         &self.repository
     }
 
-    /// Get underlying pool
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
+    /// Get pool manager
+    pub fn pools(&self) -> &PoolManager {
+        &self.pools
     }
 }
