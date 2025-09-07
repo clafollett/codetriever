@@ -133,18 +133,8 @@ impl EmbeddingModel {
         // Use F32 for all models for numerical stability
         let dtype = DType::F32;
 
-        // Configure tokenizer
-        use tokenizers::{PaddingParams, TruncationParams};
-        tokenizer.with_padding(Some(PaddingParams {
-            strategy: tokenizers::PaddingStrategy::BatchLongest,
-            ..Default::default()
-        }));
-        tokenizer
-            .with_truncation(Some(TruncationParams {
-                max_length: self.max_tokens,
-                ..Default::default()
-            }))
-            .map_err(|e| crate::Error::Embedding(format!("Failed to set truncation: {e}")))?;
+        // The tokenizer should already be configured when loaded
+        // If not, that's a bug in ensure_model_loaded()
 
         // Check for truncation by comparing token count to max
         let num_texts = texts.len();
@@ -374,8 +364,22 @@ impl EmbeddingModel {
             .get("tokenizer.json")
             .await
             .map_err(|e| crate::Error::Embedding(format!("Failed to download tokenizer: {e}")))?;
-        let tokenizer = Tokenizer::from_file(&tokenizer_path)
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| crate::Error::Embedding(format!("Failed to load tokenizer: {e}")))?;
+
+        // Configure tokenizer for batch processing with padding and truncation
+        use tokenizers::{PaddingParams, TruncationParams};
+        tokenizer.with_padding(Some(PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            ..Default::default()
+        }));
+        tokenizer
+            .with_truncation(Some(TruncationParams {
+                max_length: self.max_tokens,
+                ..Default::default()
+            }))
+            .map_err(|e| crate::Error::Embedding(format!("Failed to set truncation: {e}")))?;
+
         self.tokenizer = Some(tokenizer);
 
         Ok(())

@@ -3,9 +3,11 @@
 use crate::Result;
 use crate::parsing::languages::get_language_config;
 use crate::parsing::traits::ContentParser;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokenizers::Tokenizer;
-use tree_sitter::{Parser, Query, QueryCursor, StreamingIteratorMut};
+use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIteratorMut};
 
 /// Represents a chunk of code extracted by the parser
 #[derive(Debug, Clone)]
@@ -32,6 +34,40 @@ pub struct CodeChunk {
     pub token_count: Option<usize>,
     /// Optional embedding vector (populated during indexing)
     pub embedding: Option<Vec<f32>>,
+}
+
+// Global cache for compiled tree-sitter queries - MASSIVE performance win!
+// Queries are expensive to compile but can be reused across all parse operations
+type QueryCache = HashMap<(usize, String), Arc<Query>>; // (language_id, query_string) -> compiled_query
+static QUERY_CACHE: Lazy<std::sync::Mutex<QueryCache>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Get a cached tree-sitter query, compiling it only once per (language, query_str) pair
+fn get_cached_query(language: &Language, query_str: &str) -> Result<Arc<Query>> {
+    // Create cache key using language pointer address (more reliable than language.id())
+    let lang_ptr = language as *const Language as usize;
+    let key = (lang_ptr, query_str.to_string());
+
+    // Check cache first
+    {
+        let cache = QUERY_CACHE.lock().unwrap();
+        if let Some(cached_query) = cache.get(&key) {
+            return Ok(cached_query.clone());
+        }
+    }
+
+    // Compile query if not cached
+    let query = Query::new(language, query_str)
+        .map_err(|e| crate::Error::Parse(format!("Failed to compile query: {e}")))?;
+    let arc_query = Arc::new(query);
+
+    // Cache the compiled query
+    {
+        let mut cache = QUERY_CACHE.lock().unwrap();
+        cache.insert(key, arc_query.clone());
+    }
+
+    Ok(arc_query)
 }
 
 /// A code parser that uses Tree-sitter and heuristics to extract meaningful elements from source code
@@ -428,9 +464,9 @@ impl CodeParser {
         let root = tree.root_node();
         let mut chunks = Vec::new();
 
-        // Create and execute query
-        let query = Query::new(tree_sitter_language, query_str)
-            .map_err(|e| anyhow::anyhow!("Failed to create query: {}", e))?;
+        // PERFORMANCE: Use cached queries to avoid expensive recompilation 🚀
+        let query = get_cached_query(tree_sitter_language, query_str)
+            .map_err(|e| anyhow::anyhow!("Failed to get cached query: {}", e))?;
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&query, root, code.as_bytes());
