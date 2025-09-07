@@ -62,7 +62,6 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     // Common error variants (implementing CommonError trait)
-    
     /// I/O operation failed.
     ///
     /// This variant can be either a wrapped standard library I/O error or
@@ -110,7 +109,6 @@ pub enum Error {
     Other(String),
 
     // API-specific error variants
-    
     /// Vector database (Qdrant) operation failed.
     ///
     /// This variant represents errors from Qdrant vector database operations
