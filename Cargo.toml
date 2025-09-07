@@ -2,6 +2,7 @@
 members = [
     "crates/codetriever",
     "crates/codetriever-api",
+    "crates/codetriever-common",
     "crates/codetriever-data",
     "crates/codetriever-indexer",
     # Future crates:
@@ -36,7 +37,13 @@ chrono = "0.4"
 uuid = { version = "1.10", features = ["v4", "v5", "serde"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "migrate"] }
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

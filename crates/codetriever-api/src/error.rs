@@ -8,6 +8,7 @@
 //! - Providing descriptive error messages with context
 //! - Supporting error chaining via `#[from]` attributes
 //! - Offering a convenient `Result` type alias for API operations
+//! - Leveraging common error patterns from codetriever-common
 //!
 //! # Error Categories
 //!
@@ -28,6 +29,9 @@
 //!     Ok("processed code".to_string())
 //! }
 //! ```
+
+use codetriever_common::CommonError;
+use thiserror::Error;
 
 /// The main error type for all Codetriever API operations.
 ///
@@ -55,8 +59,10 @@
 /// // Manual error construction
 /// let parse_error = Error::Parser("Invalid syntax in function".to_string());
 /// ```
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Error)]
 pub enum Error {
+    // Common error variants (implementing CommonError trait)
+    
     /// I/O operation failed.
     ///
     /// This variant can be either a wrapped standard library I/O error or
@@ -70,6 +76,41 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(String),
 
+    /// Configuration error.
+    ///
+    /// This variant indicates missing or invalid configuration required for
+    /// the application to function properly.
+    ///
+    /// Common scenarios:
+    /// - Missing environment variables (e.g., HF_TOKEN for Hugging Face)
+    /// - Invalid API keys or credentials
+    /// - Misconfigured service endpoints
+    /// - Missing required configuration files
+    #[error("Configuration error: {0}")]
+    Configuration(String),
+
+    /// Code parsing or analysis failed.
+    ///
+    /// This variant represents errors during code parsing, AST generation,
+    /// or semantic analysis of source files.
+    ///
+    /// Common scenarios:
+    /// - Unsupported programming language
+    /// - Malformed or invalid syntax
+    /// - Parser library errors or limitations
+    /// - Unicode or encoding issues
+    #[error("Parser error: {0}")]
+    Parser(String),
+
+    /// Other/generic error.
+    ///
+    /// This variant is used for errors that don't fit into specific categories
+    /// or for wrapped anyhow errors.
+    #[error("Other error: {0}")]
+    Other(String),
+
+    // API-specific error variants
+    
     /// Vector database (Qdrant) operation failed.
     ///
     /// This variant represents errors from Qdrant vector database operations
@@ -96,19 +137,6 @@ pub enum Error {
     #[error("Embedding error: {0}")]
     Embedding(String),
 
-    /// Code parsing or analysis failed.
-    ///
-    /// This variant represents errors during code parsing, AST generation,
-    /// or semantic analysis of source files.
-    ///
-    /// Common scenarios:
-    /// - Unsupported programming language
-    /// - Malformed or invalid syntax
-    /// - Parser library errors or limitations
-    /// - Unicode or encoding issues
-    #[error("Parser error: {0}")]
-    Parser(String),
-
     /// Requested resource was not found.
     ///
     /// This variant indicates that a requested code file, function, or other
@@ -122,22 +150,28 @@ pub enum Error {
     #[error("Not found: {0}")]
     NotFound(String),
 
-    /// Configuration error.
-    ///
-    /// This variant indicates missing or invalid configuration required for
-    /// the application to function properly.
-    ///
-    /// Common scenarios:
-    /// - Missing environment variables (e.g., HF_TOKEN for Hugging Face)
-    /// - Invalid API keys or credentials
-    /// - Misconfigured service endpoints
-    /// - Missing required configuration files
-    #[error("Configuration error: {0}")]
-    Configuration(String),
-
     /// General anyhow error for flexible error handling
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
+}
+
+// Implement the CommonError trait for standardized error handling
+impl CommonError for Error {
+    fn io_error(msg: impl Into<String>) -> Self {
+        Self::Io(msg.into())
+    }
+
+    fn config_error(msg: impl Into<String>) -> Self {
+        Self::Configuration(msg.into())
+    }
+
+    fn parse_error(msg: impl Into<String>) -> Self {
+        Self::Parser(msg.into())
+    }
+
+    fn other_error(msg: impl Into<String>) -> Self {
+        Self::Other(msg.into())
+    }
 }
 
 /// A specialized `Result` type for Codetriever API operations.
@@ -171,8 +205,9 @@ pub enum Error {
 /// propagating any `Error` variants up the call stack.
 pub type Result<T> = std::result::Result<T, Error>;
 
+// Standard From implementations using CommonError trait methods
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
-        Error::Io(err.to_string())
+        Error::io_error(err.to_string())
     }
 }
