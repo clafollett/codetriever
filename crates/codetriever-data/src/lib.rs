@@ -1,4 +1,4 @@
-//! Codetriever data layer for PostgreSQL state management
+//! Codetriever data layer for `PostgreSQL` state management
 
 // Module declarations
 pub mod chunk_id;

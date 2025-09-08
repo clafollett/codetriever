@@ -1,6 +1,6 @@
 //! Run database migrations for codetriever-data
 //!
-//! Usage: cargo run --example run_migrations
+//! Usage: cargo run --example `run_migrations`
 
 use codetriever_data::migrations::setup_database;
 

@@ -3,6 +3,14 @@
 use sqlx::{PgPool, Postgres, migrate::MigrateDatabase};
 
 /// Run all pending database migrations
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Migration files cannot be read or are corrupted
+/// - Database connection is lost during migration
+/// - Migration SQL contains invalid statements
+/// - Database schema conflicts prevent migration
 pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
     println!("Running database migrations...");
 
@@ -14,6 +22,15 @@ pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
 }
 
 /// Create database if it doesn't exist and run migrations
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Database URL is malformed or invalid
+/// - Database server is unreachable or authentication fails
+/// - Insufficient privileges to create database or run migrations
+/// - Database creation fails for reasons other than "already exists"
+/// - Connection pool creation fails
 pub async fn setup_database(database_url: &str) -> anyhow::Result<PgPool> {
     // Check if database exists, create if not
     match Postgres::database_exists(database_url).await {
@@ -61,18 +78,26 @@ pub async fn setup_database(database_url: &str) -> anyhow::Result<PgPool> {
 }
 
 /// Wait for database to be ready and run migrations
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Database remains unreachable after maximum retry attempts
+/// - All retry attempts fail due to persistent database issues
+/// - Final setup attempt fails after successful connection attempts
 pub async fn wait_for_migrations(database_url: &str) -> anyhow::Result<PgPool> {
     use std::time::Duration;
     use tokio::time::sleep;
 
-    let mut attempts = 0;
     const MAX_ATTEMPTS: u32 = 30;
+    let mut attempts = 0;
 
     loop {
         match setup_database(database_url).await {
             Ok(pool) => return Ok(pool),
             Err(e) if attempts < MAX_ATTEMPTS => {
-                attempts += 1;
+                // Use saturating_add for retry counter - if we somehow overflow, we're way past MAX_ATTEMPTS
+                attempts = attempts.saturating_add(1);
                 eprintln!("Database not ready (attempt {attempts}/{MAX_ATTEMPTS}): {e}");
                 sleep(Duration::from_secs(2)).await;
             }

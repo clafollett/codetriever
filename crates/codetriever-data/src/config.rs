@@ -29,13 +29,11 @@ impl Default for DatabaseConfig {
             connect_timeout: std::env::var("DB_CONNECT_TIMEOUT_SECS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .map(Duration::from_secs)
-                .unwrap_or_else(|| Duration::from_secs(30)),
+                .map_or_else(|| Duration::from_secs(30), Duration::from_secs),
             idle_timeout: std::env::var("DB_IDLE_TIMEOUT_SECS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .map(Duration::from_secs)
-                .unwrap_or_else(|| Duration::from_secs(600)),
+                .map_or_else(|| Duration::from_secs(600), Duration::from_secs),
         }
     }
 }

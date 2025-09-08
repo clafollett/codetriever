@@ -92,7 +92,44 @@ signal-hook-tokio = "0.3.1"
 tera = "1.17"
 
 [workspace.lints.clippy]
-uninlined_format_args = "allow"
+# Enforce pedantic and nursery lint groups for better code quality
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# STRICT: Error handling - forces proper error handling in production code
+unwrap_used = "warn"        # Forces us to handle errors properly
+expect_used = "warn"        # Forces better error messages
+panic = "warn"              # No explicit panics in production code
+
+# STRICT: Safety and correctness
+indexing_slicing = "warn"   # Forces bounds checking with .get()
+arithmetic_side_effects = "warn"  # Prevents overflow bugs
+
+# STRICT: Code quality and idioms  
+uninlined_format_args = "deny"  # MUST use format!("{x}") instead of format!("{}", x) - cleaner!
+wildcard_imports = "warn"   # Forces explicit imports
+enum_glob_use = "warn"      # No glob imports from enums
+if_not_else = "warn"        # Prevents confusing negative conditions
+items_after_statements = "warn"  # Forces declarations before code
+match_same_arms = "warn"    # Prevents duplicate match arms
+semicolon_if_nothing_returned = "warn"  # Forces explicit returns
+use_self = "warn"           # Forces using Self in impl blocks
+clone_on_ref_ptr = "warn"   # Prevents unnecessary Arc/Rc clones
+inefficient_to_string = "warn"  # Forces efficient string conversions
+
+# STRICT: Documentation - forces AI agents to document code properly!
+missing_docs_in_private_items = "allow"  # Don't require docs for private items
+# But DO require docs for public items (comes with pedantic)
+
+# STRICT: Documentation for safety-critical information
+missing_errors_doc = "warn"      # Document what errors functions can return
+missing_panics_doc = "warn"      # Document when functions might panic
+
+# Relaxed: Allow some patterns that are common/acceptable
+must_use_candidate = "allow"     # Don't require #[must_use] everywhere
+module_name_repetitions = "allow"  # Allow IndexerError in indexer module
+too_many_lines = "allow"         # Don't limit function length
+cognitive_complexity = "allow"    # Don't limit function complexity
 
 [profile.release]
 opt-level = 3

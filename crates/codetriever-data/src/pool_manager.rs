@@ -9,6 +9,17 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
 use std::time::Duration;
 
+/// Extension trait for saturating cast from usize to u32
+trait SaturatingCast {
+    fn saturating_cast(self) -> u32;
+}
+
+impl SaturatingCast for usize {
+    fn saturating_cast(self) -> u32 {
+        u32::try_from(self).unwrap_or(u32::MAX)
+    }
+}
+
 /// Configuration for connection pools
 #[derive(Debug, Clone)]
 pub struct PoolConfig {
@@ -40,7 +51,12 @@ impl Default for PoolConfig {
 }
 
 /// Manages multiple connection pools for different operation types
+///
+/// All fields intentionally end with '_pool' as they represent distinct pools
+/// for different operation types (write, read, analytics). This naming makes
+/// the purpose of each pool immediately clear.
 #[derive(Clone)]
+#[allow(clippy::struct_field_names)]
 pub struct PoolManager {
     /// Pool for write operations (indexing, updates)
     write_pool: PgPool,
@@ -52,6 +68,15 @@ pub struct PoolManager {
 
 impl PoolManager {
     /// Create a new pool manager with the given configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Database URL is malformed or contains invalid parameters
+    /// - Database server is unreachable or refuses connections
+    /// - Authentication fails due to invalid credentials
+    /// - Any of the three connection pools (write, read, analytics) fail to connect
+    /// - Connection timeout is exceeded for any pool
     pub async fn new(database_url: &str, config: PoolConfig) -> Result<Self> {
         let base_options =
             PgConnectOptions::from_str(database_url)?.application_name("codetriever");
@@ -79,7 +104,9 @@ impl PoolManager {
         // Create analytics pool - separate pool for heavy operations
         let analytics_pool = PgPoolOptions::new()
             .max_connections(config.analytics_pool_size)
-            .acquire_timeout(Duration::from_secs(config.connect_timeout * 2)) // Longer timeout for analytics
+            .acquire_timeout(Duration::from_secs(
+                config.connect_timeout.saturating_mul(2),
+            )) // Longer timeout for analytics
             .idle_timeout(Duration::from_secs(config.idle_timeout))
             .max_lifetime(Duration::from_secs(config.max_lifetime))
             .connect_with(base_options)
@@ -94,21 +121,28 @@ impl PoolManager {
     }
 
     /// Get the write pool for indexing and update operations
-    pub fn write_pool(&self) -> &PgPool {
+    pub const fn write_pool(&self) -> &PgPool {
         &self.write_pool
     }
 
     /// Get the read pool for query operations
-    pub fn read_pool(&self) -> &PgPool {
+    pub const fn read_pool(&self) -> &PgPool {
         &self.read_pool
     }
 
     /// Get the analytics pool for heavy search and aggregation queries
-    pub fn analytics_pool(&self) -> &PgPool {
+    pub const fn analytics_pool(&self) -> &PgPool {
         &self.analytics_pool
     }
 
     /// Create with default configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `DATABASE_URL` environment variable is not set
+    /// - Database URL from environment is malformed
+    /// - Pool creation fails (see `new` method errors)
     pub async fn from_env() -> Result<Self> {
         let database_url =
             std::env::var("DATABASE_URL").context("DATABASE_URL environment variable not set")?;
@@ -121,17 +155,17 @@ impl PoolManager {
         PoolStats {
             write_pool: ConnectionStats {
                 size: self.write_pool.size(),
-                idle: self.write_pool.num_idle() as u32,
+                idle: self.write_pool.num_idle().saturating_cast(),
                 max: self.write_pool.options().get_max_connections(),
             },
             read_pool: ConnectionStats {
                 size: self.read_pool.size(),
-                idle: self.read_pool.num_idle() as u32,
+                idle: self.read_pool.num_idle().saturating_cast(),
                 max: self.read_pool.options().get_max_connections(),
             },
             analytics_pool: ConnectionStats {
                 size: self.analytics_pool.size(),
-                idle: self.analytics_pool.num_idle() as u32,
+                idle: self.analytics_pool.num_idle().saturating_cast(),
                 max: self.analytics_pool.options().get_max_connections(),
             },
         }
@@ -166,16 +200,25 @@ pub struct PoolStats {
 
 impl PoolStats {
     /// Get total connections across all pools
-    pub fn total_connections(&self) -> u32 {
-        self.write_pool.size + self.read_pool.size + self.analytics_pool.size
+    pub const fn total_connections(&self) -> u32 {
+        // Use saturating addition for pool statistics - overflow saturates to max value
+        self.write_pool
+            .size
+            .saturating_add(self.read_pool.size)
+            .saturating_add(self.analytics_pool.size)
     }
 
     /// Get total idle connections
-    pub fn total_idle(&self) -> u32 {
-        self.write_pool.idle + self.read_pool.idle + self.analytics_pool.idle
+    pub const fn total_idle(&self) -> u32 {
+        // Use saturating addition for pool statistics - overflow saturates to max value
+        self.write_pool
+            .idle
+            .saturating_add(self.read_pool.idle)
+            .saturating_add(self.analytics_pool.idle)
     }
 
     /// Get utilization percentage
+    #[allow(clippy::cast_precision_loss)] // Acceptable precision loss for utilization percentage
     pub fn utilization(&self) -> f32 {
         let total = self.total_connections() as f32;
         let idle = self.total_idle() as f32;

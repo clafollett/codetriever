@@ -20,6 +20,13 @@ impl DataClient {
     }
 
     /// Initialize with config using optimized pools
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Database connection fails
+    /// - Pool creation fails due to invalid configuration
+    /// - Network connectivity issues prevent connection
     pub async fn initialize(config: &DatabaseConfig) -> Result<Self> {
         let pool_config = PoolConfig::default();
         let pools = PoolManager::new(&config.url, pool_config).await?;
@@ -27,12 +34,12 @@ impl DataClient {
     }
 
     /// Get repository for database operations
-    pub fn repository(&self) -> &DbFileRepository {
+    pub const fn repository(&self) -> &DbFileRepository {
         &self.repository
     }
 
     /// Get pool manager
-    pub fn pools(&self) -> &PoolManager {
+    pub const fn pools(&self) -> &PoolManager {
         &self.pools
     }
 }

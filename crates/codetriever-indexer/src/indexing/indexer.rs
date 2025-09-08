@@ -254,10 +254,30 @@ impl Default for Indexer {
 }
 
 impl Indexer {
+    /// Creates a new indexer instance with default configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use codetriever_indexer::indexing::Indexer;
+    ///
+    /// let indexer = Indexer::new();
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Creates a new indexer with the specified configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use codetriever_indexer::config::Config;
+    /// use codetriever_indexer::indexing::Indexer;
+    ///
+    /// let config = Config::default();
+    /// let indexer = Indexer::with_config(&config);
+    /// ```
     pub fn with_config(config: &Config) -> Self {
         let embedding_config = EmbeddingConfig {
             model_id: config.embedding_model.clone(),
@@ -281,6 +301,25 @@ impl Indexer {
         }
     }
 
+    /// Creates a new indexer with custom configuration and storage backend.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use codetriever_indexer::config::Config;
+    /// use codetriever_indexer::indexing::Indexer;
+    /// use codetriever_indexer::storage::QdrantStorage;
+    ///
+    /// let config = Config::default();
+    /// let storage = QdrantStorage::new(
+    ///     "http://localhost:6334".to_string(),
+    ///     "my_collection".to_string()
+    /// ).await?;
+    /// let indexer = Indexer::with_config_and_storage(&config, Box::new(storage));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_config_and_storage(config: &Config, storage: BoxedVectorStorage) -> Self {
         let embedding_config = EmbeddingConfig {
             model_id: config.embedding_model.clone(),
@@ -328,6 +367,27 @@ impl Indexer {
         }
     }
 
+    /// Performs semantic search to find code chunks similar to the query.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - The search query text
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use codetriever_indexer::indexing::Indexer;
+    ///
+    /// let mut indexer = Indexer::new();
+    /// let results = indexer.search("database connection", 10).await?;
+    /// for chunk in results {
+    ///     println!("Found: {}", chunk.file_path);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn search(&mut self, query: &str, limit: usize) -> Result<Vec<CodeChunk>> {
         // Generate embedding for the query
         let embeddings = self
@@ -349,6 +409,26 @@ impl Indexer {
         }
     }
 
+    /// Indexes all code files in a directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The directory path to index
+    /// * `recursive` - Whether to recursively index subdirectories
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use codetriever_indexer::indexing::Indexer;
+    /// use std::path::Path;
+    ///
+    /// let mut indexer = Indexer::new();
+    /// let result = indexer.index_directory(Path::new("./src"), true).await?;
+    /// println!("Indexed {} files", result.files_indexed);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn index_directory(&mut self, path: &Path, recursive: bool) -> Result<IndexResult> {
         println!("Starting index_directory for {path:?}");
 

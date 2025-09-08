@@ -18,10 +18,10 @@ pub enum ResponseStatus {
 impl fmt::Display for ResponseStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ResponseStatus::Success => write!(f, "success"),
-            ResponseStatus::Error => write!(f, "error"),
-            ResponseStatus::Processing => write!(f, "processing"),
-            ResponseStatus::PartialSuccess => write!(f, "partial_success"),
+            Self::Success => write!(f, "success"),
+            Self::Error => write!(f, "error"),
+            Self::Processing => write!(f, "processing"),
+            Self::PartialSuccess => write!(f, "partial_success"),
         }
     }
 }
@@ -49,7 +49,7 @@ pub trait HasStatus {
     }
 }
 
-/// Helper macro to implement HasStatus trait for response types
+/// Helper macro to implement `HasStatus` trait for response types
 #[macro_export]
 macro_rules! impl_has_status {
     ($type:ty) => {

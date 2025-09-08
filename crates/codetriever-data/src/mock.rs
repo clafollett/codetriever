@@ -1,4 +1,10 @@
-//! Mock implementation of DbRepository for testing
+//! Mock implementation of `DbRepository` for testing
+
+// Allow test-specific patterns in mock implementation
+#![allow(clippy::unwrap_used)] // Mocks can panic on lock poisoning
+#![allow(clippy::expect_used)] // Test code can use expect
+#![allow(clippy::arithmetic_side_effects)] // Test counters can overflow
+#![allow(clippy::significant_drop_tightening)] // Mock locks don't need optimization
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -52,6 +58,10 @@ impl MockFileRepository {
     }
 
     /// Configure to fail on next operation
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (should only happen if another thread panicked while holding the lock)
     pub fn fail_next(&self, message: &str) {
         *self.should_fail_next.lock().unwrap() = true;
         *self.error_message.lock().unwrap() = message.to_string();
@@ -208,7 +218,7 @@ impl FileRepository for MockFileRepository {
             files_total: None,
             files_processed: 0,
             chunks_created: 0,
-            commit_sha: commit_sha.map(|s| s.to_string()),
+            commit_sha: commit_sha.map(std::string::ToString::to_string),
             started_at: Utc::now(),
             completed_at: None,
             error_message: None,

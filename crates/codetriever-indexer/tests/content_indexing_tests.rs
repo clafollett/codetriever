@@ -7,6 +7,12 @@
 //! - Stores in Qdrant
 //! - Enables semantic search
 
+// Relax strict lints for test code
+#![allow(clippy::unwrap_used)] // Tests can use unwrap for assertions
+#![allow(clippy::expect_used)] // Tests can use expect for setup
+#![allow(clippy::indexing_slicing)] // Tests can use direct indexing
+#![allow(clippy::panic)] // Tests can panic on failure
+
 #[path = "test_utils.rs"]
 mod test_utils;
 

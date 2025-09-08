@@ -50,7 +50,7 @@ pub struct IndexResponse {
 impl_has_status!(IndexResponse);
 
 impl IndexResponse {
-    pub fn success(files_indexed: usize, chunks_created: usize) -> Self {
+    pub const fn success(files_indexed: usize, chunks_created: usize) -> Self {
         Self {
             status: ResponseStatus::Success,
             files_indexed,
@@ -58,7 +58,7 @@ impl IndexResponse {
         }
     }
 
-    pub fn error() -> Self {
+    pub const fn error() -> Self {
         Self {
             status: ResponseStatus::Error,
             files_indexed: 0,
@@ -85,25 +85,31 @@ async fn index_handler(
     // Use the injected indexer service
     let mut indexer = indexer.lock().await;
 
-    match indexer.index_file_content(&request.project_id, files).await {
-        Ok(result) => Json(IndexResponse::success(
-            result.files_indexed,
-            result.chunks_created,
-        )),
-        Err(_) => Json(IndexResponse::error()),
-    }
+    indexer
+        .index_file_content(&request.project_id, files)
+        .await
+        .map_or_else(
+            |_| Json(IndexResponse::error()),
+            |result| {
+                Json(IndexResponse::success(
+                    result.files_indexed,
+                    result.chunks_created,
+                ))
+            },
+        )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestResult;
     use axum::body::Body;
     use axum::http::{StatusCode, header};
     use codetriever_indexer::test_mocks::MockIndexerService;
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn test_index_endpoint_accepts_content() {
+    async fn test_index_endpoint_accepts_content() -> TestResult {
         // Use mock indexer that returns predictable results
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(2, 10)));
         let app = routes_with_indexer(mock_indexer);
@@ -130,27 +136,24 @@ mod tests {
                     .method("POST")
                     .uri("/index")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
+                    .body(Body::from(request_body))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
         assert_eq!(response.status(), StatusCode::OK);
 
         // Parse response body
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let response: IndexResponse = serde_json::from_slice(&body).unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let response: IndexResponse = serde_json::from_slice(&body)?;
 
         assert_eq!(response.status, ResponseStatus::Success);
         assert_eq!(response.files_indexed, 2);
         assert_eq!(response.chunks_created, 10);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_index_with_recursive_flag() {
+    async fn test_index_with_recursive_flag() -> TestResult {
         // Mock returns 5 files and 10 chunks
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(5, 10)));
         let app = routes_with_indexer(mock_indexer);
@@ -169,17 +172,16 @@ mod tests {
                     .method("POST")
                     .uri("/index")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
+                    .body(Body::from(request_body))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
         assert_eq!(response.status(), StatusCode::OK);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_index_endpoint_validates_json() {
+    async fn test_index_endpoint_validates_json() -> TestResult {
         let app = routes();
 
         let request_body = r#"{"invalid": "json_structure"}"#;
@@ -190,18 +192,17 @@ mod tests {
                     .method("POST")
                     .uri("/index")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
+                    .body(Body::from(request_body))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
         // Should get a client error for missing required field
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_index_endpoint_handles_empty_files() {
+    async fn test_index_endpoint_handles_empty_files() -> TestResult {
         let app = routes();
 
         let request_body = r#"{
@@ -215,25 +216,22 @@ mod tests {
                     .method("POST")
                     .uri("/index")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
+                    .body(Body::from(request_body))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let response: IndexResponse = serde_json::from_slice(&body).unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let response: IndexResponse = serde_json::from_slice(&body)?;
 
         // Empty files list should return 0 files
         assert_eq!(response.files_indexed, 0);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_index_endpoint_handles_no_content() {
+    async fn test_index_endpoint_handles_no_content() -> TestResult {
         let app = routes();
 
         let request_body = r#"{
@@ -249,26 +247,23 @@ mod tests {
                     .method("POST")
                     .uri("/index")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
+                    .body(Body::from(request_body))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let response: IndexResponse = serde_json::from_slice(&body).unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let response: IndexResponse = serde_json::from_slice(&body)?;
 
         // Empty content means no chunks, so file is not indexed
         assert_eq!(response.files_indexed, 0);
         assert_eq!(response.chunks_created, 0);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_index_returns_file_count() {
+    async fn test_index_returns_file_count() -> TestResult {
         // Mock returns 3 files and 7 chunks
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(3, 7)));
         let app = routes_with_indexer(mock_indexer);
@@ -288,26 +283,23 @@ mod tests {
                     .method("POST")
                     .uri("/index")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
+                    .body(Body::from(request_body))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let response: IndexResponse = serde_json::from_slice(&body).unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let response: IndexResponse = serde_json::from_slice(&body)?;
 
         // Verify we got the mocked values
         assert_eq!(response.files_indexed, 3);
         assert_eq!(response.chunks_created, 7);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_response_has_status_trait() {
+    async fn test_response_has_status_trait() -> TestResult {
         use crate::routes::response::HasStatus;
 
         let mut response = IndexResponse::success(5, 10);
@@ -321,10 +313,11 @@ mod tests {
         response.set_status(ResponseStatus::PartialSuccess);
         assert!(response.is_success());
         assert!(!response.is_error());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_index_creates_chunks() {
+    async fn test_index_creates_chunks() -> TestResult {
         // Mock returns 1 file and 5 chunks
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(1, 5)));
         let app = routes_with_indexer(mock_indexer);
@@ -342,24 +335,21 @@ mod tests {
                     .method("POST")
                     .uri("/index")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
+                    .body(Body::from(request_body))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let response: IndexResponse = serde_json::from_slice(&body).unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let response: IndexResponse = serde_json::from_slice(&body)?;
 
         // Verify we got the mocked values
         assert_eq!(response.files_indexed, 1);
         assert_eq!(response.chunks_created, 5);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_index_handles_indexer_errors() {
+    async fn test_index_handles_indexer_errors() -> TestResult {
         // Mock that returns an error
         let mock_indexer = Arc::new(Mutex::new(MockIndexerService::with_error()));
         let app = routes_with_indexer(mock_indexer);
@@ -377,22 +367,19 @@ mod tests {
                     .method("POST")
                     .uri("/index")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
+                    .body(Body::from(request_body))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let response: IndexResponse = serde_json::from_slice(&body).unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let response: IndexResponse = serde_json::from_slice(&body)?;
 
         // Error case should return error status and 0 values
         assert_eq!(response.status, ResponseStatus::Error);
         assert_eq!(response.files_indexed, 0);
         assert_eq!(response.chunks_created, 0);
+        Ok(())
     }
 }

@@ -69,7 +69,7 @@ pub struct IndexingJob {
 }
 
 /// Status of an indexing job
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum JobStatus {
     Pending,
@@ -79,27 +79,35 @@ pub enum JobStatus {
     Cancelled,
 }
 
+impl std::str::FromStr for JobStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(format!("Invalid job status: {s}")),
+        }
+    }
+}
+
 impl From<String> for JobStatus {
     fn from(s: String) -> Self {
-        match s.as_str() {
-            "pending" => JobStatus::Pending,
-            "running" => JobStatus::Running,
-            "completed" => JobStatus::Completed,
-            "failed" => JobStatus::Failed,
-            "cancelled" => JobStatus::Cancelled,
-            _ => JobStatus::Pending,
-        }
+        s.as_str().parse().unwrap_or(Self::Pending)
     }
 }
 
 impl std::fmt::Display for JobStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let status = match self {
-            JobStatus::Pending => "pending",
-            JobStatus::Running => "running",
-            JobStatus::Completed => "completed",
-            JobStatus::Failed => "failed",
-            JobStatus::Cancelled => "cancelled",
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
         };
         write!(f, "{status}")
     }

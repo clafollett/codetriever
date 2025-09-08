@@ -22,11 +22,18 @@ pub struct DbFileRepository {
 
 impl DbFileRepository {
     /// Create new repository with optimized connection pools
-    pub fn new(pools: PoolManager) -> Self {
+    pub const fn new(pools: PoolManager) -> Self {
         Self { pools }
     }
 
     /// Create from environment with optimized pools
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `DATABASE_URL` environment variable is not set
+    /// - Database connection fails
+    /// - Pool manager creation fails (see `PoolManager::from_env` errors)
     pub async fn from_env() -> Result<Self> {
         let pools = PoolManager::from_env().await?;
         Ok(Self::new(pools))
@@ -40,7 +47,7 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.write_pool();
 
         let row = sqlx::query(
-            r#"
+            r"
             INSERT INTO project_branches (repository_id, branch, repository_url)
             VALUES ($1, $2, $3)
             ON CONFLICT (repository_id, branch) 
@@ -51,7 +58,7 @@ impl FileRepository for DbFileRepository {
                 repository_url, 
                 first_seen, 
                 last_indexed
-            "#,
+            ",
         )
         .bind(&ctx.repository_id)
         .bind(&ctx.branch)
@@ -80,11 +87,11 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.read_pool();
 
         let existing = sqlx::query(
-            r#"
+            r"
             SELECT content_hash, generation
             FROM indexed_files
             WHERE repository_id = $1 AND branch = $2 AND file_path = $3
-            "#,
+            ",
         )
         .bind(repository_id)
         .bind(branch)
@@ -106,9 +113,13 @@ impl FileRepository for DbFileRepository {
                 } else {
                     // Content changed, increment generation
                     let generation: i64 = row.get("generation");
+                    // Use checked_add for generation tracking - overflow indicates data corruption
+                    let new_generation = generation
+                        .checked_add(1)
+                        .context("Generation counter overflow - indicates data corruption")?;
                     Ok(FileState::Updated {
                         old_generation: generation,
-                        new_generation: generation + 1,
+                        new_generation,
                     })
                 }
             }
@@ -125,7 +136,7 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.write_pool();
 
         let row = sqlx::query(
-            r#"
+            r"
             INSERT INTO indexed_files (
                 repository_id, branch, file_path, content_hash, generation,
                 commit_sha, commit_message, commit_date, author, indexed_at
@@ -141,7 +152,7 @@ impl FileRepository for DbFileRepository {
                 author = EXCLUDED.author,
                 indexed_at = NOW()
             RETURNING *
-            "#,
+            ",
         )
         .bind(repository_id)
         .bind(branch)
@@ -211,7 +222,7 @@ impl FileRepository for DbFileRepository {
         }
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO chunk_metadata (
                 chunk_id, repository_id, branch, file_path, chunk_index, generation,
                 start_line, end_line, byte_start, byte_end, kind, name, created_at
@@ -231,7 +242,7 @@ impl FileRepository for DbFileRepository {
                 unnest($12::text[]),
                 NOW()
             ON CONFLICT (chunk_id) DO NOTHING
-            "#,
+            ",
         )
         .bind(&chunk_ids)
         .bind(repository_id)
@@ -290,14 +301,14 @@ impl FileRepository for DbFileRepository {
         let job_id = Uuid::new_v4();
 
         let row = sqlx::query(
-            r#"
+            r"
             INSERT INTO indexing_jobs (
                 job_id, repository_id, branch, status, 
                 files_processed, chunks_created, commit_sha, started_at
             )
             VALUES ($1, $2, $3, $4, 0, 0, $5, NOW())
             RETURNING *
-            "#,
+            ",
         )
         .bind(job_id)
         .bind(repository_id)
@@ -333,12 +344,12 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.write_pool();
 
         sqlx::query(
-            r#"
+            r"
             UPDATE indexing_jobs
             SET files_processed = files_processed + $2,
                 chunks_created = chunks_created + $3
             WHERE job_id = $1
-            "#,
+            ",
         )
         .bind(job_id)
         .bind(files_processed)
@@ -360,13 +371,13 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.write_pool();
 
         sqlx::query(
-            r#"
+            r"
             UPDATE indexing_jobs
             SET status = $2,
                 completed_at = NOW(),
                 error_message = $3
             WHERE job_id = $1
-            "#,
+            ",
         )
         .bind(job_id)
         .bind(status.to_string())
@@ -378,7 +389,7 @@ impl FileRepository for DbFileRepository {
         // Update project last_indexed timestamp
         if status == JobStatus::Completed {
             sqlx::query(
-                r#"
+                r"
                 UPDATE project_branches
                 SET last_indexed = NOW()
                 WHERE repository_id = (
@@ -387,7 +398,7 @@ impl FileRepository for DbFileRepository {
                 AND branch = (
                     SELECT branch FROM indexing_jobs WHERE job_id = $1
                 )
-                "#,
+                ",
             )
             .bind(job_id)
             .execute(pool)
@@ -408,7 +419,7 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.read_pool();
 
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT 
                 chunk_id, repository_id, branch, file_path,
                 chunk_index, generation, start_line, end_line,
@@ -416,7 +427,7 @@ impl FileRepository for DbFileRepository {
             FROM chunk_metadata
             WHERE repository_id = $1 AND branch = $2 AND file_path = $3
             ORDER BY chunk_index
-            "#,
+            ",
         )
         .bind(repository_id)
         .bind(branch)
@@ -456,12 +467,12 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.read_pool();
 
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT *
             FROM indexed_files
             WHERE repository_id = $1 AND branch = $2
             ORDER BY file_path
-            "#,
+            ",
         )
         .bind(repository_id)
         .bind(branch)
@@ -493,13 +504,13 @@ impl FileRepository for DbFileRepository {
         let pool = self.pools.read_pool();
 
         let row = sqlx::query(
-            r#"
+            r"
             SELECT COUNT(*) as count
             FROM indexing_jobs
             WHERE repository_id = $1 
               AND branch = $2
               AND status IN ('pending', 'running')
-            "#,
+            ",
         )
         .bind(repository_id)
         .bind(branch)

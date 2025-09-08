@@ -34,14 +34,22 @@ pub trait CommonError: std::error::Error + Send + Sync + 'static {
 /// Trait for adding context to errors
 ///
 /// This trait provides a consistent way to add context to errors
-/// across all crates, similar to anyhow's context() but for custom error types.
+/// across all crates, similar to anyhow's `context()` but for custom error types.
 pub trait ErrorContext<T> {
     /// Add context to an error
+    ///
+    /// # Errors
+    ///
+    /// Returns the original error with added context message
     fn context<C>(self, context: C) -> Result<T, String>
     where
         C: fmt::Display + Send + Sync + 'static;
 
     /// Add context with a closure (lazy evaluation)
+    ///
+    /// # Errors
+    ///
+    /// Returns the original error with context from the closure
     fn with_context<C, F>(self, f: F) -> Result<T, String>
     where
         C: fmt::Display + Send + Sync + 'static,
@@ -97,9 +105,9 @@ where
 /// ```
 ///
 /// This will generate:
-/// - From<std::io::Error> -> MyError::Io
-/// - From<serde_json::Error> -> MyError::Serialization (if applicable)
-/// - From<anyhow::Error> -> MyError::Other
+/// - From<std::io::Error> -> `MyError::Io`
+/// - From<`serde_json::Error`> -> `MyError::Serialization` (if applicable)
+/// - From<anyhow::Error> -> `MyError::Other`
 #[macro_export]
 macro_rules! impl_common_conversions {
     ($error_type:ident) => {
@@ -131,7 +139,7 @@ macro_rules! impl_common_conversions {
 /// Macro to define a standard error enum with common variants
 ///
 /// This macro creates an error enum with standard variants and automatically
-/// implements the CommonError trait.
+/// implements the `CommonError` trait.
 ///
 /// # Example
 /// ```no_run
@@ -263,6 +271,9 @@ mod tests {
         let result: Result<(), TestError> = Err(TestError::io_error("original error"));
         let with_context = result.context("while reading file");
         assert!(with_context.is_err());
-        assert!(with_context.unwrap_err().contains("while reading file"));
+        match with_context {
+            Err(e) => assert!(e.contains("while reading file")),
+            Ok(()) => unreachable!("Expected an error but got Ok"),
+        }
     }
 }

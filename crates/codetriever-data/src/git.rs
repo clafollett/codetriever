@@ -7,11 +7,20 @@ use std::path::{Path, PathBuf};
 
 use crate::models::RepositoryContext;
 
-/// Repository identity tuple: (repository_id, optional_url)
+/// Repository identity tuple: (`repository_id`, `optional_url`)
 type RepositoryIdentity = (String, Option<String>);
 
 impl RepositoryContext {
     /// Detect repository context from a given path
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The path is not within a git repository
+    /// - Repository working directory cannot be determined
+    /// - Repository HEAD reference cannot be accessed
+    /// - Git object access fails due to corruption or permissions
+    /// - Repository status check fails
     pub fn detect(path: &Path) -> Result<Self> {
         // Find the repository root
         let repo = Repository::discover(path)
@@ -34,19 +43,18 @@ impl RepositoryContext {
 
         // Get commit information
         let (commit_sha, commit_message, commit_date, author) =
-            if let Ok(commit) = head.peel_to_commit() {
-                let sha = commit.id().to_string();
-                let message = commit.message().map(|s| s.to_string());
+            head.peel_to_commit()
+                .map_or((None, None, None, None), |commit| {
+                    let sha = commit.id().to_string();
+                    let message = commit.message().map(std::string::ToString::to_string);
 
-                let timestamp = commit.time();
-                let commit_date = Utc.timestamp_opt(timestamp.seconds(), 0).single();
+                    let timestamp = commit.time();
+                    let commit_date = Utc.timestamp_opt(timestamp.seconds(), 0).single();
 
-                let author = commit.author().name().map(|s| s.to_string());
+                    let author = commit.author().name().map(std::string::ToString::to_string);
 
-                (Some(sha), message, commit_date, author)
-            } else {
-                (None, None, None, None)
-            };
+                    (Some(sha), message, commit_date, author)
+                });
 
         // Check if working directory is dirty
         let is_dirty = repo
@@ -55,7 +63,7 @@ impl RepositoryContext {
             .any(|s| s.status() != Status::CURRENT);
 
         // Get repository ID from remote or fallback
-        let (repository_id, repository_url) = Self::get_repository_identity(&repo)?;
+        let (repository_id, repository_url) = Self::get_repository_identity(&repo);
 
         Ok(Self {
             repository_id,
@@ -71,13 +79,13 @@ impl RepositoryContext {
     }
 
     /// Get repository identity from Git remote or generate fallback
-    fn get_repository_identity(repo: &Repository) -> Result<RepositoryIdentity> {
+    fn get_repository_identity(repo: &Repository) -> RepositoryIdentity {
         // Try to get origin remote
         if let Ok(origin) = repo.find_remote("origin")
             && let Some(url) = origin.url()
         {
             let normalized = Self::normalize_git_url(url);
-            return Ok((normalized, Some(url.to_string())));
+            return (normalized, Some(url.to_string()));
         }
 
         // Try upstream remote as fallback
@@ -85,7 +93,7 @@ impl RepositoryContext {
             && let Some(url) = upstream.url()
         {
             let normalized = Self::normalize_git_url(url);
-            return Ok((normalized, Some(url.to_string())));
+            return (normalized, Some(url.to_string()));
         }
 
         // Fallback to directory name + username
@@ -100,7 +108,7 @@ impl RepositoryContext {
             .unwrap_or_else(|_| "local".to_string());
 
         let id = format!("local/{user}/{dir_name}");
-        Ok((id, None))
+        (id, None)
     }
 
     /// Normalize various Git URL formats to a consistent ID
@@ -112,16 +120,22 @@ impl RepositoryContext {
         if (normalized.starts_with("https://") || normalized.starts_with("http://"))
             && let Some(proto_end) = normalized.find("://")
         {
+            // Safe: we found "://" at proto_end, so proto_end + 3 is guaranteed in bounds
+            #[allow(clippy::arithmetic_side_effects)]
             let after_proto = &normalized[proto_end + 3..];
             if let Some(at_pos) = after_proto.find('@') {
                 // Check if there's a : before @ (indicating auth)
                 if after_proto[..at_pos].contains(':') {
                     // Reconstruct without auth
-                    normalized = format!(
-                        "{}{}",
-                        &normalized[..proto_end + 3],
-                        &after_proto[at_pos + 1..]
-                    );
+                    // Safe: we found '@' at at_pos, and "://" at proto_end, so both additions are in bounds
+                    #[allow(clippy::arithmetic_side_effects)]
+                    {
+                        normalized = format!(
+                            "{}{}",
+                            &normalized[..proto_end + 3],
+                            &after_proto[at_pos + 1..]
+                        );
+                    }
                 }
             }
         }
@@ -150,11 +164,17 @@ impl RepositoryContext {
     }
 
     /// Convert an absolute path to a relative path from repository root
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The absolute path is not within the repository root directory
     pub fn relativize_path(&self, absolute: &Path) -> Result<String> {
         let relative = absolute.strip_prefix(&self.root_path).with_context(|| {
             format!(
-                "Path {:?} is not within repository root {:?}",
-                absolute, self.root_path
+                "Path {} is not within repository root {}",
+                absolute.display(),
+                self.root_path.display()
             )
         })?;
 

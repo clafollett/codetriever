@@ -257,13 +257,14 @@ async fn search_handler(Json(req): Json<SearchRequest>) -> Json<serde_json::Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestResult;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use serde_json::json;
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn test_search_endpoint_accepts_post_with_query() {
+    async fn test_search_endpoint_accepts_post_with_query() -> TestResult {
         let app = routes();
 
         let request_body = json!({
@@ -277,12 +278,11 @@ mod tests {
                     .method("POST")
                     .uri("/search")
                     .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_string(&request_body).unwrap()))
-                    .unwrap(),
+                    .body(Body::from(serde_json::to_string(&request_body)?))?,
             )
-            .await
-            .unwrap();
+            .await?;
 
         assert_eq!(response.status(), StatusCode::OK);
+        Ok(())
     }
 }

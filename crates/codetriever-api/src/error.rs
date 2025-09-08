@@ -81,7 +81,7 @@ pub enum Error {
     /// the application to function properly.
     ///
     /// Common scenarios:
-    /// - Missing environment variables (e.g., HF_TOKEN for Hugging Face)
+    /// - Missing environment variables (e.g., `HF_TOKEN` for Hugging Face)
     /// - Invalid API keys or credentials
     /// - Misconfigured service endpoints
     /// - Missing required configuration files
@@ -206,6 +206,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 // Standard From implementations using CommonError trait methods
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
-        Error::io_error(err.to_string())
+        Self::io_error(err.to_string())
     }
 }
