@@ -28,9 +28,6 @@ pub enum Error {
     #[error("Storage error: {0}")]
     Storage(String),
 
-    #[error("Qdrant error: {0}")]
-    Qdrant(Box<qdrant_client::QdrantError>),
-
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 }
@@ -64,12 +61,6 @@ impl From<std::io::Error> for Error {
 impl From<anyhow::Error> for Error {
     fn from(e: anyhow::Error) -> Self {
         Error::other_error(e.to_string())
-    }
-}
-
-impl From<qdrant_client::QdrantError> for Error {
-    fn from(e: qdrant_client::QdrantError) -> Self {
-        Error::Qdrant(Box::new(e))
     }
 }
 

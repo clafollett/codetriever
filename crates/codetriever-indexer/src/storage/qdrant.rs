@@ -86,7 +86,7 @@ impl QdrantStorage {
     ///
     /// # Errors
     ///
-    /// Returns `Error::Qdrant` if:
+    /// Returns `Error::Storage` if:
     /// - Cannot connect to Qdrant server
     /// - Collection creation fails
     /// - Server returns error response
@@ -233,7 +233,7 @@ impl VectorStorage for QdrantStorage {
     ///
     /// # Errors
     ///
-    /// Returns `Error::Qdrant` if:
+    /// Returns `Error::Storage` if:
     /// - Vector database is unreachable
     /// - Batch insertion fails
     /// - Invalid vector dimensions
@@ -350,7 +350,7 @@ impl VectorStorage for QdrantStorage {
     ///
     /// # Errors
     ///
-    /// Returns `Error::Qdrant` if:
+    /// Returns `Error::Storage` if:
     /// - The vector database is unreachable
     /// - The query vector has incorrect dimensions (must be 768)
     /// - The collection doesn't exist or is corrupted
