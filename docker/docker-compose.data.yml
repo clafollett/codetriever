@@ -1,3 +1,5 @@
+name: codetriever-data
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -5,15 +7,15 @@ services:
     ports:
       - "5433:5432"
     environment:
-      - POSTGRES_USER=codetriever
-      - POSTGRES_PASSWORD=codetriever
-      - POSTGRES_DB=codetriever
+      - POSTGRES_USER=${DB_USER:-codetriever}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-localdev123}
+      - POSTGRES_DB=${DB_NAME:-codetriever}
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --locale=C
     volumes:
       - ${HOME}/.codetriever/postgres/data:/var/lib/postgresql/data:z
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U codetriever"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-codetriever} -d ${DB_NAME:-codetriever}"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -26,9 +28,13 @@ services:
       - "6334:6334"  # gRPC port (used by Rust client)
     volumes:
       - ${HOME}/.codetriever/qdrant/storage:/qdrant/storage:z
+      # Note: qdrant-config.yaml removed - using env vars for flexibility
     environment:
       - QDRANT__LOG_LEVEL=INFO
       - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-}
+      # API key is optional - if QDRANT_API_KEY is set, auth is required
+      # If not set (empty), no authentication required (for testing)
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6333/"]

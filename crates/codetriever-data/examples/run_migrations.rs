@@ -2,18 +2,21 @@
 //!
 //! Usage: cargo run --example `run_migrations`
 
-use codetriever_data::migrations::setup_database;
+use codetriever_data::config::DatabaseConfig;
+use codetriever_data::pool::initialize_database;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Get database URL from env or use default
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://codetriever:codetriever@localhost:5433/codetriever".to_string()
-    });
+    // Get database configuration from environment variables
+    let config = DatabaseConfig::from_env();
 
-    println!("Setting up database at: {database_url}");
+    // Log connection info WITHOUT password
+    println!(
+        "Setting up database at: {}",
+        config.safe_connection_string()
+    );
 
-    let pool = setup_database(&database_url).await?;
+    let pool = initialize_database(&config).await?;
 
     // Query to verify tables exist
     let tables: Vec<String> = sqlx::query_scalar(

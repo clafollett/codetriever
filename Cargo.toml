@@ -70,6 +70,7 @@ regex = "1.11.1"
 urlencoding = "2.1.3"
 dirs = "6"
 tempfile = "3"
+dotenv = "0.15"
 
 # MCP/Agenterra
 agenterra-rmcp = { version = "0.1.5", features = [

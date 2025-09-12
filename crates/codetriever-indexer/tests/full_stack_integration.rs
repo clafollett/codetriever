@@ -3,8 +3,8 @@
 //! Run with: cargo test --test full_stack_integration -- --test-threads=1
 
 use codetriever_data::{
+    config::DatabaseConfig,
     generate_chunk_id,
-    migrations::setup_database,
     models::{IndexedFile, ProjectBranch},
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
@@ -18,13 +18,18 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-async fn setup_test_db() -> anyhow::Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://codetriever:codetriever@localhost:5433/codetriever_test".to_string()
-    });
+async fn get_connection_pool() -> anyhow::Result<PgPool> {
+    // Initialize environment for tests (loads .env)
+    codetriever_common::initialize_environment();
 
-    // Create test database and run migrations
-    setup_database(&database_url).await
+    // Use DatabaseConfig to get connection details from environment
+    let config = DatabaseConfig::from_env();
+
+    // Just connect to the existing database that was set up by 'just init'
+    // No need for a separate test database
+    let pool = config.create_pool().await?;
+
+    Ok(pool)
 }
 
 async fn cleanup_test_data(pool: &PgPool, repo_id: &str, branch: &str) -> anyhow::Result<()> {
@@ -40,15 +45,13 @@ async fn cleanup_test_data(pool: &PgPool, repo_id: &str, branch: &str) -> anyhow
 #[tokio::test]
 async fn test_full_stack_indexing_with_postgres_and_qdrant() {
     // Setup
-    let pool = setup_test_db()
+    let pool = get_connection_pool()
         .await
         .expect("Failed to setup test database");
     // Create pool manager from the test pool
     let pool_config = PoolConfig::default();
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://codetriever:codetriever@localhost:5433/codetriever_test".to_string()
-    });
-    let pools = PoolManager::new(&database_url, pool_config)
+    let db_config = DatabaseConfig::from_env();
+    let pools = PoolManager::new(&db_config, pool_config)
         .await
         .expect("Failed to create pool manager");
     let repository = Arc::new(DbFileRepository::new(pools));
@@ -76,10 +79,18 @@ fn helper() {
 }
 "#;
 
-    // Clean up any existing test data
+    // Clean up any existing test data first
     cleanup_test_data(&pool, test_repo, test_branch)
         .await
         .expect("Failed to cleanup");
+
+    // Also clean up from indexed_files to force re-indexing
+    sqlx::query("DELETE FROM indexed_files WHERE repository_id = $1 AND branch = $2")
+        .bind(test_repo)
+        .bind(test_branch)
+        .execute(&pool)
+        .await
+        .expect("Failed to cleanup indexed_files");
 
     // Index the file content - using project_id format "repo:branch" for database integration
     let project_id = format!("{test_repo}:{test_branch}");
@@ -304,15 +315,13 @@ fn new_function() {
 #[tokio::test]
 async fn test_uuid_based_chunk_deletion() {
     // Setup
-    let pool = setup_test_db()
+    let pool = get_connection_pool()
         .await
         .expect("Failed to setup test database");
     // Create pool manager from the test pool
     let pool_config = PoolConfig::default();
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://codetriever:codetriever@localhost:5433/codetriever_test".to_string()
-    });
-    let pools = PoolManager::new(&database_url, pool_config)
+    let db_config = DatabaseConfig::from_env();
+    let pools = PoolManager::new(&db_config, pool_config)
         .await
         .expect("Failed to create pool manager");
     let _repository = Arc::new(DbFileRepository::new(pools));

@@ -1,7 +1,9 @@
+name: codetriever-prod
+
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: codetriever-postgres
+    container_name: codetriever-prod-postgres
     ports:
       - "127.0.0.1:5432:5432"  # Only bind to localhost
     environment:
@@ -14,7 +16,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: always
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-codetriever}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-codetriever} -d ${DB_NAME:-codetriever}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -27,7 +29,7 @@ services:
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: codetriever-qdrant
+    container_name: codetriever-prod-qdrant
     ports:
       - "127.0.0.1:6333:6333"  # Only bind to localhost
       - "127.0.0.1:6334:6334"
@@ -35,9 +37,10 @@ services:
       # TODO: Consider external volume management for production (AWS EBS, GCP PD, etc.)
       - qdrant_storage:/qdrant/storage
     environment:
-      - QDRANT__LOG_LEVEL=WARN
+      - QDRANT__LOG_LEVEL=${QDRANT_LOG_LEVEL:-WARN}
       - QDRANT__SERVICE__HTTP_PORT=6333
       - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-}
       - QDRANT__SERVICE__MAX_REQUEST_SIZE_MB=256
       - QDRANT__STORAGE__STORAGE_PATH=/qdrant/storage
       - QDRANT__STORAGE__SNAPSHOTS_PATH=/qdrant/snapshots
@@ -57,16 +60,21 @@ services:
 
   api:
     image: codetriever/api:latest
-    container_name: codetriever-api
+    container_name: codetriever-prod-api
     ports:
       - "127.0.0.1:8080:8080"  # Only bind to localhost
     environment:
       - RUST_LOG=warn
       - RUST_BACKTRACE=1
-      - DATABASE_URL=postgresql://${DB_USER:-codetriever}:${DB_PASSWORD:-changeme}@postgres/${DB_NAME:-codetriever}
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION=codetriever
-      - EMBEDDING_MODEL=jinaai/jina-embeddings-v2-base-code
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-codetriever}
+      - DB_USER=${DB_USER:-codetriever}
+      - DB_PASSWORD=${DB_PASSWORD:-changeme}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-codetriever}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-jinaai/jina-embeddings-v2-base-code}
       - USE_METAL=false
       - MAX_CHUNK_SIZE=512
       - CHUNK_OVERLAP=50
@@ -97,7 +105,7 @@ services:
   # Optional: Nginx reverse proxy for production
   nginx:
     image: nginx:alpine
-    container_name: codetriever-nginx
+    container_name: codetriever-prod-nginx
     ports:
       - "80:80"
       - "443:443"
@@ -113,7 +121,7 @@ services:
 volumes:
   postgres_data:
     driver: local
-  qdrant_data:
+  qdrant_storage:
     driver: local
   api_cache:
     driver: local

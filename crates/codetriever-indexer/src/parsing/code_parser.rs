@@ -50,7 +50,9 @@ fn get_cached_query(language: &Language, query_str: &str) -> Result<Arc<Query>> 
 
     // Check cache first
     {
-        let cache = QUERY_CACHE.lock().unwrap();
+        let cache = QUERY_CACHE
+            .lock()
+            .map_err(|_| crate::Error::Parse("Query cache lock poisoned".to_string()))?;
         if let Some(cached_query) = cache.get(&key) {
             return Ok(cached_query.clone());
         }
@@ -63,7 +65,9 @@ fn get_cached_query(language: &Language, query_str: &str) -> Result<Arc<Query>> 
 
     // Cache the compiled query
     {
-        let mut cache = QUERY_CACHE.lock().unwrap();
+        let mut cache = QUERY_CACHE
+            .lock()
+            .map_err(|_| crate::Error::Parse("Query cache lock poisoned".to_string()))?;
         cache.insert(key, arc_query.clone());
     }
 

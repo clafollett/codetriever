@@ -10,6 +10,9 @@ use codetriever_indexer::{
 
 #[tokio::test]
 async fn test_delete_chunks_removes_points_from_collection() {
+    // Initialize environment to load .env file (includes QDRANT_API_KEY)
+    codetriever_common::initialize_environment();
+
     // This test requires a running Qdrant instance
     // The Rust client uses gRPC port 6334
     let qdrant_url =
@@ -89,6 +92,9 @@ async fn test_delete_chunks_removes_points_from_collection() {
 
 #[tokio::test]
 async fn test_store_and_search_chunks() {
+    // Initialize environment to load .env file (includes QDRANT_API_KEY)
+    codetriever_common::initialize_environment();
+
     let qdrant_url =
         std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
 

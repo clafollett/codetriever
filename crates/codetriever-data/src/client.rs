@@ -29,7 +29,7 @@ impl DataClient {
     /// - Network connectivity issues prevent connection
     pub async fn initialize(config: &DatabaseConfig) -> Result<Self> {
         let pool_config = PoolConfig::default();
-        let pools = PoolManager::new(&config.url, pool_config).await?;
+        let pools = PoolManager::new(config, pool_config).await?;
         Ok(Self::new(pools))
     }
 

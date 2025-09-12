@@ -10,6 +10,9 @@ name = "codetriever"
 path = "src/main.rs"
 
 [dependencies]
+# Local crates
+codetriever-common = { path = "../codetriever-common" }
+
 # From workspace
 agenterra-rmcp = { workspace = true }
 anyhow = { workspace = true }
@@ -38,6 +41,7 @@ tracing-subscriber = { workspace = true }
 urlencoding = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
+dotenv = { workspace = true }
 
 
 [dev-dependencies]

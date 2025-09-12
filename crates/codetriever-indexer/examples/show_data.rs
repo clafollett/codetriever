@@ -1,7 +1,7 @@
 //! Example to index data and show what's stored in PostgreSQL and Qdrant
 
 use codetriever_data::{
-    migrations::setup_database,
+    config::DatabaseConfig,
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
 };
@@ -26,12 +26,11 @@ type ChunkRow = (
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Setup database
-    let database_url = "postgresql://codetriever:codetriever@localhost:5433/codetriever";
-    let _pool = setup_database(database_url).await?;
+    // Setup database from environment
+    let db_config = DatabaseConfig::from_env();
 
-    // Create pool manager
-    let pools = PoolManager::new(database_url, PoolConfig::default()).await?;
+    // Create pool manager (this will create the connection pool)
+    let pools = PoolManager::new(&db_config, PoolConfig::default()).await?;
     let repository = Arc::new(DbFileRepository::new(pools.clone()));
 
     // Setup Qdrant

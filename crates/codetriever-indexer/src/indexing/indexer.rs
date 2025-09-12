@@ -395,11 +395,9 @@ impl Indexer {
             .generate_embeddings(vec![query])
             .await?;
 
-        if embeddings.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let query_embedding = embeddings.into_iter().next().unwrap();
+        let query_embedding = embeddings.into_iter().next().ok_or_else(|| {
+            crate::Error::Embedding("Failed to generate query embedding".to_string())
+        })?;
 
         // Search in Qdrant if storage is configured
         if let Some(ref storage) = self.storage {

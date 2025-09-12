@@ -1,33 +1,37 @@
+name: codetriever-dev
+
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: codetriever-postgres
+    container_name: codetriever-dev-postgres
     ports:
       - "5433:5432"
     environment:
-      - POSTGRES_USER=codetriever
-      - POSTGRES_PASSWORD=codetriever
-      - POSTGRES_DB=codetriever
+      - POSTGRES_USER=${DB_USER:-codetriever}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-localdev123}
+      - POSTGRES_DB=${DB_NAME:-codetriever}
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --locale=C
     volumes:
       - ${HOME}/.codetriever/postgres/data:/var/lib/postgresql/data:z
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U codetriever"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-codetriever} -d ${DB_NAME:-codetriever}"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: codetriever-qdrant
+    container_name: codetriever-dev-qdrant
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
       - ${HOME}/.codetriever/qdrant/storage:/qdrant/storage:z
     environment:
-      - QDRANT__LOG_LEVEL=INFO
+      - QDRANT__LOG_LEVEL=${QDRANT_LOG_LEVEL:-INFO}
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6333/"]
@@ -39,15 +43,20 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
-    container_name: codetriever-api
+    container_name: codetriever-dev-api
     ports:
       - "8080:8080"
     environment:
-      - RUST_LOG=info
-      - DATABASE_URL=postgresql://codetriever:codetriever@postgres/codetriever
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION=codetriever
-      - EMBEDDING_MODEL=jinaai/jina-embeddings-v2-base-code
+      - RUST_LOG=${RUST_LOG:-info}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-codetriever}
+      - DB_USER=${DB_USER:-codetriever}
+      - DB_PASSWORD=${DB_PASSWORD:-localdev123}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-codetriever}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-jinaai/jina-embeddings-v2-base-code}
       - USE_METAL=false  # Metal not available in Docker
     volumes:
       - ${HOME}/.codetriever/cache:/app/cache

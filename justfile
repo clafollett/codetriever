@@ -16,8 +16,21 @@ default:
 dev-setup:
     @echo "🚀 Setting up Codetriever development environment..."
     @just install-deps
+    @just setup-env
     @just setup-git-hooks
     @echo "✅ Development environment ready!"
+
+# Setup environment file if not exists
+setup-env:
+    @if [ ! -f .env ]; then \
+        echo "📝 Creating .env file from template..."; \
+        cp .env.sample .env; \
+        echo "⚠️  Please edit .env with your database credentials"; \
+        echo "   Default development credentials are provided for local use only"; \
+        echo "   NEVER use default credentials in production!"; \
+    else \
+        echo "✅ .env file already exists"; \
+    fi
 
 # Install required dependencies
 install-deps:
@@ -46,29 +59,36 @@ setup-git-hooks:
 # Docker Infrastructure
 # ========================
 
+# Environment selection (defaults to 'data' for local development)
+# Valid values: data, dev, prod
+ENV := env_var_or_default("CODETRIEVER_ENV", "data")
+
 # Start all services (PostgreSQL + Qdrant)
 docker-up:
-    @echo "🚀 Starting Docker services..."
-    @docker-compose -f docker/docker-compose.data.yml up -d
+    @echo "🚀 Starting Docker services ({{ENV}} environment)..."
+    @docker-compose -f docker/docker-compose.{{ENV}}.yml up -d
     @sleep 3
-    @echo "✅ PostgreSQL ready on port 5433"
-    @echo "✅ Qdrant ready on http://localhost:6334"
+    @echo "✅ Services started for {{ENV}} environment"
+    @if [ "{{ENV}}" = "data" ]; then \
+        echo "✅ PostgreSQL ready on port 5433"; \
+        echo "✅ Qdrant ready on http://localhost:6334"; \
+    fi
 
 # Stop all services
 docker-down:
-    @echo "🛑 Stopping Docker services..."
-    @docker-compose -f docker/docker-compose.data.yml stop
+    @echo "🛑 Stopping Docker services ({{ENV}} environment)..."
+    @docker-compose -f docker/docker-compose.{{ENV}}.yml stop
     @echo "✅ Services stopped"
 
 # Remove containers and volumes (full reset)
 docker-reset:
-    @echo "🗑️ Resetting Docker environment..."
-    @docker-compose -f docker/docker-compose.data.yml down -v
+    @echo "🗑️ Resetting Docker environment ({{ENV}} environment)..."
+    @docker-compose -f docker/docker-compose.{{ENV}}.yml down -v
     @echo "✅ Docker environment reset"
 
 # View service logs
 docker-logs:
-    @docker-compose -f docker/docker-compose.data.yml logs -f
+    @docker-compose -f docker/docker-compose.{{ENV}}.yml logs -f
 
 # ========================
 # Database Management
@@ -77,9 +97,20 @@ docker-logs:
 # Initialize database schema
 db-setup: docker-up
     @echo "🔧 Setting up database..."
-    @DATABASE_URL="${DATABASE_URL:-postgresql://codetriever:codetriever@localhost:5433/codetriever?sslmode=disable}" \
-        cargo run -p codetriever-data --example run_migrations
-    @echo "✅ Database ready"
+    @if [ ! -f .env ]; then \
+        echo "❌ No .env file found. Please create one:"; \
+        echo "   cp .env.sample .env"; \
+        echo "   Then edit .env with your database credentials"; \
+        exit 1; \
+    fi
+    @echo "📋 Loading database configuration from .env..."
+    @echo "   DB_HOST=${DB_HOST}"
+    @echo "   DB_PORT=${DB_PORT}"
+    @echo "   DB_NAME=${DB_NAME}"
+    @echo "   DB_USER=${DB_USER}"
+    @echo "🔧 Running database migrations..."
+    cargo run -p codetriever-data --example run_migrations
+    @echo "✅ Database setup complete"
 
 # Run migrations
 db-migrate: db-setup
@@ -186,6 +217,84 @@ stats:
     @grep -r "#\[test\]" --include="*.rs" crates | wc -l || echo "0"
 
 # ========================
+# Deployment Commands
+# ========================
+
+# Check if any codetriever containers are running
+check-running:
+    @if docker ps --format '{{ "{{.Names}}" }}' | grep -q '^codetriever-'; then \
+        echo "⚠️  WARNING: Codetriever containers are already running:"; \
+        docker ps --filter "name=codetriever-" --format 'table {{ "{{.Names}}" }}\t{{ "{{.Status}}" }}'; \
+        echo ""; \
+        echo "❌ Please stop existing environment first with:"; \
+        echo "   just docker-down  (for data environment)"; \
+        echo "   just stop-dev     (for dev environment)"; \
+        echo "   just stop-prod    (for prod environment)"; \
+        exit 1; \
+    fi
+
+# Deploy development environment
+deploy-dev: check-running
+    @echo "🚀 Deploying development environment..."
+    @docker-compose -f docker/docker-compose.dev.yml up -d
+    @sleep 3
+    @echo "✅ Development environment deployed"
+
+# Build Docker image for API
+build-docker:
+    @echo "🔨 Building Docker image for API..."
+    @docker build -f docker/Dockerfile.api -t codetriever/api:latest .
+    @echo "✅ Docker image built: codetriever/api:latest"
+
+# Deploy production environment
+deploy-prod: check-running build-docker
+    @echo "🚀 Deploying production environment..."
+    @echo "⚠️  WARNING: Using production configuration"
+    @echo "⚠️  Ensure all environment variables are properly set!"
+    @docker-compose -f docker/docker-compose.prod.yml up -d
+    @sleep 3
+    @echo "✅ Production environment deployed"
+
+# Stop development environment
+stop-dev:
+    @echo "🛑 Stopping development environment..."
+    @docker-compose -f docker/docker-compose.dev.yml stop
+
+# Stop production environment  
+stop-prod:
+    @echo "⚠️  Stopping production environment..."
+    @docker-compose -f docker/docker-compose.prod.yml stop
+
+# Stop all Codetriever containers regardless of environment
+stop-all:
+    @echo "🛑 Stopping all Codetriever containers..."
+    @docker ps -q --filter "name=codetriever-" | xargs -r docker stop 2>/dev/null || true
+    @echo "✅ All containers stopped"
+
+# Show status of all environments
+status:
+    @echo "📊 Container Status:"
+    @docker ps --filter "name=codetriever-" --format 'table {{ "{{.Names}}" }}\t{{ "{{.Status}}" }}\t{{ "{{.Ports}}" }}'
+
+# Switch environments (stops current, starts new)
+switch env:
+    @echo "🔄 Switching to {{env}} environment..."
+    @echo "Stopping current containers..."
+    @docker stop $(docker ps -q --filter "name=codetriever-") 2>/dev/null || true
+    @echo "Starting {{env}} environment..."
+    @if [ "{{env}}" = "dev" ]; then \
+        just deploy-dev; \
+    elif [ "{{env}}" = "prod" ]; then \
+        just deploy-prod; \
+    elif [ "{{env}}" = "data" ]; then \
+        just docker-up; \
+    else \
+        echo "❌ Unknown environment: {{env}}"; \
+        echo "   Valid options: data, dev, prod"; \
+        exit 1; \
+    fi
+
+# ========================
 # Common Workflows
 # ========================
 
@@ -202,7 +311,7 @@ ci: fmt lint test build
     @echo "✅ CI pipeline passed!"
 
 # Development mode with auto-reload
-dev: docker-up
+dev: deploy-dev
     @echo "🚀 Starting development mode..."
     cargo watch -x "run --bin codetriever-api"
 
@@ -220,11 +329,40 @@ audit:
     @echo "🔒 Running security audit..."
     cargo audit || echo "⚠️ Run 'cargo install cargo-audit' if not installed"
 
+# Check Qdrant status
+qdrant-status:
+    @echo "🔍 Checking Qdrant status..."
+    @curl -s http://localhost:6333/ | python3 -m json.tool 2>/dev/null || echo "Qdrant not responding on port 6333"
+
+# Check PostgreSQL test data
+db-check-test-data:
+    @echo "🔍 Checking for test data in PostgreSQL..."
+    @echo "Tables with 'test' in repository_id:"
+    @echo ""
+    @echo "project_branches:"
+    @PGPASSWORD=${DB_PASSWORD} psql -h localhost -p 5433 -U ${DB_USER} -d ${DB_NAME} -c "SELECT repository_id, branch FROM project_branches WHERE repository_id LIKE '%test%';" 2>/dev/null || echo "No test data or connection error"
+    @echo ""
+    @echo "indexed_files:"
+    @PGPASSWORD=${DB_PASSWORD} psql -h localhost -p 5433 -U ${DB_USER} -d ${DB_NAME} -c "SELECT repository_id, branch, file_path FROM indexed_files WHERE repository_id LIKE '%test%';" 2>/dev/null || echo "No test data or connection error"
+    @echo ""
+    @echo "chunk_metadata (count):"
+    @PGPASSWORD=${DB_PASSWORD} psql -h localhost -p 5433 -U ${DB_USER} -d ${DB_NAME} -c "SELECT repository_id, COUNT(*) as chunk_count FROM chunk_metadata WHERE repository_id LIKE '%test%' GROUP BY repository_id;" 2>/dev/null || echo "No test data or connection error"
+
+# Clean up PostgreSQL test data
+db-clean-test-data:
+    @echo "🧹 Cleaning test data from PostgreSQL..."
+    @PGPASSWORD=${DB_PASSWORD} psql -h localhost -p 5433 -U ${DB_USER} -d ${DB_NAME} -c "DELETE FROM project_branches WHERE repository_id LIKE '%test%';" 2>/dev/null || echo "No test data to clean or connection error"
+    @echo "✅ Test data cleaned from PostgreSQL"
+
+# List Qdrant collections
+qdrant-list:
+    @echo "📋 Listing Qdrant collections..."
+    @curl -H "api-key: ${QDRANT_API_KEY}" http://localhost:6333/collections
+
 # Clean Qdrant test collections
 clean-test-data:
     @echo "🧹 Cleaning test collections..."
-    @curl -s http://localhost:6334/collections | \
-        jq -r '.result.collections[].name' | \
-        grep '^test_' | \
-        xargs -I {} curl -X DELETE "http://localhost:6334/collections/{}" 2>/dev/null || true
+    @curl -s -H "api-key: ${QDRANT_API_KEY}" http://localhost:6334/collections | \
+        python3 -c "import sys, json; data = json.load(sys.stdin); [print(c['name']) for c in data.get('result', {}).get('collections', []) if c['name'].startswith('test_')]" | \
+        xargs -I {} curl -X DELETE -H "api-key: ${QDRANT_API_KEY}" "http://localhost:6334/collections/{}" 2>/dev/null || true
     @echo "✅ Test data cleaned"

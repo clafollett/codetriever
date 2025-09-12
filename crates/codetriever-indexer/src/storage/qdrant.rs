@@ -106,7 +106,16 @@ impl QdrantStorage {
         // Connect to Qdrant server
         // Note: The message "Failed to obtain server version" is expected and can be ignored
         // as it's just a compatibility check that may fail with certain network configurations
-        let client = Qdrant::from_url(&url)
+
+        // Check for API key from environment
+        let mut builder = Qdrant::from_url(&url);
+
+        // If QDRANT_API_KEY is set, use it for authentication
+        if let Ok(api_key) = std::env::var("QDRANT_API_KEY") {
+            builder = builder.api_key(api_key);
+        }
+
+        let client = builder
             .build()
             .map_err(|e| Error::Storage(format!("Failed to create Qdrant client: {e}")))?;
 

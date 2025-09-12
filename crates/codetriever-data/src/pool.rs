@@ -1,7 +1,7 @@
 //! Database connection pool management
 
 use anyhow::{Context, Result};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::PgPool;
 
 use crate::config::DatabaseConfig;
 use crate::migrations::run_migrations;
@@ -11,22 +11,16 @@ use crate::migrations::run_migrations;
 /// # Errors
 ///
 /// Returns an error if:
-/// - Database URL in config is malformed or invalid
+/// - Database connection parameters are invalid
 /// - Database server is unreachable or refuses connections
 /// - Authentication credentials are invalid
 /// - Connection timeout is exceeded
 /// - Pool configuration parameters are invalid
 pub async fn create_pool(config: &DatabaseConfig) -> Result<PgPool> {
-    let pool = PgPoolOptions::new()
-        .max_connections(config.max_connections)
-        .min_connections(config.min_connections)
-        .acquire_timeout(config.connect_timeout)
-        .idle_timeout(config.idle_timeout)
-        .connect(&config.url)
+    config
+        .create_pool()
         .await
-        .context("Failed to create database pool")?;
-
-    Ok(pool)
+        .context("Failed to create database pool")
 }
 
 /// Initialize database (create pool and run migrations)

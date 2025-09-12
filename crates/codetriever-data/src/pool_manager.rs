@@ -3,10 +3,10 @@
 //! This module provides separated connection pools for different operation types,
 //! improving database performance and preventing resource contention.
 
+use crate::config::DatabaseConfig;
 use anyhow::{Context, Result};
 use sqlx::PgPool;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::str::FromStr;
+use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
 /// Extension trait for saturating cast from usize to u32
@@ -77,9 +77,8 @@ impl PoolManager {
     /// - Authentication fails due to invalid credentials
     /// - Any of the three connection pools (write, read, analytics) fail to connect
     /// - Connection timeout is exceeded for any pool
-    pub async fn new(database_url: &str, config: PoolConfig) -> Result<Self> {
-        let base_options =
-            PgConnectOptions::from_str(database_url)?.application_name("codetriever");
+    pub async fn new(db_config: &DatabaseConfig, config: PoolConfig) -> Result<Self> {
+        let base_options = db_config.connect_options().application_name("codetriever");
 
         // Create write pool - smaller, for transactional operations
         let write_pool = PgPoolOptions::new()
@@ -144,10 +143,8 @@ impl PoolManager {
     /// - Database URL from environment is malformed
     /// - Pool creation fails (see `new` method errors)
     pub async fn from_env() -> Result<Self> {
-        let database_url =
-            std::env::var("DATABASE_URL").context("DATABASE_URL environment variable not set")?;
-
-        Self::new(&database_url, PoolConfig::default()).await
+        let db_config = DatabaseConfig::from_env();
+        Self::new(&db_config, PoolConfig::default()).await
     }
 
     /// Get pool statistics

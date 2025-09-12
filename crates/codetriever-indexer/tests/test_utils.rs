@@ -43,6 +43,9 @@ pub fn skip_without_hf_token() -> Option<()> {
 /// Create a test storage instance with a unique collection name
 #[allow(unused)]
 pub async fn create_test_storage(test_name: &str) -> Result<QdrantStorage, String> {
+    // Initialize environment to load .env file (includes QDRANT_API_KEY)
+    codetriever_common::initialize_environment();
+
     QdrantStorage::new(test_qdrant_url(), test_collection_name(test_name))
         .await
         .map_err(|e| format!("Failed to create storage: {e}"))

@@ -9,6 +9,7 @@ pub mod embedding;
 pub mod error;
 pub mod indexing;
 pub mod parsing;
+pub mod security;
 pub mod storage;
 
 // Re-export error types

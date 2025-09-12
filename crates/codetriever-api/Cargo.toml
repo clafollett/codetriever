@@ -12,8 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Local crates
-codetriever-indexer = { path = "../codetriever-indexer" }
 codetriever-common = { path = "../codetriever-common" }
+codetriever-indexer = { path = "../codetriever-indexer" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -44,6 +44,7 @@ lazy_static = "1.5.0"
 bytes = "1"
 uuid = { workspace = true }
 chrono = { workspace = true }
+dotenv = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }

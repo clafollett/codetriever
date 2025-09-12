@@ -10,6 +10,9 @@ repository.workspace = true
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true, optional = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+dotenv = { workspace = true }
 
 [lints]
 workspace = true

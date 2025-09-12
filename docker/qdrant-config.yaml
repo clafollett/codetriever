@@ -1,0 +1,39 @@
+# Qdrant Configuration
+# Mount this file into the container at /qdrant/config/config.yaml
+# Note: API key authentication is optional - only enabled if QDRANT_API_KEY is set
+
+service:
+  # API key for authentication (optional - comment out for local development)
+  # api_key: ${QDRANT_API_KEY}
+  
+  # Enable TLS for encrypted connections
+  enable_tls: false  # Set to true and provide certs for production
+  
+  # Restrict to localhost only (uncomment for local-only access)
+  # host: 127.0.0.1
+  
+  # CORS settings (restrict origins in production)
+  cors_allowed_origins:
+    - http://localhost:3000
+    - http://localhost:8080
+
+  # Rate limiting (prevent abuse)
+  max_request_size: 10485760  # 10MB
+  max_workers: 4
+
+# Security settings
+security:
+  # Read-only mode (set to true to prevent modifications)
+  read_only_api: false
+  
+  # Disable telemetry for privacy
+  telemetry_disabled: true
+
+# Performance limits (prevent resource exhaustion)
+storage:
+  # Maximum number of vectors per segment
+  max_vector_size: 100000
+  
+  # Maximum payload size
+  max_payload_size: 1048576  # 1MB
+

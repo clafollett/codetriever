@@ -11,6 +11,9 @@ type MainResult = Result<(), Box<dyn std::error::Error>>;
 
 #[tokio::main]
 async fn main() -> MainResult {
+    // Initialize environment (load .env, etc.)
+    codetriever_common::initialize_environment();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

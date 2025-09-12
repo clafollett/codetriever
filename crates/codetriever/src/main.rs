@@ -57,6 +57,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> MainResult {
+    // Initialize environment (load .env, etc.)
+    codetriever_common::initialize_environment();
+
     debug!("[codetriever MCP] main() reached ===");
 
     // Parse command line arguments
