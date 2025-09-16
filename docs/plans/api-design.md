@@ -301,7 +301,51 @@ All endpoints return consistent errors:
 
 ## Authentication
 
+### Current State
 None required - local-only by design.
+
+### Future Authentication Plans
+
+When exposing the API beyond localhost, implement progressive security:
+
+#### Phase 1: API Keys (Simple)
+```typescript
+// Request header
+Authorization: Bearer ct_1234567890abcdef
+
+// Environment config
+CODETRIEVER_API_KEYS=ct_key1,ct_key2,ct_key3
+```
+
+#### Phase 2: User-Based Auth (Multi-tenant)
+```typescript
+// JWT-based authentication
+{
+  user_id: string,
+  workspace_id: string,
+  permissions: ["read", "write", "admin"],
+  expires_at: number
+}
+```
+
+#### Phase 3: Rate Limiting Per Key
+```typescript
+// Per-key limits
+{
+  api_key: string,
+  limits: {
+    searches_per_minute: 100,
+    indexes_per_hour: 10,
+    max_chunk_size: 1000
+  }
+}
+```
+
+### Implementation Strategy
+1. **Middleware-based** - Pluggable auth layer
+2. **Optional by default** - No auth for local development
+3. **Environment-driven** - Enable via CODETRIEVER_AUTH_ENABLED
+4. **Backward compatible** - Existing local setups keep working
 
 ## Future Extensions
 
