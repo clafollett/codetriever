@@ -42,8 +42,10 @@ Cosine similarity: 0.98 (very similar!)
 
 ## Architecture Decisions
 
-### Unified CLI/MCP Interface
-Every CLI command is also an MCP tool. One codebase, two interfaces:
+### Unified CLI/MCP Interface (In Progress)
+**Current Status:** MCP server is fully implemented with 9 tools via Agenterra scaffolding. CLI interface is planned but not yet implemented.
+
+**Architecture:** MCP tools are auto-generated handlers that proxy to HTTP API endpoints. This same API will be called by future CLI commands.
 
 ```rust
 // Core function
@@ -74,23 +76,24 @@ fn cli_index(args: IndexArgs) -> Result<IndexStats> {
 }
 ```
 
-### Embedded File Watcher
-MCP server includes file watcher - no separate process needed:
+### File Watcher (TODO - Future Implementation)
+**Current Status:** Not yet implemented. File watching is planned but currently exists as a stub.
 
 ```rust
+// PLANNED: MCP server will include file watcher
 fn main() {
     // 1. Load vector DB
     let db = load_vectors("./codetriever.db");
-    
-    // 2. Start watcher in background
-    thread::spawn(|| {
-        watch_files(|path| {
-            if is_code_file(path) {
-                queue_incremental_index(path);
-            }
-        });
-    });
-    
+
+    // 2. TODO: Start watcher in background
+    // thread::spawn(|| {
+    //     watch_files(|path| {
+    //         if is_code_file(path) {
+    //             queue_incremental_index(path);
+    //         }
+    //     });
+    // });
+
     // 3. Serve MCP requests
     mcp_server.listen();
 }
@@ -112,6 +115,25 @@ on_file_change(path) {
     }
 }
 ```
+
+## Current Implementation Status
+
+### ✅ Fully Implemented
+- **MCP Server:** 9 tools (search, index, find_similar, find_usages, get_context, get_status, get_stats, clean, compact)
+- **Indexing Pipeline:** Complete with Tree-sitter parsing, smart chunking, Jina embeddings
+- **Storage Layer:** PostgreSQL for metadata, Qdrant for vectors
+- **Docker Infrastructure:** Multi-service architecture with docker-compose
+- **API Server:** Axum-based HTTP server with routing
+- **Index Endpoint:** Fully connected to indexer service
+
+### 🚧 Partially Implemented
+- **Search Endpoint:** Stub returns empty results
+- **Other API Endpoints:** Routes exist but not wired to business logic
+
+### ❌ Not Implemented
+- **CLI Interface:** No CLI commands (only MCP server)
+- **File Watching:** Complete TODO/stub
+- **Most API Business Logic:** Needs implementation
 
 ## Component Breakdown
 
@@ -136,10 +158,11 @@ on_file_change(path) {
 - Rich features: filtering, payloads, snapshots
 - Runs as Docker service for easy deployment
 
-### File Watcher
-- fsnotify for cross-platform monitoring
-- Debounced updates (500ms default)
-- Ignores non-code files (.git, node_modules, etc.)
+### File Watcher (TODO)
+- **Status:** Not implemented - exists as empty stub
+- **Planned:** fsnotify for cross-platform monitoring
+- **Planned:** Debounced updates (500ms default)
+- **Planned:** Ignores non-code files (.git, node_modules, etc.)
 
 ### MCP Server
 - Runs continuously when editor starts
