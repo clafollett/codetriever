@@ -131,8 +131,7 @@ curl -X POST http://localhost:3000/index \
     "files": [
       {
         "path": "src/main.rs",
-        "content": "fn main() { println!(\"Hello\"); }",
-        "hash": "abc123"
+        "content": "fn main() { println!(\"Hello\"); }"
       }
     ]
   }'

@@ -46,6 +46,9 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 dotenv = { workspace = true }
 
+# Cryptography
+sha2 = "0.10"
+
 [dev-dependencies]
 tower = { workspace = true }
 codetriever-indexer = { path = "../codetriever-indexer", features = ["test-utils"] }

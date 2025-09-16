@@ -37,7 +37,6 @@ pub struct IndexRequest {
 pub struct FileContent {
     pub path: String,
     pub content: String,
-    pub hash: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -71,14 +70,23 @@ async fn index_handler(
     State(indexer): State<IndexerServiceHandle>,
     Json(request): Json<IndexRequest>,
 ) -> impl IntoResponse {
-    // Convert API FileContent to indexer FileContent
+    use sha2::{Digest, Sha256};
+
+    // Convert API FileContent to indexer FileContent, calculating hash from content
     let files = request
         .files
         .into_iter()
-        .map(|f| codetriever_indexer::indexing::service::FileContent {
-            path: f.path,
-            content: f.content,
-            hash: f.hash,
+        .map(|f| {
+            // Calculate SHA256 hash of content
+            let mut hasher = Sha256::new();
+            hasher.update(&f.content);
+            let hash = format!("{:x}", hasher.finalize());
+
+            codetriever_indexer::indexing::service::FileContent {
+                path: f.path,
+                content: f.content,
+                hash,
+            }
         })
         .collect();
 
@@ -119,13 +127,11 @@ mod tests {
             "files": [
                 {
                     "path": "src/main.rs",
-                    "content": "fn main() {\n    println!(\"Hello\");\n}",
-                    "hash": "abc123"
+                    "content": "fn main() {\n    println!(\"Hello\");\n}"
                 },
                 {
-                    "path": "src/lib.rs", 
-                    "content": "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}",
-                    "hash": "def456"
+                    "path": "src/lib.rs",
+                    "content": "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}"
                 }
             ]
         }"#;
@@ -161,8 +167,8 @@ mod tests {
         let request_body = r#"{
             "project_id": "test-project",
             "files": [
-                {"path": "file1.rs", "content": "fn main() {}", "hash": "abc123"},
-                {"path": "file2.rs", "content": "fn test() {}", "hash": "def456"}
+                {"path": "file1.rs", "content": "fn main() {}"},
+                {"path": "file2.rs", "content": "fn test() {}"}
             ]
         }"#;
 
@@ -237,7 +243,7 @@ mod tests {
         let request_body = r#"{
             "project_id": "test-project",
             "files": [
-                {"path": "file.rs", "content": "", "hash": "empty"}
+                {"path": "file.rs", "content": ""}
             ]
         }"#;
 
@@ -271,9 +277,9 @@ mod tests {
         let request_body = r#"{
             "project_id": "test-project",
             "files": [
-                {"path": "file1.rs", "content": "code1", "hash": "h1"},
-                {"path": "file2.rs", "content": "code2", "hash": "h2"},
-                {"path": "file3.rs", "content": "code3", "hash": "h3"}
+                {"path": "file1.rs", "content": "code1"},
+                {"path": "file2.rs", "content": "code2"},
+                {"path": "file3.rs", "content": "code3"}
             ]
         }"#;
 
@@ -325,7 +331,7 @@ mod tests {
         let request_body = r#"{
             "project_id": "test-project",
             "files": [
-                {"path": "file.py", "content": "def hello(): pass", "hash": "abc"}
+                {"path": "file.py", "content": "def hello(): pass"}
             ]
         }"#;
 
@@ -357,7 +363,7 @@ mod tests {
         let request_body = r#"{
             "project_id": "test-project",
             "files": [
-                {"path": "file.rs", "content": "code", "hash": "h1"}
+                {"path": "file.rs", "content": "code"}
             ]
         }"#;
 
