@@ -635,4 +635,52 @@ impl FileRepository for DbFileRepository {
             }))
         })
     }
+
+    async fn get_project_branches(
+        &self,
+        repo_branches: &[(String, String)],
+    ) -> Result<Vec<ProjectBranch>> {
+        if repo_branches.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let pool = self.pools.read_pool();
+
+        // Build parameterized query for batch fetch
+        let mut query_builder = sqlx::QueryBuilder::new(
+            "SELECT repository_id, branch, repository_url, first_seen, last_indexed
+             FROM project_branches WHERE ",
+        );
+
+        query_builder.push("(repository_id, branch) IN (");
+        let mut separated = query_builder.separated(", ");
+        for (repo_id, branch) in repo_branches {
+            separated
+                .push("(")
+                .push_bind(repo_id)
+                .push(", ")
+                .push_bind(branch)
+                .push(")");
+        }
+        query_builder.push(")");
+
+        let rows = query_builder
+            .build()
+            .fetch_all(pool)
+            .await
+            .context("Failed to batch fetch project branches")?;
+
+        let branches = rows
+            .into_iter()
+            .map(|row| ProjectBranch {
+                repository_id: row.get("repository_id"),
+                branch: row.get("branch"),
+                repository_url: row.get("repository_url"),
+                first_seen: row.get("first_seen"),
+                last_indexed: row.get("last_indexed"),
+            })
+            .collect();
+
+        Ok(branches)
+    }
 }

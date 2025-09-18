@@ -6,95 +6,103 @@ use tokio::sync::Mutex;
 
 use super::{RepositoryMetadata, SearchProvider, SearchResult};
 use crate::{Indexer, Result};
-use codetriever_data::{DataClient, FileRepository};
+use codetriever_data::{DataClient, FileRepository, ProjectBranch};
 
-/// API search service that uses the indexer
-pub struct ApiSearchService {
+// Type aliases to simplify complex types
+type RepoBranchPairs = Vec<(String, String)>;
+type ProjectBranchMap = std::collections::HashMap<(String, String), ProjectBranch>;
+
+/// Search service that provides semantic code search with optional repository metadata
+/// This is the unified search service that works with or without database integration
+pub struct SearchService {
     indexer: Arc<Mutex<Indexer>>,
+    db_client: Option<Arc<DataClient>>,
 }
 
-impl ApiSearchService {
-    /// Create a new search service
-    pub fn new() -> Self {
+impl SearchService {
+    /// Create a new search service with database integration
+    pub fn new(indexer: Arc<Mutex<Indexer>>, db_client: Arc<DataClient>) -> Self {
         Self {
-            indexer: Arc::new(Mutex::new(Indexer::new())),
+            indexer,
+            db_client: Some(db_client),
         }
     }
 
-    /// Create with existing indexer
-    pub fn with_indexer(indexer: Arc<Mutex<Indexer>>) -> Self {
-        Self { indexer }
-    }
-}
-
-impl Default for ApiSearchService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl SearchProvider for ApiSearchService {
-    async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        let mut indexer = self.indexer.lock().await;
-        // Now indexer.search returns Vec<SearchResult> with actual scores!
-        indexer.search(query, limit).await
-    }
-}
-
-/// Enhanced search service that enriches results with database metadata
-pub struct EnhancedSearchService {
-    indexer: Arc<Mutex<Indexer>>,
-    db_client: Arc<DataClient>,
-}
-
-impl EnhancedSearchService {
-    /// Create a new enhanced search service
-    pub fn new(indexer: Arc<Mutex<Indexer>>, db_client: Arc<DataClient>) -> Self {
-        Self { indexer, db_client }
+    /// Create a search service without database integration (for dev/testing)
+    pub fn without_database(indexer: Arc<Mutex<Indexer>>) -> Self {
+        Self {
+            indexer,
+            db_client: None,
+        }
     }
 
-    /// Enrich search results with repository metadata from database
+    /// Enrich search results with repository metadata from database (if available)
     async fn enrich_with_metadata(
         &self,
         mut results: Vec<SearchResult>,
     ) -> Result<Vec<SearchResult>> {
+        // If no database client, return results without metadata enrichment
+        let db_client = match &self.db_client {
+            Some(client) => client,
+            None => return Ok(results),
+        };
+
         // Extract unique file paths from results
         let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
 
         // Batch query database for file metadata
-        let files_metadata = self
-            .db_client
-            .repository()
-            .get_files_metadata(&file_paths)
-            .await?;
+        let files_metadata = match db_client.repository().get_files_metadata(&file_paths).await {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                // Database unavailable - return results without metadata
+                return Ok(results);
+            }
+        };
 
-        // Create a lookup map for efficient metadata retrieval
-        let mut metadata_map = std::collections::HashMap::new();
-        for file in files_metadata {
-            // Also fetch project branch info for repository URL
-            if let Ok(Some(project_branch)) = self
-                .db_client
-                .repository()
-                .get_project_branch(&file.repository_id, &file.branch)
-                .await
-            {
+        // Extract unique repository/branch combinations for batch query
+        let mut repo_branch_pairs = std::collections::HashSet::new();
+        for file in &files_metadata {
+            repo_branch_pairs.insert((file.repository_id.clone(), file.branch.clone()));
+        }
+
+        // Batch fetch all project branches in a single query
+        let repo_branches: RepoBranchPairs = repo_branch_pairs.into_iter().collect();
+        let project_branches = db_client
+            .repository()
+            .get_project_branches(&repo_branches)
+            .await
+            .unwrap_or_default(); // Database error - continue without project info
+
+        // Create lookup map for project branches
+        let project_branch_map: ProjectBranchMap = project_branches
+            .into_iter()
+            .map(|pb| ((pb.repository_id.clone(), pb.branch.clone()), pb))
+            .collect();
+
+        // Create metadata map with batched project branch data
+        let metadata_map: std::collections::HashMap<String, RepositoryMetadata> = files_metadata
+            .into_iter()
+            .map(|file| {
+                let project_key = (file.repository_id.clone(), file.branch.clone());
+                let project_branch = project_branch_map.get(&project_key);
+
                 let repo_metadata = RepositoryMetadata {
-                    repository_id: file.repository_id.clone(),
-                    repository_url: project_branch.repository_url,
-                    branch: file.branch.clone(),
+                    repository_id: file.repository_id,
+                    repository_url: project_branch.and_then(|pb| pb.repository_url.clone()),
+                    branch: file.branch,
                     commit_sha: file.commit_sha,
                     commit_message: file.commit_message,
                     commit_date: file.commit_date,
                     author: file.author,
                 };
-                metadata_map.insert(file.file_path, repo_metadata);
-            }
-        }
+
+                (file.file_path, repo_metadata)
+            })
+            .collect();
 
         // Enrich results with metadata
         for result in &mut results {
-            result.repository_metadata = metadata_map.remove(&result.chunk.file_path);
+            result.repository_metadata = metadata_map.get(&result.chunk.file_path).cloned();
         }
 
         Ok(results)
@@ -102,7 +110,7 @@ impl EnhancedSearchService {
 }
 
 #[async_trait]
-impl SearchProvider for EnhancedSearchService {
+impl SearchProvider for SearchService {
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         // First get basic search results from indexer
         let mut indexer = self.indexer.lock().await;
@@ -112,13 +120,6 @@ impl SearchProvider for EnhancedSearchService {
         // Enrich with database metadata
         self.enrich_with_metadata(results).await
     }
-}
-
-/// Trait for services that can perform search operations
-#[async_trait]
-pub trait SearchService: Send + Sync {
-    /// Search for code matching the query
-    async fn search(&mut self, query: &str, limit: Option<usize>) -> Result<Vec<SearchResult>>;
 }
 
 #[cfg(test)]

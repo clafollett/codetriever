@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 
 pub mod service;
 
-pub use service::{ApiSearchService, EnhancedSearchService, SearchService};
+pub use service::SearchService;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

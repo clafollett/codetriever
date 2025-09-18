@@ -20,7 +20,7 @@ pub use error::{Error, Result};
 pub use embedding::EmbeddingModel;
 pub use indexing::{ApiIndexerService, IndexResult, Indexer, IndexerService};
 pub use parsing::{CodeChunk, CodeParser};
-pub use search::{ApiSearchService, SearchProvider, SearchResult};
+pub use search::{SearchProvider, SearchResult, SearchService};
 
 // Re-export test utilities when test-utils feature is enabled
 #[cfg(any(test, feature = "test-utils"))]

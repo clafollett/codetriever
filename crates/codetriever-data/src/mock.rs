@@ -351,6 +351,23 @@ impl FileRepository for MockFileRepository {
         let branches = self.project_branches.lock().unwrap();
         Ok(branches.get(&key).cloned())
     }
+
+    async fn get_project_branches(
+        &self,
+        repo_branches: &[(String, String)],
+    ) -> Result<Vec<ProjectBranch>> {
+        self.check_fail()?;
+
+        let branches = self.project_branches.lock().unwrap();
+        let results = repo_branches
+            .iter()
+            .filter_map(|(repo_id, branch)| {
+                let key = (repo_id.clone(), branch.clone());
+                branches.get(&key).cloned()
+            })
+            .collect();
+        Ok(results)
+    }
 }
 
 #[cfg(test)]

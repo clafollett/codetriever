@@ -108,4 +108,10 @@ pub trait FileRepository: Send + Sync {
         repository_id: &str,
         branch: &str,
     ) -> Result<Option<ProjectBranch>>;
+
+    /// Get multiple project branches in a single query (batch operation)
+    async fn get_project_branches(
+        &self,
+        repo_branches: &[(String, String)], // (repository_id, branch) pairs
+    ) -> Result<Vec<ProjectBranch>>;
 }

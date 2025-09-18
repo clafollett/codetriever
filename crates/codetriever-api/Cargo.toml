@@ -50,6 +50,9 @@ dotenv = { workspace = true }
 # Cryptography
 sha2 = "0.10"
 
+# Text processing
+regex = "1.11"
+
 # OpenAPI/Swagger
 utoipa = { version = "5.4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }

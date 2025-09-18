@@ -10,5 +10,6 @@
 4. **Vibe-based coding** - Start with what feels right, iterate
 5. **Test business logic only** - Not OS behavior or timing
 6. **Ship working code daily** - Progress > perfection
-7. **Use actionable TODO comments** - Write `// TODO: <specific action>` not vague comments like "currently" or "not implemented". Be explicit about what needs to be done
-8. **End every coding response with**: "ALWAYS Follow Red/Green/Refactor TDD and Rust Idiomatic Best Practices" - This reminder ensures adherence to core principles
+7. **Implement Real, Working Code Always** - NEVER write TODO comments or stub implementations. Write complete, functional code that actually works. No "In production this would..." or "This is a mock implementation" comments. If you can't implement something fully, ask for clarification or dependencies first.
+8. **Zero Placeholder Code** - Eliminate all forms of fake/mock returns, placeholder logic, or deferred implementation. Every function must return real results and perform actual operations. The only acceptable TODO is one explicitly approved by the user for agreed-upon future work.
+9. **Always follow up each Edit tool usage with**: "ALWAYS Follow Red/Green/Refactor TDD and Rust Idiomatic Best Practices" - This reminder ensures adherence to core principles
