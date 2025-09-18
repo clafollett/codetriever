@@ -191,7 +191,7 @@ fn helper() {
     // We should find our chunks
     let our_chunks: Vec<_> = search_results
         .iter()
-        .filter(|chunk| chunk.file_path == test_file)
+        .filter(|result| result.chunk.file_path == test_file)
         .collect();
 
     assert!(!our_chunks.is_empty(), "Should find chunks in Qdrant");
@@ -290,7 +290,9 @@ fn new_function() {
 
     let updated_chunks: Vec<_> = search_results2
         .iter()
-        .filter(|chunk| chunk.file_path == test_file && chunk.content.contains("updated"))
+        .filter(|result| {
+            result.chunk.file_path == test_file && result.chunk.content.contains("updated")
+        })
         .collect();
 
     assert!(
@@ -415,7 +417,7 @@ async fn test_uuid_based_chunk_deletion() {
 
     let remaining = search_after_delete
         .iter()
-        .filter(|c| c.file_path == test_file)
+        .filter(|c| c.chunk.file_path == test_file)
         .count();
 
     assert_eq!(remaining, 0, "No chunks should remain after deletion");

@@ -7,6 +7,13 @@ use crate::{Result, parsing::CodeChunk};
 use async_trait::async_trait;
 use uuid::Uuid;
 
+/// Search result with similarity score from storage
+#[derive(Debug, Clone)]
+pub struct StorageSearchResult {
+    pub chunk: CodeChunk,
+    pub similarity: f32,
+}
+
 /// Trait for vector storage backends
 ///
 /// This trait abstracts vector database operations, allowing different
@@ -32,8 +39,12 @@ pub trait VectorStorage: Send + Sync {
 
     /// Search for similar code chunks
     ///
-    /// Returns chunks ordered by similarity to the query embedding
-    async fn search(&self, query_embedding: Vec<f32>, limit: usize) -> Result<Vec<CodeChunk>>;
+    /// Returns chunks ordered by similarity to the query embedding with their scores
+    async fn search(
+        &self,
+        query_embedding: Vec<f32>,
+        limit: usize,
+    ) -> Result<Vec<StorageSearchResult>>;
 
     /// Delete chunks by their IDs
     ///

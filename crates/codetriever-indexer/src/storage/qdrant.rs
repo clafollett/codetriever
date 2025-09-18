@@ -30,7 +30,11 @@
 //! # }
 //! ```
 
-use crate::{Error, Result, parsing::CodeChunk, storage::VectorStorage};
+use crate::{
+    Error, Result,
+    parsing::CodeChunk,
+    storage::{StorageSearchResult, VectorStorage},
+};
 use anyhow::Context;
 use async_trait::async_trait;
 use qdrant_client::qdrant::{
@@ -375,13 +379,14 @@ impl VectorStorage for QdrantStorage {
     /// let query_vector = vec![0.1; 768]; // 768-dimensional query embedding
     /// let results = storage.search(query_vector, 5).await?;
     ///
-    /// for chunk in results {
-    ///     println!("Found: {} (lines {}-{})", chunk.file_path, chunk.start_line, chunk.end_line);
+    /// for result in results {
+    ///     println!("Found: {} (lines {}-{}) - score: {:.3}",
+    ///         result.chunk.file_path, result.chunk.start_line, result.chunk.end_line, result.similarity);
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    async fn search(&self, query: Vec<f32>, limit: usize) -> Result<Vec<CodeChunk>> {
+    async fn search(&self, query: Vec<f32>, limit: usize) -> Result<Vec<StorageSearchResult>> {
         // Validate query vector dimensions
         if query.len() != 768 {
             return Err(Error::Storage(format!(
@@ -408,6 +413,7 @@ impl VectorStorage for QdrantStorage {
 
         for scored_point in search_result.result {
             let payload = &scored_point.payload;
+            let similarity = scored_point.score; // Extract the actual similarity score!
 
             // Extract metadata from payload
             let file_path = payload
@@ -466,18 +472,21 @@ impl VectorStorage for QdrantStorage {
                 .and_then(|v| v.as_integer())
                 .map(|v| v as usize);
 
-            results.push(CodeChunk {
-                file_path: file_path.clone(),
-                content,
-                start_line,
-                end_line,
-                byte_start,
-                byte_end,
-                kind,
-                language,
-                name,
-                token_count,
-                embedding: None, // Don't return embeddings to save memory
+            results.push(StorageSearchResult {
+                chunk: CodeChunk {
+                    file_path: file_path.clone(),
+                    content,
+                    start_line,
+                    end_line,
+                    byte_start,
+                    byte_end,
+                    kind,
+                    language,
+                    name,
+                    token_count,
+                    embedding: None, // Don't return embeddings to save memory
+                },
+                similarity, // Use the actual score from Qdrant!
             });
         }
 

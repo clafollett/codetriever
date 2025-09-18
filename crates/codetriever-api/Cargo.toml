@@ -14,6 +14,7 @@ path = "src/main.rs"
 # Local crates
 codetriever-common = { path = "../codetriever-common" }
 codetriever-indexer = { path = "../codetriever-indexer" }
+codetriever-data = { path = "../codetriever-data" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -49,9 +50,15 @@ dotenv = { workspace = true }
 # Cryptography
 sha2 = "0.10"
 
+# OpenAPI/Swagger
+utoipa = { version = "5.4.0", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
+
 [dev-dependencies]
 tower = { workspace = true }
-codetriever-indexer = { path = "../codetriever-indexer", features = ["test-utils"] }
+codetriever-indexer = { path = "../codetriever-indexer", features = [
+    "test-utils",
+] }
 
 [lints]
 workspace = true

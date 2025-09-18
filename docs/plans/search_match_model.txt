@@ -1,0 +1,69 @@
+     ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+     │ Better API Response Format Proposal                                                                                                                    │
+     │                                                                                                                                                        │
+     │ After analyzing our current implementation and researching industry best practices (GitHub Copilot, Sourcegraph Cody), here's my recommendation for an │
+     │ improved API response format:                                                                                                                          │
+     │                                                                                                                                                        │
+     │ Current Issues                                                                                                                                         │
+     │                                                                                                                                                        │
+     │ 1. chunks is too generic/technical                                                                                                                     │
+     │ 2. Missing metadata about search quality                                                                                                               │
+     │ 3. No context about why matches were selected                                                                                                          │
+     │ 4. Symbols field is always empty                                                                                                                       │
+     │                                                                                                                                                        │
+     │ Proposed New Response Format                                                                                                                           │
+     │                                                                                                                                                        │
+     │ {                                                                                                                                                      │
+     │   "matches": [  // More intuitive than "chunks"                                                                                                        │
+     │     {                                                                                                                                                  │
+     │       "file": "src/auth.rs",                                                                                                                           │
+     │       "path": "src/auth.rs",  // Full path for clarity                                                                                                 │
+     │       "repository": "codetriever",  // If multi-repo support                                                                                           │
+     │       "content": "fn authenticate() {...}",                                                                                                            │
+     │       "language": "rust",                                                                                                                              │
+     │       "type": "function",  // function/class/method/etc                                                                                                │
+     │       "name": "authenticate",  // Symbol name if applicable                                                                                            │
+     │       "lines": {                                                                                                                                       │
+     │         "start": 42,                                                                                                                                   │
+     │         "end": 67                                                                                                                                      │
+     │       },                                                                                                                                               │
+     │       "score": 0.95,  // Renamed from similarity                                                                                                       │
+     │       "highlight": {  // Optional: highlight matching parts                                                                                            │
+     │         "ranges": [[3, 15]]  // Character ranges that match                                                                                            │
+     │       },                                                                                                                                               │
+     │       "context": {  // Optional surrounding context                                                                                                    │
+     │         "before": "// Authentication module",                                                                                                          │
+     │         "after": "// Helper functions"                                                                                                                 │
+     │       }                                                                                                                                                │
+     │     }                                                                                                                                                  │
+     │   ],                                                                                                                                                   │
+     │   "metadata": {                                                                                                                                        │
+     │     "total_matches": 42,  // Total found (before limit)                                                                                                │
+     │     "returned": 5,  // How many returned                                                                                                               │
+     │     "query": "authentication",  // Echo back the query                                                                                                 │
+     │     "query_time_ms": 23,                                                                                                                               │
+     │     "index_version": "2025-01-30",  // When index was last updated                                                                                     │
+     │     "search_type": "semantic"  // vs "keyword" or "hybrid"                                                                                             │
+     │   }                                                                                                                                                    │
+     │ }                                                                                                                                                      │
+     │                                                                                                                                                        │
+     │ Key Improvements                                                                                                                                       │
+     │                                                                                                                                                        │
+     │ 1. "matches" instead of "chunks" - More intuitive for users                                                                                            │
+     │ 2. Nested structure - Groups related fields (lines, context)                                                                                           │
+     │ 3. Rich metadata - Helps users understand search quality                                                                                               │
+     │ 4. Type/name fields - Better semantic understanding                                                                                                    │
+     │ 5. Optional context - Show surrounding code if relevant                                                                                                │
+     │ 6. Highlight ranges - Show what matched (useful for keyword search)                                                                                    │
+     │                                                                                                                                                        │
+     │ Migration Path                                                                                                                                         │
+     │                                                                                                                                                        │
+     │ 1. Update OpenAPI spec with new schema                                                                                                                 │
+     │ 2. Keep both formats temporarily (versioned endpoints)                                                                                                 │
+     │ 3. Update API implementation                                                                                                                           │
+     │ 4. Regenerate MCP handlers from new spec                                                                                                               │
+     │ 5. Eventually deprecate old format                                                                                                                     │
+     │                                                                                                                                                        │
+     │ This format is more aligned with what Sourcegraph and modern code search tools provide, while being extensible for future features like                │
+     │ multi-repository search, keyword highlighting, and richer semantic information.                                                                        │
+     ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

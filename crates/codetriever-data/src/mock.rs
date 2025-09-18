@@ -304,6 +304,53 @@ impl FileRepository for MockFileRepository {
                 && matches!(j.status, JobStatus::Running | JobStatus::Pending)
         }))
     }
+
+    async fn get_file_metadata(
+        &self,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+    ) -> Result<Option<IndexedFile>> {
+        self.check_fail()?;
+
+        let key = (
+            repository_id.to_string(),
+            branch.to_string(),
+            file_path.to_string(),
+        );
+        let files = self.indexed_files.lock().unwrap();
+        Ok(files.get(&key).cloned())
+    }
+
+    async fn get_files_metadata(&self, file_paths: &[&str]) -> Result<Vec<IndexedFile>> {
+        self.check_fail()?;
+
+        let files = self.indexed_files.lock().unwrap();
+        let mut results = Vec::new();
+
+        for &file_path in file_paths {
+            // Search across all repository/branch combinations for this file path
+            for ((_, _, stored_path), file) in files.iter() {
+                if stored_path == file_path {
+                    results.push(file.clone());
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn get_project_branch(
+        &self,
+        repository_id: &str,
+        branch: &str,
+    ) -> Result<Option<ProjectBranch>> {
+        self.check_fail()?;
+
+        let key = (repository_id.to_string(), branch.to_string());
+        let branches = self.project_branches.lock().unwrap();
+        Ok(branches.get(&key).cloned())
+    }
 }
 
 #[cfg(test)]

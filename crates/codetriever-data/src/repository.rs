@@ -521,4 +521,118 @@ impl FileRepository for DbFileRepository {
         let count: i64 = row.get("count");
         Ok(count > 0)
     }
+
+    async fn get_file_metadata(
+        &self,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+    ) -> Result<Option<IndexedFile>> {
+        // Use read pool for SELECT operations
+        let pool = self.pools.read_pool();
+
+        let row = sqlx::query(
+            r"
+            SELECT *
+            FROM indexed_files
+            WHERE repository_id = $1 AND branch = $2 AND file_path = $3
+            ",
+        )
+        .bind(repository_id)
+        .bind(branch)
+        .bind(file_path)
+        .fetch_optional(pool)
+        .await
+        .context("Failed to get file metadata")?;
+
+        row.map_or(Ok(None), |row| {
+            Ok(Some(IndexedFile {
+                repository_id: row.get("repository_id"),
+                branch: row.get("branch"),
+                file_path: row.get("file_path"),
+                content_hash: row.get("content_hash"),
+                generation: row.get("generation"),
+                commit_sha: row.get("commit_sha"),
+                commit_message: row.get("commit_message"),
+                commit_date: row.get("commit_date"),
+                author: row.get("author"),
+                indexed_at: row.get("indexed_at"),
+            }))
+        })
+    }
+
+    async fn get_files_metadata(&self, file_paths: &[&str]) -> Result<Vec<IndexedFile>> {
+        if file_paths.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Use read pool for SELECT operations
+        let pool = self.pools.read_pool();
+
+        // Convert to Vec<String> for sqlx binding
+        let file_paths_vec: Vec<String> = file_paths.iter().map(|&s| s.to_string()).collect();
+
+        let rows = sqlx::query(
+            r"
+            SELECT if.*
+            FROM indexed_files if
+            WHERE if.file_path = ANY($1)
+            ORDER BY if.file_path
+            ",
+        )
+        .bind(&file_paths_vec)
+        .fetch_all(pool)
+        .await
+        .context("Failed to get files metadata")?;
+
+        let files = rows
+            .into_iter()
+            .map(|row| IndexedFile {
+                repository_id: row.get("repository_id"),
+                branch: row.get("branch"),
+                file_path: row.get("file_path"),
+                content_hash: row.get("content_hash"),
+                generation: row.get("generation"),
+                commit_sha: row.get("commit_sha"),
+                commit_message: row.get("commit_message"),
+                commit_date: row.get("commit_date"),
+                author: row.get("author"),
+                indexed_at: row.get("indexed_at"),
+            })
+            .collect();
+
+        Ok(files)
+    }
+
+    async fn get_project_branch(
+        &self,
+        repository_id: &str,
+        branch: &str,
+    ) -> Result<Option<ProjectBranch>> {
+        // Use read pool for SELECT operations
+        let pool = self.pools.read_pool();
+
+        let row = sqlx::query(
+            r"
+            SELECT *
+            FROM project_branches
+            WHERE repository_id = $1 AND branch = $2
+            ",
+        )
+        .bind(repository_id)
+        .bind(branch)
+        .fetch_optional(pool)
+        .await
+        .context("Failed to get project branch")?;
+
+        row.map_or(Ok(None), |row| {
+            Ok(Some(ProjectBranch {
+                repository_id: row.get("repository_id"),
+                branch: row.get("branch"),
+                repository_url: row.get("repository_url"),
+                first_seen: row.get("first_seen"),
+                last_indexed: row.get("last_indexed"),
+            }))
+        })
+    }
 }

@@ -85,21 +85,22 @@ async fn test_manual_searches() {
         if results.is_empty() {
             println!("  ❌ No results found");
         } else {
-            for (i, chunk) in results.iter().enumerate() {
+            for (i, result) in results.iter().enumerate() {
                 println!(
-                    "\n  Result #{} from {}:{}-{}",
+                    "\n  Result #{} from {}:{}-{} (score: {:.3})",
                     i + 1,
-                    chunk.file_path,
-                    chunk.start_line,
-                    chunk.end_line
+                    result.chunk.file_path,
+                    result.chunk.start_line,
+                    result.chunk.end_line,
+                    result.similarity
                 );
 
                 // Show first 3 lines of the chunk
-                let preview: Vec<&str> = chunk.content.lines().take(3).collect();
+                let preview: Vec<&str> = result.chunk.content.lines().take(3).collect();
                 for line in preview {
                     println!("    | {line}");
                 }
-                if chunk.content.lines().count() > 3 {
+                if result.chunk.content.lines().count() > 3 {
                     println!("    | ...");
                 }
             }

@@ -221,16 +221,16 @@ impl PostgresConnection {
     // Verify the result contains our content
     let first_result = &results[0];
     assert!(
-        first_result.content.contains("PostgreSQL")
-            || first_result.content.contains("execute_query")
-            || first_result.content.contains("postgres"),
+        first_result.chunk.content.contains("PostgreSQL")
+            || first_result.chunk.content.contains("execute_query")
+            || first_result.chunk.content.contains("postgres"),
         "Search should return relevant content"
     );
 
     println!("Search returned {} results", results.len());
     println!(
         "First result: {}",
-        &first_result.content[..100.min(first_result.content.len())]
+        &first_result.chunk.content[..100.min(first_result.chunk.content.len())]
     );
 
     cleanup_test_storage(&storage)

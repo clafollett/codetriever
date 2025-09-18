@@ -57,8 +57,8 @@ mod tests {
             .expect("Failed to search");
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].file_path, "test.rs");
-        assert!(results[0].content.contains("hello"));
+        assert_eq!(results[0].chunk.file_path, "test.rs");
+        assert!(results[0].chunk.content.contains("hello"));
 
         cleanup_test_storage(&storage)
             .await

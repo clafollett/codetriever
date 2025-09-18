@@ -6,7 +6,7 @@
 use crate::{
     Result,
     parsing::CodeChunk,
-    storage::{StorageStats, VectorStorage},
+    storage::{StorageSearchResult, StorageStats, VectorStorage},
 };
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
@@ -102,7 +102,11 @@ impl VectorStorage for MockStorage {
         Ok(ids)
     }
 
-    async fn search(&self, _query_embedding: Vec<f32>, limit: usize) -> Result<Vec<CodeChunk>> {
+    async fn search(
+        &self,
+        _query_embedding: Vec<f32>,
+        limit: usize,
+    ) -> Result<Vec<StorageSearchResult>> {
         if self.fail_on_search {
             return Err(crate::Error::Storage(
                 "Mock storage configured to fail".into(),
@@ -111,8 +115,17 @@ impl VectorStorage for MockStorage {
 
         let stored = self.chunks.lock().unwrap();
 
-        // Return up to 'limit' chunks (no actual similarity search in mock)
-        let results: Vec<CodeChunk> = stored.iter().take(limit).cloned().collect();
+        // Return up to 'limit' chunks with mock similarity scores
+        let results: Vec<StorageSearchResult> = stored
+            .iter()
+            .take(limit)
+            .enumerate()
+            .map(|(i, chunk)| StorageSearchResult {
+                chunk: chunk.clone(),
+                // Mock decreasing similarity scores
+                similarity: 1.0 - (i as f32 * 0.1),
+            })
+            .collect();
 
         Ok(results)
     }

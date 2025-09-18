@@ -131,6 +131,7 @@ must_use_candidate = "allow"     # Don't require #[must_use] everywhere
 module_name_repetitions = "allow"  # Allow IndexerError in indexer module
 too_many_lines = "allow"         # Don't limit function length
 cognitive_complexity = "allow"    # Don't limit function complexity
+needless_for_each = "allow"      # Derive macros sometimes generate this pattern
 
 [profile.release]
 opt-level = 3

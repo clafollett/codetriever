@@ -90,4 +90,22 @@ pub trait FileRepository: Send + Sync {
 
     /// Check if any jobs are running for a project/branch
     async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> Result<bool>;
+
+    /// Get file metadata for a specific file path
+    async fn get_file_metadata(
+        &self,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+    ) -> Result<Option<IndexedFile>>;
+
+    /// Get file metadata for multiple file paths (batch query for search results)
+    async fn get_files_metadata(&self, file_paths: &[&str]) -> Result<Vec<IndexedFile>>;
+
+    /// Get project branch metadata for repository/branch combination
+    async fn get_project_branch(
+        &self,
+        repository_id: &str,
+        branch: &str,
+    ) -> Result<Option<ProjectBranch>>;
 }

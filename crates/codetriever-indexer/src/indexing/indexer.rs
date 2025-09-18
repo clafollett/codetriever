@@ -382,13 +382,17 @@ impl Indexer {
     ///
     /// let mut indexer = Indexer::new();
     /// let results = indexer.search("database connection", 10).await?;
-    /// for chunk in results {
-    ///     println!("Found: {}", chunk.file_path);
+    /// for result in results {
+    ///     println!("Found: {} - score: {:.3}", result.chunk.file_path, result.similarity);
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn search(&mut self, query: &str, limit: usize) -> Result<Vec<CodeChunk>> {
+    pub async fn search(
+        &mut self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::search::SearchResult>> {
         // Generate embedding for the query
         let embeddings = self
             .embedding_service
@@ -401,7 +405,16 @@ impl Indexer {
 
         // Search in Qdrant if storage is configured
         if let Some(ref storage) = self.storage {
-            storage.search(query_embedding, limit).await
+            let results = storage.search(query_embedding, limit).await?;
+            // Convert StorageSearchResult to SearchResult
+            Ok(results
+                .into_iter()
+                .map(|r| crate::search::SearchResult {
+                    chunk: r.chunk,
+                    similarity: r.similarity,
+                    repository_metadata: None, // TODO: Populate from database using file metadata
+                })
+                .collect())
         } else {
             Ok(vec![])
         }

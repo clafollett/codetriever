@@ -12,4 +12,9 @@ pub fn create_router() -> Router {
         .merge(health::routes())
         .merge(index::routes())
         .merge(search::routes())
+        .merge(crate::openapi::swagger_ui())
+        .route(
+            "/api-docs/openapi.json",
+            axum::routing::get(crate::openapi::openapi_json),
+        )
 }

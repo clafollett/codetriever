@@ -10,6 +10,7 @@ use codetriever_indexer::{ApiIndexerService, IndexerService};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use utoipa::ToSchema;
 
 // Type alias to simplify the complex indexer service type
 type IndexerServiceHandle = Arc<Mutex<dyn IndexerService>>;
@@ -27,19 +28,19 @@ pub fn routes_with_indexer(indexer: IndexerServiceHandle) -> Router {
         .with_state(indexer)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct IndexRequest {
     pub project_id: String,
     pub files: Vec<FileContent>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct FileContent {
     pub path: String,
     pub content: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct IndexResponse {
     pub status: ResponseStatus,
     pub files_indexed: usize,
@@ -66,7 +67,21 @@ impl IndexResponse {
     }
 }
 
-async fn index_handler(
+/// Index code files for semantic search.
+///
+/// Accepts a list of files with their content to be parsed, chunked, and indexed
+/// into the vector database for later semantic search.
+#[utoipa::path(
+    post,
+    path = "/index",
+    tag = "index",
+    request_body = IndexRequest,
+    responses(
+        (status = 200, description = "Files indexed successfully", body = IndexResponse),
+        (status = 500, description = "Internal server error", body = IndexResponse)
+    )
+)]
+pub async fn index_handler(
     State(indexer): State<IndexerServiceHandle>,
     Json(request): Json<IndexRequest>,
 ) -> impl IntoResponse {

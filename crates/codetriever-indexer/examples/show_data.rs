@@ -146,15 +146,20 @@ mod tests {
     let search_results = storage.search(vec![0.5; 768], 10).await?;
 
     println!("Found {} chunks in Qdrant:", search_results.len());
-    for (i, chunk) in search_results.iter().enumerate() {
+    for (i, result) in search_results.iter().enumerate() {
         println!("\n  Chunk {}:", i + 1);
-        println!("    File: {}", chunk.file_path);
-        println!("    Lines: {}-{}", chunk.start_line, chunk.end_line);
-        println!("    Type: {:?}", chunk.kind);
-        println!("    Name: {:?}", chunk.name);
+        println!("    File: {}", result.chunk.file_path);
+        println!(
+            "    Lines: {}-{}",
+            result.chunk.start_line, result.chunk.end_line
+        );
+        println!("    Type: {:?}", result.chunk.kind);
+        println!("    Name: {:?}", result.chunk.name);
+        println!("    Score: {:.3}", result.similarity);
         println!(
             "    Content preview: {}",
-            chunk
+            result
+                .chunk
                 .content
                 .chars()
                 .take(60)
