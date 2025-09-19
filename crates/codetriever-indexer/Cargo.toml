@@ -29,6 +29,9 @@ futures = "0.3"
 # Performance caching
 lru = "0.12.5"
 
+# Observability
+metrics = "0.24.2"
+
 chrono = { workspace = true }
 uuid = { workspace = true }
 

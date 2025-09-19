@@ -388,6 +388,7 @@ impl Indexer {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument(skip(self), fields(query, limit))]
     pub async fn search(
         &mut self,
         query: &str,

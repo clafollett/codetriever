@@ -151,12 +151,20 @@ impl SearchService {
 
 #[async_trait]
 impl SearchProvider for SearchService {
+    #[tracing::instrument(skip(self), fields(query, limit, cached = false))]
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        let start_time = std::time::Instant::now();
+
         // Check cache first
         let cache_key = format!("{query}:{limit}");
         if let Ok(mut cache) = self.cache.lock()
             && let Some(cached_results) = cache.get(&cache_key)
         {
+            tracing::Span::current().record("cached", true);
+            tracing::info!("Cache hit for query: {}", query);
+            metrics::counter!("search_cache_hits").increment(1);
+            metrics::histogram!("search_duration_ms")
+                .record(start_time.elapsed().as_millis() as f64);
             return Ok(cached_results.clone());
         }
 
@@ -168,14 +176,39 @@ impl SearchProvider for SearchService {
                     if let Ok(mut cache) = self.cache.lock() {
                         cache.put(cache_key, results.clone());
                     }
+                    tracing::info!("Search completed successfully on attempt {}", attempt + 1);
+
+                    // Record metrics
+                    metrics::counter!("search_requests_total").increment(1);
+                    metrics::counter!("search_cache_misses").increment(1);
+                    metrics::histogram!("search_duration_ms")
+                        .record(start_time.elapsed().as_millis() as f64);
+                    metrics::histogram!("search_results_count").record(results.len() as f64);
+
                     return Ok(results);
                 }
-                Err(_) if attempt < self.max_retries => {
+                Err(e) if attempt < self.max_retries => {
                     // Exponential backoff: delay increases with each retry
                     let delay = self.retry_delay * 2_u32.pow(attempt as u32);
+                    tracing::warn!(
+                        "Search attempt {} failed, retrying in {:?}: {:?}",
+                        attempt + 1,
+                        delay,
+                        e
+                    );
                     sleep(delay).await;
                 }
-                Err(e) => return Err(e), // Final attempt failed
+                Err(e) => {
+                    tracing::error!(
+                        "Search failed after {} attempts: {:?}",
+                        self.max_retries + 1,
+                        e
+                    );
+                    // Record failure metrics
+                    metrics::counter!("search_requests_total").increment(1);
+                    metrics::counter!("search_failures_total").increment(1);
+                    return Err(e);
+                }
             }
         }
 
@@ -185,19 +218,29 @@ impl SearchProvider for SearchService {
 
 impl SearchService {
     /// Internal search attempt - can fail and be retried
+    #[tracing::instrument(skip(self))]
     async fn try_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         // Wrap entire search operation in timeout for production resilience
         tokio::time::timeout(self.search_timeout, async {
             // First get basic search results from indexer
+            tracing::debug!("Acquiring indexer write lock");
             let mut indexer = self.indexer.write().await;
+            tracing::debug!("Performing vector search");
             let results = indexer.search(query, limit).await?;
             drop(indexer); // Release lock early
+            tracing::debug!("Vector search returned {} results", results.len());
 
             // Enrich with database metadata
-            self.enrich_with_metadata(results).await
+            tracing::debug!("Enriching with database metadata");
+            let enriched = self.enrich_with_metadata(results).await?;
+            tracing::debug!("Metadata enrichment complete");
+            Ok(enriched)
         })
         .await
-        .map_err(|_| crate::Error::Other("Search operation timed out".to_string()))?
+        .map_err(|_| {
+            tracing::error!("Search operation timed out after {:?}", self.search_timeout);
+            crate::Error::Other("Search operation timed out".to_string())
+        })?
     }
 }
 
