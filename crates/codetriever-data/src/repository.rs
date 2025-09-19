@@ -561,6 +561,7 @@ impl FileRepository for DbFileRepository {
         })
     }
 
+    #[tracing::instrument(skip(self), fields(file_count = file_paths.len()))]
     async fn get_files_metadata(&self, file_paths: &[&str]) -> Result<Vec<IndexedFile>> {
         if file_paths.is_empty() {
             return Ok(vec![]);
@@ -636,6 +637,7 @@ impl FileRepository for DbFileRepository {
         })
     }
 
+    #[tracing::instrument(skip(self), fields(repo_branch_count = repo_branches.len()))]
     async fn get_project_branches(
         &self,
         repo_branches: &[(String, String)],

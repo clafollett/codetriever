@@ -146,6 +146,7 @@ impl VectorStorage for QdrantStorage {
     /// # Errors
     ///
     /// Returns error if the check fails for reasons other than non-existence.
+    #[tracing::instrument(skip(self))]
     async fn collection_exists(&self) -> Result<bool> {
         let request = CollectionExistsRequest {
             collection_name: self.collection_name.clone(),
@@ -278,6 +279,7 @@ impl VectorStorage for QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument(skip(self, chunks), fields(chunk_count = chunks.len()))]
     async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize> {
         let mut points = Vec::new();
         let mut point_id = 0u64;
@@ -386,6 +388,7 @@ impl VectorStorage for QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
+    #[tracing::instrument(skip(self, query), fields(query_dim = query.len(), limit))]
     async fn search(&self, query: Vec<f32>, limit: usize) -> Result<Vec<StorageSearchResult>> {
         // Validate query vector dimensions
         if query.len() != 768 {
@@ -494,6 +497,7 @@ impl VectorStorage for QdrantStorage {
     }
 
     /// Store chunks with deterministic IDs based on repository, branch, file, and generation
+    #[tracing::instrument(skip(self, chunks), fields(repository_id, branch, chunk_count = chunks.len(), generation))]
     async fn store_chunks_with_ids(
         &self,
         repository_id: &str,
