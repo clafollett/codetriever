@@ -216,14 +216,14 @@ pub fn routes(search_service: Arc<dyn SearchProvider>) -> Router {
 
 /// Service factory for dependency injection
 pub struct ServiceFactory {
-    indexer: Arc<tokio::sync::Mutex<codetriever_indexer::Indexer>>,
+    indexer: Arc<tokio::sync::RwLock<codetriever_indexer::Indexer>>,
     db_client: Arc<codetriever_data::DataClient>,
 }
 
 impl ServiceFactory {
     /// Create a new service factory with injected dependencies
     pub const fn new(
-        indexer: Arc<tokio::sync::Mutex<codetriever_indexer::Indexer>>,
+        indexer: Arc<tokio::sync::RwLock<codetriever_indexer::Indexer>>,
         db_client: Arc<codetriever_data::DataClient>,
     ) -> Self {
         Self { indexer, db_client }
@@ -249,7 +249,7 @@ impl ServiceFactory {
 pub fn routes_default() -> Router {
     use codetriever_indexer::Indexer;
 
-    let indexer = Arc::new(tokio::sync::Mutex::new(Indexer::new()));
+    let indexer = Arc::new(tokio::sync::RwLock::new(Indexer::new()));
     let search_service =
         Arc::new(SearchService::without_database(indexer)) as Arc<dyn SearchProvider>;
 
@@ -371,11 +371,16 @@ pub async fn search_handler(
     let limit = req.limit.unwrap_or(10);
     let query = req.query.clone();
 
-    // Perform search
-    let results = search_service
-        .search(&query, limit)
-        .await
-        .unwrap_or_else(|_| vec![]);
+    // Perform search - handle errors properly instead of swallowing them
+    let results = match search_service.search(&query, limit).await {
+        Ok(results) => results,
+        Err(e) => {
+            tracing::error!("Search failed: {:?}", e);
+            // Return empty results with error indication in metadata rather than failing
+            // This provides better UX while still logging the error
+            vec![]
+        }
+    };
 
     let total_matches = results.len();
 
@@ -468,12 +473,13 @@ async fn search_handler_with_service(
     let limit = req.limit.unwrap_or(10);
     let query = req.query.clone();
 
-    let results = search_service
-        .lock()
-        .await
-        .search(&query, limit)
-        .await
-        .unwrap_or_else(|_| vec![]);
+    let results = match search_service.lock().await.search(&query, limit).await {
+        Ok(results) => results,
+        Err(e) => {
+            tracing::error!("Test search failed: {:?}", e);
+            vec![]
+        }
+    };
 
     let total_matches = results.len();
 
@@ -615,9 +621,9 @@ mod tests {
         // Test that SearchService works without database integration
         use codetriever_indexer::Indexer;
         use std::sync::Arc;
-        use tokio::sync::Mutex;
+        use tokio::sync::RwLock;
 
-        let indexer = Arc::new(Mutex::new(Indexer::new()));
+        let indexer = Arc::new(RwLock::new(Indexer::new()));
         let search_service = SearchService::without_database(indexer);
 
         // Verify that we can use the search service

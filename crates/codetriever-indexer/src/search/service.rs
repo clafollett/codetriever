@@ -2,7 +2,8 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
+use tokio::time::{Duration, sleep};
 
 use super::{RepositoryMetadata, SearchProvider, SearchResult};
 use crate::{Indexer, Result};
@@ -11,28 +12,67 @@ use codetriever_data::{DataClient, FileRepository, ProjectBranch};
 // Type aliases to simplify complex types
 type RepoBranchPairs = Vec<(String, String)>;
 type ProjectBranchMap = std::collections::HashMap<(String, String), ProjectBranch>;
+type SearchCache = Arc<std::sync::Mutex<lru::LruCache<String, Vec<SearchResult>>>>;
 
 /// Search service that provides semantic code search with optional repository metadata
 /// This is the unified search service that works with or without database integration
+/// Includes built-in resilience with retry logic and graceful degradation
 pub struct SearchService {
-    indexer: Arc<Mutex<Indexer>>,
+    indexer: Arc<RwLock<Indexer>>,
     db_client: Option<Arc<DataClient>>,
+    max_retries: usize,
+    retry_delay: Duration,
+    search_timeout: Duration,
+    // Simple in-memory cache for search results
+    cache: SearchCache,
 }
 
 impl SearchService {
-    /// Create a new search service with database integration
-    pub fn new(indexer: Arc<Mutex<Indexer>>, db_client: Arc<DataClient>) -> Self {
+    /// Create a new search service with database integration and default resilience
+    pub fn new(indexer: Arc<RwLock<Indexer>>, db_client: Arc<DataClient>) -> Self {
         Self {
             indexer,
             db_client: Some(db_client),
+            max_retries: 3,
+            retry_delay: Duration::from_millis(100),
+            search_timeout: Duration::from_secs(30),
+            cache: Arc::new(std::sync::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(100).unwrap(),
+            ))),
         }
     }
 
     /// Create a search service without database integration (for dev/testing)
-    pub fn without_database(indexer: Arc<Mutex<Indexer>>) -> Self {
+    pub fn without_database(indexer: Arc<RwLock<Indexer>>) -> Self {
         Self {
             indexer,
             db_client: None,
+            max_retries: 3,
+            retry_delay: Duration::from_millis(100),
+            search_timeout: Duration::from_secs(30),
+            cache: Arc::new(std::sync::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(100).unwrap(),
+            ))),
+        }
+    }
+
+    /// Create with custom retry configuration for production tuning
+    pub fn with_retry_config(
+        indexer: Arc<RwLock<Indexer>>,
+        db_client: Option<Arc<DataClient>>,
+        max_retries: usize,
+        retry_delay: Duration,
+        search_timeout: Duration,
+    ) -> Self {
+        Self {
+            indexer,
+            db_client,
+            max_retries,
+            retry_delay,
+            search_timeout,
+            cache: Arc::new(std::sync::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(100).unwrap(),
+            ))),
         }
     }
 
@@ -112,13 +152,52 @@ impl SearchService {
 #[async_trait]
 impl SearchProvider for SearchService {
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        // First get basic search results from indexer
-        let mut indexer = self.indexer.lock().await;
-        let results = indexer.search(query, limit).await?;
-        drop(indexer); // Release lock early
+        // Check cache first
+        let cache_key = format!("{query}:{limit}");
+        if let Ok(mut cache) = self.cache.lock()
+            && let Some(cached_results) = cache.get(&cache_key)
+        {
+            return Ok(cached_results.clone());
+        }
 
-        // Enrich with database metadata
-        self.enrich_with_metadata(results).await
+        // Retry search with exponential backoff for resilience
+        for attempt in 0..=self.max_retries {
+            match self.try_search(query, limit).await {
+                Ok(results) => {
+                    // Cache successful results
+                    if let Ok(mut cache) = self.cache.lock() {
+                        cache.put(cache_key, results.clone());
+                    }
+                    return Ok(results);
+                }
+                Err(_) if attempt < self.max_retries => {
+                    // Exponential backoff: delay increases with each retry
+                    let delay = self.retry_delay * 2_u32.pow(attempt as u32);
+                    sleep(delay).await;
+                }
+                Err(e) => return Err(e), // Final attempt failed
+            }
+        }
+
+        unreachable!() // Loop should always return or error
+    }
+}
+
+impl SearchService {
+    /// Internal search attempt - can fail and be retried
+    async fn try_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        // Wrap entire search operation in timeout for production resilience
+        tokio::time::timeout(self.search_timeout, async {
+            // First get basic search results from indexer
+            let mut indexer = self.indexer.write().await;
+            let results = indexer.search(query, limit).await?;
+            drop(indexer); // Release lock early
+
+            // Enrich with database metadata
+            self.enrich_with_metadata(results).await
+        })
+        .await
+        .map_err(|_| crate::Error::Other("Search operation timed out".to_string()))?
     }
 }
 
