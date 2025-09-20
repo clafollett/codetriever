@@ -120,7 +120,10 @@ pub mod test_utils {
             _recursive: bool,
         ) -> crate::IndexerResult<IndexResult> {
             if self.should_error {
-                Err(crate::IndexerError::Io("Mock error".to_string()))
+                Err(crate::IndexerError::Io {
+                    message: "Mock error".to_string(),
+                    source: None,
+                })
             } else {
                 Ok(IndexResult {
                     files_indexed: self.files_to_return,
@@ -136,7 +139,10 @@ pub mod test_utils {
             _files: Vec<FileContent>,
         ) -> crate::IndexerResult<IndexResult> {
             if self.should_error {
-                Err(crate::IndexerError::Io("Mock error".to_string()))
+                Err(crate::IndexerError::Io {
+                    message: "Mock error".to_string(),
+                    source: None,
+                })
             } else {
                 Ok(IndexResult {
                     files_indexed: self.files_to_return,
@@ -148,7 +154,10 @@ pub mod test_utils {
 
         async fn drop_collection(&mut self) -> crate::IndexerResult<bool> {
             if self.should_error {
-                Err(crate::IndexerError::Io("Mock error".to_string()))
+                Err(crate::IndexerError::Io {
+                    message: "Mock error".to_string(),
+                    source: None,
+                })
             } else {
                 Ok(true)
             }

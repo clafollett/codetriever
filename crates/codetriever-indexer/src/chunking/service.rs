@@ -60,7 +60,11 @@ impl ChunkingService {
     }
 
     /// Chunk a list of code spans into token-limited chunks
-    pub fn chunk_spans(&self, file_path: &str, spans: Vec<CodeSpan>) -> IndexerResult<Vec<CodeChunk>> {
+    pub fn chunk_spans(
+        &self,
+        file_path: &str,
+        spans: Vec<CodeSpan>,
+    ) -> IndexerResult<Vec<CodeChunk>> {
         let mut chunks = Vec::new();
         let mut current_content = String::new();
         let mut current_start_line = 0;

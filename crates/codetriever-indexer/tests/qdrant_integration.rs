@@ -3,6 +3,7 @@
 //! These tests require a running Qdrant instance.
 //! Run with: cargo test --test qdrant_integration -- --ignored
 
+use codetriever_common::CorrelationId;
 use codetriever_indexer::{
     parsing::CodeChunk,
     storage::{QdrantStorage, VectorStorage},
@@ -52,9 +53,11 @@ async fn test_delete_chunks_removes_points_from_collection() {
         },
     ];
 
+    let correlation_id = CorrelationId::new();
+
     // Store chunks with deterministic IDs
     let chunk_ids = storage
-        .store_chunks_with_ids("test_repo", "main", &chunks, 1)
+        .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
         .await
         .expect("Failed to store chunks with IDs");
 
@@ -62,7 +65,7 @@ async fn test_delete_chunks_removes_points_from_collection() {
 
     // Search to verify they exist
     let results = storage
-        .search(vec![0.1; 768], 10)
+        .search(vec![0.1; 768], 10, &correlation_id)
         .await
         .expect("Search failed");
     assert!(results.len() >= 2, "Should find at least 2 chunks");
@@ -75,7 +78,7 @@ async fn test_delete_chunks_removes_points_from_collection() {
 
     // Search again to verify they're gone
     let results_after = storage
-        .search(vec![0.1; 768], 10)
+        .search(vec![0.1; 768], 10, &correlation_id)
         .await
         .expect("Search failed");
     assert!(
@@ -116,16 +119,18 @@ async fn test_store_and_search_chunks() {
         name: Some("hello_world".to_string()),
     }];
 
+    let correlation_id = CorrelationId::new();
+
     // Store chunk
-    let stored = storage
-        .store_chunks(&chunks)
+    let chunk_ids = storage
+        .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
         .await
         .expect("Failed to store chunks");
-    assert_eq!(stored, 1);
+    assert_eq!(chunk_ids.len(), 1);
 
     // Search for it
     let results = storage
-        .search(vec![0.5; 768], 5)
+        .search(vec![0.5; 768], 5, &correlation_id)
         .await
         .expect("Search failed");
 

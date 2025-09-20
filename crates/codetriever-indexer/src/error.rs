@@ -4,12 +4,9 @@
 //! correlation ID support, and structured error variants that preserve context
 //! throughout the indexing and search pipeline.
 
-use codetriever_common::CommonError;
+use codetriever_common::{CommonError, CorrelationId};
 use std::time::Duration;
 use thiserror::Error;
-
-/// Correlation ID type for tracking operations across service boundaries
-pub type CorrelationId = String;
 
 /// Structured error enum with rich context for debugging and monitoring
 #[derive(Error, Debug)]
@@ -95,12 +92,12 @@ impl IndexerError {
     pub fn search_timeout(
         query: impl Into<String>,
         timeout_duration: Duration,
-        correlation_id: impl Into<CorrelationId>,
+        correlation_id: CorrelationId,
     ) -> Self {
         Self::SearchTimeout {
             query: query.into(),
             timeout_duration,
-            correlation_id: correlation_id.into(),
+            correlation_id,
         }
     }
 
@@ -108,13 +105,13 @@ impl IndexerError {
     pub fn vector_storage_error(
         operation: impl Into<String>,
         collection: impl Into<String>,
-        correlation_id: impl Into<CorrelationId>,
+        correlation_id: CorrelationId,
         cause: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::VectorStorageError {
             operation: operation.into(),
             collection: collection.into(),
-            correlation_id: correlation_id.into(),
+            correlation_id,
             cause: Box::new(cause),
         }
     }
@@ -123,13 +120,13 @@ impl IndexerError {
     pub fn embedding_generation_failed(
         text_count: usize,
         model: impl Into<String>,
-        correlation_id: impl Into<CorrelationId>,
+        correlation_id: CorrelationId,
         cause: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::EmbeddingGenerationFailed {
             text_count,
             model: model.into(),
-            correlation_id: correlation_id.into(),
+            correlation_id,
             cause: Box::new(cause),
         }
     }
@@ -138,19 +135,19 @@ impl IndexerError {
     pub fn indexing_failed(
         file_path: impl Into<String>,
         repository_id: impl Into<String>,
-        correlation_id: impl Into<CorrelationId>,
+        correlation_id: CorrelationId,
         cause: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::IndexingFailed {
             file_path: file_path.into(),
             repository_id: repository_id.into(),
-            correlation_id: correlation_id.into(),
+            correlation_id,
             cause: Box::new(cause),
         }
     }
 
     /// Extract correlation ID from error if available
-    pub fn correlation_id(&self) -> Option<&str> {
+    pub fn correlation_id(&self) -> Option<&CorrelationId> {
         match self {
             Self::SearchTimeout { correlation_id, .. } => Some(correlation_id),
             Self::VectorStorageError { correlation_id, .. } => Some(correlation_id),
@@ -195,6 +192,20 @@ impl CommonError for IndexerError {
     }
 }
 
+// Additional error constructors
+impl IndexerError {
+    /// Create an IO error with optional source
+    pub fn io_error_with_source(
+        message: impl Into<String>,
+        source: Option<std::io::Error>,
+    ) -> Self {
+        Self::Io {
+            message: message.into(),
+            source,
+        }
+    }
+}
+
 // Standard library error conversions
 impl From<std::io::Error> for IndexerError {
     fn from(e: std::io::Error) -> Self {
@@ -208,6 +219,13 @@ impl From<std::io::Error> for IndexerError {
 impl From<anyhow::Error> for IndexerError {
     fn from(e: anyhow::Error) -> Self {
         Self::Other(e.to_string())
+    }
+}
+
+// Cross-crate error conversions
+impl From<codetriever_data::error::DatabaseError> for IndexerError {
+    fn from(err: codetriever_data::error::DatabaseError) -> Self {
+        Self::Other(format!("Database error: {err}"))
     }
 }
 

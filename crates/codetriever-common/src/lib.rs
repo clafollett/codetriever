@@ -6,6 +6,8 @@
 pub mod error;
 pub mod error_sanitizer;
 pub mod init;
+pub mod tracing;
 
 pub use error::{CommonError, ErrorContext};
 pub use init::initialize_environment;
+pub use tracing::CorrelationId;

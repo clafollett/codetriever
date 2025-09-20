@@ -32,12 +32,13 @@
 //! ```
 
 use crate::middleware::RequestContext;
-use crate::{ApiError, ApiResult, generate_correlation_id};
+use crate::{ApiError, ApiResult};
 use axum::{
     Json, Router,
     extract::{Extension, State},
     routing::post,
 };
+use codetriever_common::CorrelationId;
 use codetriever_indexer::{SearchProvider, SearchService};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -384,11 +385,10 @@ pub async fn search_handler(
     // Use correlation ID from middleware if available, otherwise generate one
     let correlation_id = context
         .as_ref()
-        .map(|ctx| ctx.correlation_id.clone())
-        .unwrap_or_else(generate_correlation_id);
+        .map_or_else(CorrelationId::new, |ctx| ctx.correlation_id.clone());
 
     // Add correlation ID to tracing span for all subsequent logs
-    tracing::Span::current().record("correlation_id", &correlation_id);
+    tracing::Span::current().record("correlation_id", correlation_id.to_string());
 
     info!(
         correlation_id = %correlation_id,
@@ -430,7 +430,7 @@ pub async fn search_handler(
     // Perform search with proper error handling
     let results = match tokio::time::timeout(
         Duration::from_secs(30), // 30-second timeout for search operations
-        search_service.search(&query, limit),
+        search_service.search(&query, limit, &correlation_id),
     )
     .await
     {
@@ -464,9 +464,8 @@ pub async fn search_handler(
                     correlation_id,
                     timeout_duration: Duration::from_secs(30),
                 });
-            } else {
-                return Err(ApiError::InternalServerError { correlation_id });
             }
+            return Err(ApiError::InternalServerError { correlation_id });
         }
         Err(_timeout) => {
             error!(
@@ -572,65 +571,6 @@ pub async fn search_handler(
     }))
 }
 
-/// Handler with injected service for testing
-#[cfg(test)]
-async fn search_handler_with_service(
-    req: SearchRequest,
-    search_service: Arc<tokio::sync::Mutex<codetriever_indexer::test_mocks::MockSearchService>>,
-) -> Json<SearchResponse> {
-    let limit = req.limit.unwrap_or(10);
-    let query = req.query.clone();
-
-    let results = match search_service.lock().await.search(&query, limit).await {
-        Ok(results) => results,
-        Err(e) => {
-            tracing::error!("Test search failed: {:?}", e);
-            vec![]
-        }
-    };
-
-    let total_matches = results.len();
-
-    let matches: Vec<Match> = results
-        .into_iter()
-        .map(|result| {
-            let file_path = result.chunk.file_path.clone();
-            Match {
-                file: file_path.clone(),
-                path: file_path,
-                repository: None,
-                content: result.chunk.content,
-                language: result.chunk.language,
-                element_type: result.chunk.kind,
-                name: result.chunk.name,
-                lines: LineRange {
-                    start: result.chunk.start_line,
-                    end: result.chunk.end_line,
-                },
-                similarity: result.similarity,
-                context: None,
-                highlights: vec![],
-                symbols: vec![],
-                commit: None,
-            }
-        })
-        .collect();
-
-    let returned = matches.len();
-
-    Json(SearchResponse {
-        matches,
-        metadata: SearchMetadata {
-            total_matches,
-            returned,
-            query,
-            query_time_ms: 0,
-            index_version: None,
-            search_type: Some("semantic".to_string()),
-        },
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)] // OK in tests
@@ -644,6 +584,69 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tower::ServiceExt;
+
+    async fn search_handler_with_service(
+        req: SearchRequest,
+        search_service: Arc<tokio::sync::Mutex<codetriever_indexer::test_mocks::MockSearchService>>,
+    ) -> Json<SearchResponse> {
+        let limit = req.limit.unwrap_or(10);
+        let query = req.query.clone();
+        let correlation_id = CorrelationId::new();
+
+        let results = match search_service
+            .lock()
+            .await
+            .search(&query, limit, &correlation_id)
+            .await
+        {
+            Ok(results) => results,
+            Err(e) => {
+                tracing::error!("Test search failed: {:?}", e);
+                vec![]
+            }
+        };
+
+        let total_matches = results.len();
+
+        let matches: Vec<Match> = results
+            .into_iter()
+            .map(|result| {
+                let file_path = result.chunk.file_path.clone();
+                Match {
+                    file: file_path.clone(),
+                    path: file_path,
+                    repository: None,
+                    content: result.chunk.content,
+                    language: result.chunk.language,
+                    element_type: result.chunk.kind,
+                    name: result.chunk.name,
+                    lines: LineRange {
+                        start: result.chunk.start_line,
+                        end: result.chunk.end_line,
+                    },
+                    similarity: result.similarity,
+                    context: None,
+                    highlights: vec![],
+                    symbols: vec![],
+                    commit: None,
+                }
+            })
+            .collect();
+
+        let returned = matches.len();
+
+        Json(SearchResponse {
+            matches,
+            metadata: SearchMetadata {
+                total_matches,
+                returned,
+                query,
+                query_time_ms: 0,
+                index_version: None,
+                search_type: Some("semantic".to_string()),
+            },
+        })
+    }
 
     /// Create routes with a mock search service for testing
     fn routes_with_mock(search_service: Arc<Mutex<MockSearchService>>) -> Router {
@@ -735,7 +738,9 @@ mod tests {
         let search_service = SearchService::without_database(indexer);
 
         // Verify that we can use the search service
-        let results = search_service.search("test query", 5).await;
+        let results = search_service
+            .search("test query", 5, &CorrelationId::new())
+            .await;
         assert!(results.is_ok());
 
         // Results should be empty (no indexed content) but service should work

@@ -1,8 +1,9 @@
 //! Search service module for querying indexed code
 
-use crate::{CodeChunk, CorrelationId, IndexerResult};
+use crate::{CodeChunk, IndexerResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use codetriever_common::CorrelationId;
 
 pub mod service;
 
@@ -36,18 +37,10 @@ pub struct SearchResult {
 #[async_trait]
 pub trait SearchProvider: Send + Sync {
     /// Search for code chunks matching the query
-    async fn search(&self, query: &str, limit: usize) -> IndexerResult<Vec<SearchResult>> {
-        // Default implementation delegates to correlation-aware version with generated ID
-        let correlation_id = uuid::Uuid::new_v4().to_string();
-        self.search_with_correlation_id(query, limit, correlation_id)
-            .await
-    }
-
-    /// Search with correlation ID for tracing and error context
-    async fn search_with_correlation_id(
+    async fn search(
         &self,
         query: &str,
         limit: usize,
-        correlation_id: CorrelationId,
+        correlation_id: &CorrelationId,
     ) -> IndexerResult<Vec<SearchResult>>;
 }

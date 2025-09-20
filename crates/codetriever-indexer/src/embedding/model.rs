@@ -22,17 +22,23 @@ use crate::embedding::jina_bert_v2::{BertModel as JinaBertModel, Config as JinaB
 use candle_core::{D, DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
+use codetriever_common::CommonError;
 use hf_hub::{Repo, RepoType, api::tokio::Api};
 use std::sync::Arc;
 use tokenizers::tokenizer::Tokenizer;
 
 /// Trait for embedding models to abstract over different BERT variants
 trait EmbedderModel: Send + Sync {
-    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> IndexerResult<Tensor>;
+    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>)
+    -> IndexerResult<Tensor>;
 }
 
 impl EmbedderModel for BertModel {
-    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> IndexerResult<Tensor> {
+    fn forward(
+        &self,
+        token_ids: &Tensor,
+        attention_mask: Option<&Tensor>,
+    ) -> IndexerResult<Tensor> {
         let token_type_ids = token_ids.zeros_like().map_err(|e| {
             crate::IndexerError::Embedding(format!("Failed to create token type ids: {e}"))
         })?;
@@ -43,7 +49,11 @@ impl EmbedderModel for BertModel {
 }
 
 impl EmbedderModel for JinaBertModel {
-    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> IndexerResult<Tensor> {
+    fn forward(
+        &self,
+        token_ids: &Tensor,
+        attention_mask: Option<&Tensor>,
+    ) -> IndexerResult<Tensor> {
         // Use our custom forward that handles attention mask
         self.forward(token_ids, attention_mask).map_err(|e| {
             crate::IndexerError::Embedding(format!("JinaBERT forward pass failed: {e}"))

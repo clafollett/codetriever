@@ -1,5 +1,6 @@
 //! Example to index data and show what's stored in PostgreSQL and Qdrant
 
+use codetriever_common::CorrelationId;
 use codetriever_data::{
     config::DatabaseConfig,
     pool_manager::{PoolConfig, PoolManager},
@@ -141,9 +142,10 @@ mod tests {
 
     // Query Qdrant data
     println!("\n=== Qdrant Data ===\n");
+    let correlation_id = CorrelationId::new();
 
     // Search for chunks
-    let search_results = storage.search(vec![0.5; 768], 10).await?;
+    let search_results = storage.search(vec![0.5; 768], 10, &correlation_id).await?;
 
     println!("Found {} chunks in Qdrant:", search_results.len());
     for (i, result) in search_results.iter().enumerate() {

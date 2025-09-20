@@ -7,8 +7,5 @@ pub mod routes;
 pub mod test_utils;
 
 // Export new structured error types
-pub use error::{ApiError, ApiResult, ErrorResponse, generate_correlation_id};
+pub use error::{ApiError, ApiErrorResponse, ApiResult};
 pub use middleware::{RequestContext, correlation_id_middleware};
-
-// Legacy exports for backward compatibility
-pub use error::{Error, Result};

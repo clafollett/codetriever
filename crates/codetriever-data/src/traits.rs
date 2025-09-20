@@ -13,7 +13,8 @@ use crate::models::{
 #[async_trait]
 pub trait FileRepository: Send + Sync {
     /// Get or create a project/branch combination
-    async fn ensure_project_branch(&self, ctx: &RepositoryContext) -> DatabaseResult<ProjectBranch>;
+    async fn ensure_project_branch(&self, ctx: &RepositoryContext)
+    -> DatabaseResult<ProjectBranch>;
 
     /// Check file state for re-indexing decision
     async fn check_file_state(

@@ -5,14 +5,9 @@
 //! - Request/response logging
 //! - Error handling middleware
 
-use axum::{
-    extract::Request,
-    http::{HeaderValue, header::HeaderName},
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, middleware::Next, response::Response};
+use codetriever_common::CorrelationId;
 use tracing::{Span, info, instrument};
-use uuid::Uuid;
 
 /// Header name for correlation ID
 pub const CORRELATION_ID_HEADER: &str = "X-Correlation-ID";
@@ -20,19 +15,19 @@ pub const CORRELATION_ID_HEADER: &str = "X-Correlation-ID";
 /// Request context that can be shared across middleware and handlers
 #[derive(Debug, Clone)]
 pub struct RequestContext {
-    pub correlation_id: String,
+    pub correlation_id: CorrelationId,
     pub start_time: std::time::Instant,
 }
 
 impl RequestContext {
     pub fn new() -> Self {
         Self {
-            correlation_id: format!("req_{}", Uuid::new_v4().simple()),
+            correlation_id: CorrelationId::new(),
             start_time: std::time::Instant::now(),
         }
     }
 
-    pub fn with_correlation_id(correlation_id: String) -> Self {
+    pub fn with_correlation_id(correlation_id: CorrelationId) -> Self {
         Self {
             correlation_id,
             start_time: std::time::Instant::now(),
@@ -63,13 +58,10 @@ pub async fn correlation_id_middleware(mut request: Request, next: Next) -> Resp
         .headers()
         .get(CORRELATION_ID_HEADER)
         .and_then(|value| value.to_str().ok())
-        .map_or_else(
-            || format!("req_{}", Uuid::new_v4().simple()),
-            std::string::ToString::to_string,
-        );
+        .map_or_else(CorrelationId::new, CorrelationId::from);
 
     // Add correlation ID to tracing span
-    Span::current().record("correlation_id", &correlation_id);
+    Span::current().record("correlation_id", correlation_id.to_string());
 
     // Create request context
     let context = RequestContext::with_correlation_id(correlation_id.clone());
@@ -88,12 +80,11 @@ pub async fn correlation_id_middleware(mut request: Request, next: Next) -> Resp
     let mut response = next.run(request).await;
 
     // Add correlation ID to response headers
-    let header_value = HeaderValue::from_str(&correlation_id)
-        .unwrap_or_else(|_| HeaderValue::from_static("invalid"));
-
-    response
-        .headers_mut()
-        .insert(HeaderName::from_static("x-correlation-id"), header_value);
+    if let Ok(header_value) = correlation_id.to_string().parse() {
+        response
+            .headers_mut()
+            .insert("X-Correlation-ID", header_value);
+    }
 
     let duration = start_time.elapsed();
 
@@ -116,13 +107,13 @@ pub async fn correlation_id_middleware(mut request: Request, next: Next) -> Resp
 ///
 /// ```rust
 /// use axum::extract::Extension;
-/// use crate::middleware::RequestContext;
+/// use codetriever_api::middleware::RequestContext;
 ///
 /// async fn my_handler(Extension(context): Extension<RequestContext>) -> String {
 ///     format!("Request ID: {}", context.correlation_id)
 /// }
 /// ```
-pub fn extract_correlation_id(request: &Request) -> Option<String> {
+pub fn extract_correlation_id(request: &Request) -> Option<CorrelationId> {
     request
         .extensions()
         .get::<RequestContext>()
@@ -171,7 +162,8 @@ mod tests {
         assert!(correlation_id.is_some());
 
         let correlation_id_str = correlation_id.unwrap().to_str().unwrap();
-        assert!(correlation_id_str.starts_with("req_"));
+        // Verify it's a valid UUID format (new CorrelationId implementation)
+        assert!(uuid::Uuid::parse_str(correlation_id_str).is_ok());
     }
 
     #[tokio::test]
@@ -180,14 +172,16 @@ mod tests {
             .route("/test", get(test_handler))
             .layer(middleware::from_fn(correlation_id_middleware));
 
-        let custom_id = "custom_12345";
+        // Use a valid UUID for correlation ID preservation
+        let correlation_id = CorrelationId::from(uuid::Uuid::new_v4());
+        let correlation_id_string = correlation_id.to_string();
 
         let response = app
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
                     .uri("/test")
-                    .header(CORRELATION_ID_HEADER, custom_id)
+                    .header(CORRELATION_ID_HEADER, &correlation_id_string)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -197,19 +191,21 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         // Check that the custom correlation ID is preserved
-        let correlation_id = response.headers().get("x-correlation-id");
-        assert!(correlation_id.is_some());
+        let response_correlation_id = response.headers().get("x-correlation-id");
+        assert!(response_correlation_id.is_some());
 
-        let correlation_id_str = correlation_id.unwrap().to_str().unwrap();
-        assert_eq!(correlation_id_str, custom_id);
+        let response_correlation_id_str = response_correlation_id.unwrap().to_str().unwrap();
+        assert_eq!(response_correlation_id_str, &correlation_id_string);
     }
 
     #[test]
     fn test_request_context_creation() {
         let context = RequestContext::new();
-        assert!(context.correlation_id.starts_with("req_"));
+        let uuid = context.correlation_id.to_string();
+        assert!(uuid::Uuid::parse_str(&uuid).is_ok());
 
-        let custom_context = RequestContext::with_correlation_id("test_123".to_string());
-        assert_eq!(custom_context.correlation_id, "test_123");
+        let correlation_id = CorrelationId::new();
+        let custom_context = RequestContext::with_correlation_id(correlation_id.clone());
+        assert_eq!(custom_context.correlation_id, correlation_id);
     }
 }

@@ -3,6 +3,7 @@
 use crate::IndexerResult;
 use crate::parsing::languages::get_language_config;
 use crate::parsing::traits::ContentParser;
+use codetriever_common::CommonError;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,9 +51,9 @@ fn get_cached_query(language: &Language, query_str: &str) -> IndexerResult<Arc<Q
 
     // Check cache first
     {
-        let cache = QUERY_CACHE
-            .lock()
-            .map_err(|_| crate::IndexerError::parse_error("Query cache lock poisoned".to_string()))?;
+        let cache = QUERY_CACHE.lock().map_err(|_| {
+            crate::IndexerError::parse_error("Query cache lock poisoned".to_string())
+        })?;
         if let Some(cached_query) = cache.get(&key) {
             return Ok(cached_query.clone());
         }
@@ -65,9 +66,9 @@ fn get_cached_query(language: &Language, query_str: &str) -> IndexerResult<Arc<Q
 
     // Cache the compiled query
     {
-        let mut cache = QUERY_CACHE
-            .lock()
-            .map_err(|_| crate::IndexerError::parse_error("Query cache lock poisoned".to_string()))?;
+        let mut cache = QUERY_CACHE.lock().map_err(|_| {
+            crate::IndexerError::parse_error("Query cache lock poisoned".to_string())
+        })?;
         cache.insert(key, arc_query.clone());
     }
 
@@ -420,7 +421,12 @@ impl CodeParser {
     }
 
     /// Parses source code and extracts meaningful code chunks
-    pub fn parse(&self, code: &str, language: &str, file_path: &str) -> IndexerResult<Vec<CodeChunk>> {
+    pub fn parse(
+        &self,
+        code: &str,
+        language: &str,
+        file_path: &str,
+    ) -> IndexerResult<Vec<CodeChunk>> {
         // Normalize line endings to LF for consistent parsing
         // This handles files with mixed line endings (CRLF, LF, or both)
         let normalized_code = code.replace("\r\n", "\n").replace('\r', "\n");
@@ -899,7 +905,12 @@ impl ContentParser for CodeParser {
         "tree-sitter-parser"
     }
 
-    fn parse(&self, content: &str, language: &str, file_path: &str) -> IndexerResult<Vec<CodeChunk>> {
+    fn parse(
+        &self,
+        content: &str,
+        language: &str,
+        file_path: &str,
+    ) -> IndexerResult<Vec<CodeChunk>> {
         // Delegate to the existing parse method
         CodeParser::parse(self, content, language, file_path)
     }

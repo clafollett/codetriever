@@ -4,6 +4,7 @@ mod test_utils;
 #[cfg(test)]
 mod tests {
     use super::test_utils::{cleanup_test_storage, create_test_storage};
+    use codetriever_common::CorrelationId;
     use codetriever_indexer::{CodeChunk, storage::VectorStorage};
 
     #[tokio::test]
@@ -42,17 +43,19 @@ mod tests {
             },
         ];
 
+        let correlation_id = CorrelationId::new();
+
         // Store chunks
-        let stored_count = storage
-            .store_chunks(&chunks)
+        let chunk_ids = storage
+            .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
             .await
             .expect("Failed to store chunks");
-        assert_eq!(stored_count, 2);
+        assert_eq!(chunk_ids.len(), 2);
 
         // Search for similar chunks
         let query_embedding = vec![0.15; 768]; // Close to first chunk
         let results = storage
-            .search(query_embedding, 1)
+            .search(query_embedding, 1, &correlation_id)
             .await
             .expect("Failed to search");
 

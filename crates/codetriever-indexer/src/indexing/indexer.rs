@@ -1,11 +1,12 @@
 use crate::{
-    CorrelationId, IndexerResult,
+    IndexerResult,
     config::Config,
     embedding::{DefaultEmbeddingService, EmbeddingConfig, EmbeddingService},
     indexing::service::FileContent,
     parsing::{CodeChunk, CodeParser, get_language_from_extension},
     storage::VectorStorage,
 };
+use codetriever_common::CorrelationId;
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
 use std::path::Path;
@@ -406,7 +407,10 @@ impl Indexer {
 
         // Search in Qdrant if storage is configured
         if let Some(ref storage) = self.storage {
-            let results = storage.search(query_embedding, limit).await?;
+            let correlation_id = CorrelationId::new();
+            let results = storage
+                .search(query_embedding, limit, &correlation_id)
+                .await?;
             // Convert StorageSearchResult to SearchResult
             Ok(results
                 .into_iter()
@@ -441,7 +445,11 @@ impl Indexer {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn index_directory(&mut self, path: &Path, recursive: bool) -> IndexerResult<IndexResult> {
+    pub async fn index_directory(
+        &mut self,
+        path: &Path,
+        recursive: bool,
+    ) -> IndexerResult<IndexResult> {
         println!("Starting index_directory for {path:?}");
 
         // Ensure embedding provider is ready
@@ -550,7 +558,17 @@ impl Indexer {
         // Store chunks if storage is configured
         let chunks_stored = if !all_chunks.is_empty() {
             if let Some(ref storage) = self.storage {
-                storage.store_chunks(&all_chunks).await?
+                // TODO: Remove index_directory method - legacy proof-of-concept
+                // Using "local" as default repository for legacy directory indexing
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                let correlation_id = CorrelationId::new();
+                let _chunk_ids = storage
+                    .store_chunks("local", "main", &all_chunks, timestamp, &correlation_id)
+                    .await?;
+                all_chunks.len()
             } else {
                 0
             }
@@ -741,12 +759,14 @@ impl Indexer {
                                 chunks_with_embeddings.push(chunk.clone());
                             }
 
+                            let correlation_id = CorrelationId::new();
                             let chunk_ids = storage
-                                .store_chunks_with_ids(
+                                .store_chunks(
                                     &repository_id,
                                     &branch,
                                     &chunks_with_embeddings,
                                     file_info.generation,
+                                    &correlation_id,
                                 )
                                 .await?;
 
@@ -782,8 +802,15 @@ impl Indexer {
                         }
                     }
                 } else {
-                    // Fallback to old method without deterministic IDs
-                    storage.store_chunks(&all_chunks).await?;
+                    // TODO: Remove this fallback - all storage should be repository-aware
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64;
+                    let correlation_id = CorrelationId::new();
+                    let _chunk_ids = storage
+                        .store_chunks("unknown", "main", &all_chunks, timestamp, &correlation_id)
+                        .await?;
                 }
 
                 println!("Successfully stored chunks");

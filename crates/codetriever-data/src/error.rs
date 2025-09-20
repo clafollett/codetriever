@@ -268,7 +268,7 @@ pub enum DatabaseError {
         "Query timeout for operation '{operation}' (timeout={timeout_secs}s, correlation_id={correlation_id:?})"
     )]
     QueryTimeout {
-        operation: DatabaseOperation,
+        operation: Box<DatabaseOperation>,
         timeout_secs: u64,
         correlation_id: Option<String>,
         #[source]
@@ -280,7 +280,7 @@ pub enum DatabaseError {
         "Query failed for operation '{operation}': {message} (correlation_id={correlation_id:?})"
     )]
     QueryFailed {
-        operation: DatabaseOperation,
+        operation: Box<DatabaseOperation>,
         message: String,
         correlation_id: Option<String>,
         #[source]
@@ -294,7 +294,7 @@ pub enum DatabaseError {
     ConstraintViolation {
         table: String,
         constraint: String,
-        operation: DatabaseOperation,
+        operation: Box<DatabaseOperation>,
         correlation_id: Option<String>,
         #[source]
         source: sqlx::Error,
@@ -305,7 +305,7 @@ pub enum DatabaseError {
         "Batch operation '{operation}' partially failed: {successful_count}/{total_count} succeeded (correlation_id={correlation_id:?})"
     )]
     BatchOperationFailed {
-        operation: DatabaseOperation,
+        operation: Box<DatabaseOperation>,
         total_count: usize,
         successful_count: usize,
         failed_items: Vec<String>,
@@ -319,7 +319,7 @@ pub enum DatabaseError {
         "Transaction rolled back for operation '{operation}': {reason} (correlation_id={correlation_id:?})"
     )]
     TransactionRollback {
-        operation: DatabaseOperation,
+        operation: Box<DatabaseOperation>,
         reason: String,
         correlation_id: Option<String>,
         #[source]
@@ -331,7 +331,7 @@ pub enum DatabaseError {
         "Data integrity error: {message} (operation='{operation}', correlation_id={correlation_id:?})"
     )]
     DataIntegrityError {
-        operation: DatabaseOperation,
+        operation: Box<DatabaseOperation>,
         message: String,
         correlation_id: Option<String>,
     },
@@ -357,7 +357,7 @@ pub enum DatabaseError {
         "Unexpected database state for operation '{operation}': {message} (correlation_id={correlation_id:?})"
     )]
     UnexpectedState {
-        operation: DatabaseOperation,
+        operation: Box<DatabaseOperation>,
         message: String,
         correlation_id: Option<String>,
     },
@@ -382,7 +382,7 @@ impl DatabaseError {
                 return Self::ConstraintViolation {
                     table,
                     constraint: constraint.to_string(),
-                    operation,
+                    operation: Box::new(operation),
                     correlation_id,
                     source,
                 };
@@ -392,7 +392,7 @@ impl DatabaseError {
         // Check for timeout errors
         if message.contains("timeout") || message.contains("timed out") {
             return Self::QueryTimeout {
-                operation,
+                operation: Box::new(operation),
                 timeout_secs: 30, // Default timeout, should be passed from config
                 correlation_id,
                 source,
@@ -401,7 +401,7 @@ impl DatabaseError {
 
         // Generic query failure
         Self::QueryFailed {
-            operation,
+            operation: Box::new(operation),
             message,
             correlation_id,
             source,

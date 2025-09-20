@@ -75,9 +75,9 @@ impl MockFileRepository {
             *self.should_fail_next.lock().unwrap() = false;
             let message = self.error_message.lock().unwrap().clone();
             return Err(DatabaseError::UnexpectedState {
-                operation: DatabaseOperation::Query {
+                operation: Box::new(DatabaseOperation::Query {
                     description: "mock operation".to_string(),
-                },
+                }),
                 message,
                 correlation_id: None,
             });
@@ -463,7 +463,8 @@ mod tests {
 
         let result = mock.has_running_jobs("repo", "main").await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Expected test error");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Expected test error"));
 
         // Should work after error is consumed
         let result = mock.has_running_jobs("repo", "main").await;

@@ -102,7 +102,7 @@ pub struct Config {
     /// this is 8192 tokens. Chunks larger than this will be split or truncated.
     /// Note: Higher values increase memory usage significantly, especially with
     /// larger batch sizes. Consider reducing if experiencing memory issues.
-    /// TODO: Upgrade to jina-embeddings-v4 for massive improvements:
+    /// TODO: Upgrade to jina-embeddings-v4 or jina-code-embeddings-1.5b for massive improvements:
     ///       - 32,768 token context (4x larger than current V2's 8192!)
     ///       - 2048-dimensional embeddings (vs V2's 768) for richer representations
     ///       - Matryoshka dimensions: 128, 256, 512, 1024, 2048 (flexibility!)

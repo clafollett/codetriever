@@ -14,7 +14,7 @@ pub mod security;
 pub mod storage;
 
 // Re-export error types
-pub use error::{CorrelationId, IndexerError, IndexerResult};
+pub use error::{IndexerError, IndexerResult};
 
 // Re-export main types
 pub use embedding::EmbeddingModel;

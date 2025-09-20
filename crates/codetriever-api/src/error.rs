@@ -19,9 +19,10 @@
 //!
 //! ```rust
 //! use codetriever_api::{ApiError, ApiResult};
+//! use codetriever_common::CorrelationId;
 //!
 //! async fn search_handler() -> ApiResult<Vec<String>> {
-//!     let correlation_id = "req_12345".to_string();
+//!     let correlation_id = CorrelationId::new();
 //!
 //!     // Structured error with correlation ID
 //!     Err(ApiError::InvalidSearchQuery {
@@ -37,12 +38,11 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use codetriever_common::CommonError;
+use codetriever_common::CorrelationId;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 use tracing::{error, warn};
-use uuid::Uuid;
 
 /// Structured API error types with correlation IDs for request tracking.
 ///
@@ -74,8 +74,8 @@ pub enum ApiError {
         timeout_duration.as_millis()
     )]
     SearchServiceUnavailable {
-        correlation_id: String,
         timeout_duration: Duration,
+        correlation_id: CorrelationId,
     },
 
     /// Invalid or malformed search query.
@@ -91,7 +91,7 @@ pub enum ApiError {
     InvalidSearchQuery {
         query: String,
         reason: String,
-        correlation_id: String,
+        correlation_id: CorrelationId,
     },
 
     /// Database operation timed out.
@@ -105,7 +105,7 @@ pub enum ApiError {
     )]
     DatabaseTimeout {
         operation: String,
-        correlation_id: String,
+        correlation_id: CorrelationId,
     },
 
     /// Database connection or query failed.
@@ -119,7 +119,7 @@ pub enum ApiError {
     )]
     DatabaseError {
         operation: String,
-        correlation_id: String,
+        correlation_id: CorrelationId,
     },
 
     /// Resource not found in the system.
@@ -133,7 +133,7 @@ pub enum ApiError {
     )]
     ResourceNotFound {
         resource_id: String,
-        correlation_id: String,
+        correlation_id: CorrelationId,
     },
 
     /// Authentication or authorization failed.
@@ -143,7 +143,7 @@ pub enum ApiError {
     #[error("Access denied: {} (correlation: {})", reason, correlation_id)]
     AccessDenied {
         reason: String,
-        correlation_id: String,
+        correlation_id: CorrelationId,
     },
 
     /// Request failed validation.
@@ -157,8 +157,8 @@ pub enum ApiError {
     )]
     ValidationError {
         message: String,
-        correlation_id: String,
         field: Option<String>,
+        correlation_id: CorrelationId,
     },
 
     /// Rate limit exceeded.
@@ -172,7 +172,7 @@ pub enum ApiError {
     )]
     RateLimitExceeded {
         retry_after_seconds: u64,
-        correlation_id: String,
+        correlation_id: CorrelationId,
     },
 
     /// Internal server error with correlation ID.
@@ -180,7 +180,7 @@ pub enum ApiError {
     /// An unexpected error occurred that the user cannot fix. The correlation ID
     /// can be used for support requests and debugging.
     #[error("Internal server error (correlation: {})", correlation_id)]
-    InternalServerError { correlation_id: String },
+    InternalServerError { correlation_id: CorrelationId },
 
     /// Service temporarily unavailable.
     ///
@@ -193,17 +193,7 @@ pub enum ApiError {
     )]
     ServiceUnavailable {
         retry_after_seconds: u64,
-        correlation_id: String,
-    },
-
-    /// Legacy error wrapper for backward compatibility.
-    ///
-    /// This allows gradual migration from the old error system while maintaining
-    /// the correlation ID requirement for new error handling.
-    #[error("Legacy error: {} (correlation: {})", message, correlation_id)]
-    Legacy {
-        message: String,
-        correlation_id: String,
+        correlation_id: CorrelationId,
     },
 }
 
@@ -213,13 +203,13 @@ pub enum ApiError {
 /// users with actionable information while maintaining security by not exposing
 /// internal system details.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ErrorResponse {
+pub struct ApiErrorResponse {
     /// HTTP error code
     pub error: String,
     /// Human-readable error message
     pub message: String,
     /// Correlation ID for tracking and support
-    pub correlation_id: String,
+    pub correlation_id: CorrelationId,
     /// Optional additional details for debugging
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
@@ -228,30 +218,12 @@ pub struct ErrorResponse {
     pub retry_after: Option<u64>,
 }
 
-/// Generate a correlation ID for request tracking.
-///
-/// Creates a unique identifier that can be used to correlate logs, metrics,
-/// and error reports across services. The format is designed to be:
-/// - Unique across all requests
-/// - Human-readable for support tickets
-/// - Sortable by timestamp
-pub fn generate_correlation_id() -> String {
-    format!("req_{}", Uuid::new_v4().simple())
-}
-
-/// Helper to create correlation IDs with custom prefixes.
-///
-/// Useful for different types of operations or services.
-pub fn generate_correlation_id_with_prefix(prefix: &str) -> String {
-    format!("{}_{}", prefix, Uuid::new_v4().simple())
-}
-
 impl ApiError {
     /// Get the correlation ID from any error variant.
     ///
     /// This is useful for logging and monitoring, allowing you to extract
     /// the correlation ID regardless of the specific error type.
-    pub fn correlation_id(&self) -> &str {
+    pub const fn correlation_id(&self) -> &CorrelationId {
         match self {
             Self::SearchServiceUnavailable { correlation_id, .. }
             | Self::InvalidSearchQuery { correlation_id, .. }
@@ -262,8 +234,7 @@ impl ApiError {
             | Self::ValidationError { correlation_id, .. }
             | Self::RateLimitExceeded { correlation_id, .. }
             | Self::InternalServerError { correlation_id, .. }
-            | Self::ServiceUnavailable { correlation_id, .. }
-            | Self::Legacy { correlation_id, .. } => correlation_id,
+            | Self::ServiceUnavailable { correlation_id, .. } => correlation_id,
         }
     }
 
@@ -271,7 +242,7 @@ impl ApiError {
     ///
     /// Maps each error variant to the appropriate HTTP status code following
     /// REST API conventions and HTTP specifications.
-    pub fn status_code(&self) -> StatusCode {
+    pub const fn status_code(&self) -> StatusCode {
         match self {
             Self::InvalidSearchQuery { .. } | Self::ValidationError { .. } => {
                 StatusCode::BAD_REQUEST
@@ -279,7 +250,7 @@ impl ApiError {
             Self::AccessDenied { .. } => StatusCode::UNAUTHORIZED,
             Self::ResourceNotFound { .. } => StatusCode::NOT_FOUND,
             Self::RateLimitExceeded { .. } => StatusCode::TOO_MANY_REQUESTS,
-            Self::InternalServerError { .. } | Self::DatabaseError { .. } | Self::Legacy { .. } => {
+            Self::InternalServerError { .. } | Self::DatabaseError { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::SearchServiceUnavailable { .. }
@@ -291,7 +262,11 @@ impl ApiError {
     /// Create an invalid search query error.
     ///
     /// Use this for query validation failures with helpful user feedback.
-    pub fn invalid_query(query: String, reason: String, correlation_id: String) -> Self {
+    pub const fn invalid_query(
+        query: String,
+        reason: String,
+        correlation_id: CorrelationId,
+    ) -> Self {
         Self::InvalidSearchQuery {
             query,
             reason,
@@ -302,7 +277,7 @@ impl ApiError {
     /// Create a database timeout error.
     ///
     /// Use this when database operations exceed configured timeouts.
-    pub fn database_timeout(operation: String, correlation_id: String) -> Self {
+    pub const fn database_timeout(operation: String, correlation_id: CorrelationId) -> Self {
         Self::DatabaseTimeout {
             operation,
             correlation_id,
@@ -310,9 +285,9 @@ impl ApiError {
     }
 }
 
-/// Axum HTTP response implementation for ApiError.
+/// Axum HTTP response implementation for `ApiError`.
 ///
-/// This implementation automatically converts ApiError instances into proper
+/// This implementation automatically converts `ApiError` instances into proper
 /// HTTP responses with:
 /// - Correct status codes
 /// - JSON error bodies
@@ -321,7 +296,7 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status_code();
-        let correlation_id = self.correlation_id().to_string();
+        let correlation_id = self.correlation_id();
 
         // Log the error with correlation ID for debugging
         match &self {
@@ -332,7 +307,7 @@ impl IntoResponse for ApiError {
                     "Internal server error"
                 );
             }
-            Self::DatabaseError { .. } | Self::Legacy { .. } => {
+            Self::DatabaseError { .. } => {
                 error!(
                     correlation_id = %correlation_id,
                     error = %self,
@@ -357,14 +332,14 @@ impl IntoResponse for ApiError {
             }
         }
 
-        let error_response = ErrorResponse {
-            error: format!("{:?}", self)
+        let error_response = ApiErrorResponse {
+            error: format!("{self:?}")
                 .split("::")
                 .last()
                 .unwrap_or("Unknown")
                 .to_uppercase(),
             message: self.to_string(),
-            correlation_id,
+            correlation_id: correlation_id.clone(),
             details: None,
             retry_after: match &self {
                 Self::SearchServiceUnavailable { .. } => Some(60),
@@ -384,7 +359,7 @@ impl IntoResponse for ApiError {
         let mut response = (status, Json(error_response)).into_response();
 
         // Add correlation ID to response headers for client tracking
-        if let Ok(header_value) = correlation_id.parse() {
+        if let Ok(header_value) = correlation_id.to_string().parse() {
             response
                 .headers_mut()
                 .insert("X-Correlation-ID", header_value);
@@ -399,61 +374,3 @@ impl IntoResponse for ApiError {
 /// This type alias provides a convenient shorthand for API operations that
 /// return structured errors with correlation IDs and proper HTTP status codes.
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
-
-/// Legacy Result type for backward compatibility.
-///
-/// This maintains compatibility with existing code while encouraging migration
-/// to the new ApiResult type for better error handling.
-pub type Result<T> = std::result::Result<T, LegacyError>;
-
-/// Legacy error type for backward compatibility.
-///
-/// This preserves the old error interface while providing a migration path
-/// to the new structured ApiError system.
-#[derive(Debug, Error)]
-pub enum LegacyError {
-    #[error("IO error: {0}")]
-    Io(String),
-    #[error("Configuration error: {0}")]
-    Configuration(String),
-    #[error("Parser error: {0}")]
-    Parser(String),
-    #[error("Other error: {0}")]
-    Other(String),
-    #[error("Qdrant error: {0}")]
-    Qdrant(String),
-    #[error("Embedding error: {0}")]
-    Embedding(String),
-    #[error("Not found: {0}")]
-    NotFound(String),
-    #[error(transparent)]
-    Anyhow(#[from] anyhow::Error),
-}
-
-/// Implement the CommonError trait for legacy compatibility.
-impl CommonError for LegacyError {
-    fn io_error(msg: impl Into<String>) -> Self {
-        Self::Io(msg.into())
-    }
-
-    fn config_error(msg: impl Into<String>) -> Self {
-        Self::Configuration(msg.into())
-    }
-
-    fn parse_error(msg: impl Into<String>) -> Self {
-        Self::Parser(msg.into())
-    }
-
-    fn other_error(msg: impl Into<String>) -> Self {
-        Self::Other(msg.into())
-    }
-}
-
-// Legacy compatibility
-pub type Error = LegacyError;
-
-impl From<std::io::Error> for LegacyError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err.to_string())
-    }
-}

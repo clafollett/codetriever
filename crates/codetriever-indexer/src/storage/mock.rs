@@ -9,11 +9,23 @@ use crate::{
     storage::{StorageSearchResult, StorageStats, VectorStorage},
 };
 use async_trait::async_trait;
+use codetriever_common::CorrelationId;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-// Type alias to simplify the complex type
-type ChunkStore = Arc<Mutex<Vec<CodeChunk>>>;
+// Type aliases to simplify complex types
+type ChunkStore = Arc<Mutex<Vec<StoredChunk>>>;
+
+/// Chunk with repository context for mock storage
+#[derive(Debug, Clone)]
+pub struct StoredChunk {
+    pub chunk: CodeChunk,
+    pub repository_id: String,
+    pub branch: String,
+    pub generation: i64,
+    pub chunk_id: Uuid,
+    pub correlation_id: CorrelationId,
+}
 
 /// Mock storage backend for testing
 #[derive(Clone)]
@@ -49,6 +61,48 @@ impl MockStorage {
 
     /// Get the stored chunks (for test assertions)
     pub fn get_chunks(&self) -> Vec<CodeChunk> {
+        self.chunks
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|stored_chunk| stored_chunk.chunk.clone())
+            .collect()
+    }
+
+    /// Get chunks for a specific repository and branch (for repository isolation testing)
+    pub fn get_chunks_for_repo(&self, repo_id: &str, branch: &str) -> Vec<CodeChunk> {
+        self.chunks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|stored_chunk| {
+                stored_chunk.repository_id == repo_id && stored_chunk.branch == branch
+            })
+            .map(|stored_chunk| stored_chunk.chunk.clone())
+            .collect()
+    }
+
+    /// Count chunks by generation (for version testing)
+    pub fn chunk_count_by_generation(&self, generation: i64) -> usize {
+        self.chunks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|stored_chunk| stored_chunk.generation == generation)
+            .count()
+    }
+
+    /// Get the most recent correlation ID used (for tracing verification)
+    pub fn last_correlation_id(&self) -> Option<CorrelationId> {
+        self.chunks
+            .lock()
+            .unwrap()
+            .last()
+            .map(|stored_chunk| stored_chunk.correlation_id.clone())
+    }
+
+    /// Get stored chunks with full context (for advanced testing)
+    pub fn get_stored_chunks_with_context(&self) -> Vec<StoredChunk> {
         self.chunks.lock().unwrap().clone()
     }
 }
@@ -61,24 +115,13 @@ impl Default for MockStorage {
 
 #[async_trait]
 impl VectorStorage for MockStorage {
-    async fn store_chunks(&self, chunks: &[CodeChunk]) -> IndexerResult<usize> {
-        if self.fail_on_store {
-            return Err(crate::IndexerError::Storage(
-                "Mock storage configured to fail".into(),
-            ));
-        }
-
-        let mut stored = self.chunks.lock().unwrap();
-        stored.extend_from_slice(chunks);
-        Ok(chunks.len())
-    }
-
-    async fn store_chunks_with_ids(
+    async fn store_chunks(
         &self,
         repository_id: &str,
         branch: &str,
         chunks: &[CodeChunk],
         generation: i64,
+        correlation_id: &CorrelationId,
     ) -> IndexerResult<Vec<Uuid>> {
         if self.fail_on_store {
             return Err(crate::IndexerError::Storage(
@@ -96,7 +139,17 @@ impl VectorStorage for MockStorage {
             let chunk_id = Uuid::new_v5(&namespace, key.as_bytes());
 
             ids.push(chunk_id);
-            stored.push(chunk.clone());
+
+            // Store chunk with full repository context and correlation ID
+            let stored_chunk = StoredChunk {
+                chunk: chunk.clone(),
+                repository_id: repository_id.to_string(),
+                branch: branch.to_string(),
+                generation,
+                chunk_id,
+                correlation_id: correlation_id.clone(),
+            };
+            stored.push(stored_chunk);
         }
 
         Ok(ids)
@@ -106,6 +159,7 @@ impl VectorStorage for MockStorage {
         &self,
         _query_embedding: Vec<f32>,
         limit: usize,
+        correlation_id: &CorrelationId,
     ) -> IndexerResult<Vec<StorageSearchResult>> {
         if self.fail_on_search {
             return Err(crate::IndexerError::Storage(
@@ -115,13 +169,20 @@ impl VectorStorage for MockStorage {
 
         let stored = self.chunks.lock().unwrap();
 
+        // Log correlation ID for testing/debugging
+        tracing::debug!(
+            correlation_id = %correlation_id,
+            chunk_count = stored.len(),
+            "Mock search operation"
+        );
+
         // Return up to 'limit' chunks with mock similarity scores
         let results: Vec<StorageSearchResult> = stored
             .iter()
             .take(limit)
             .enumerate()
-            .map(|(i, chunk)| StorageSearchResult {
-                chunk: chunk.clone(),
+            .map(|(i, stored_chunk)| StorageSearchResult {
+                chunk: stored_chunk.chunk.clone(),
                 // Mock decreasing similarity scores
                 similarity: 1.0 - (i as f32 * 0.1),
             })
@@ -131,11 +192,10 @@ impl VectorStorage for MockStorage {
     }
 
     async fn delete_chunks(&self, chunk_ids: &[Uuid]) -> IndexerResult<()> {
-        // In a real mock, we'd track chunks by ID and remove them
-        // For simplicity, just clear all chunks when delete is called
         if !chunk_ids.is_empty() {
             let mut stored = self.chunks.lock().unwrap();
-            stored.clear();
+            // Remove chunks by their IDs
+            stored.retain(|stored_chunk| !chunk_ids.contains(&stored_chunk.chunk_id));
         }
         Ok(())
     }
@@ -195,11 +255,18 @@ mod tests {
             embedding: Some(vec![0.1; 768]),
         }];
 
-        let count = storage.store_chunks(&chunks).await.unwrap();
-        assert_eq!(count, 1);
+        let correlation_id = CorrelationId::new();
+        let chunk_ids = storage
+            .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
+            .await
+            .unwrap();
+        assert_eq!(chunk_ids.len(), 1);
 
         // Test search
-        let results = storage.search(vec![0.1; 768], 10).await.unwrap();
+        let results = storage
+            .search(vec![0.1; 768], 10, &correlation_id)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
 
         // Test stats
@@ -231,11 +298,130 @@ mod tests {
             embedding: Some(vec![0.1; 768]),
         }];
 
+        let correlation_id = CorrelationId::new();
         // Should fail to store
-        assert!(storage.store_chunks(&chunks).await.is_err());
+        assert!(
+            storage
+                .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
+                .await
+                .is_err()
+        );
 
         let storage = MockStorage::new().with_search_failure();
         // Should fail to search
-        assert!(storage.search(vec![0.1; 768], 10).await.is_err());
+        assert!(
+            storage
+                .search(vec![0.1; 768], 10, &correlation_id)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_repository_isolation() {
+        let storage = MockStorage::new();
+
+        let chunk1 = CodeChunk {
+            file_path: "main.rs".to_string(),
+            content: "fn main() {}".to_string(),
+            start_line: 1,
+            end_line: 1,
+            byte_start: 0,
+            byte_end: 12,
+            language: "rust".to_string(),
+            kind: Some("function".to_string()),
+            name: Some("main".to_string()),
+            token_count: Some(5),
+            embedding: Some(vec![0.1; 768]),
+        };
+
+        // Store in different repositories
+        let correlation_id1 = CorrelationId::new();
+        let correlation_id2 = CorrelationId::new();
+
+        storage
+            .store_chunks("repo1", "main", &[chunk1.clone()], 1, &correlation_id1)
+            .await
+            .unwrap();
+        storage
+            .store_chunks("repo2", "dev", &[chunk1.clone()], 1, &correlation_id2)
+            .await
+            .unwrap();
+
+        // Verify repository isolation
+        assert_eq!(storage.get_chunks_for_repo("repo1", "main").len(), 1);
+        assert_eq!(storage.get_chunks_for_repo("repo2", "dev").len(), 1);
+        assert_eq!(storage.get_chunks_for_repo("repo1", "dev").len(), 0);
+        assert_eq!(storage.get_chunks_for_repo("repo3", "main").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_generation_tracking() {
+        let storage = MockStorage::new();
+
+        let chunk = CodeChunk {
+            file_path: "test.rs".to_string(),
+            content: "test".to_string(),
+            start_line: 1,
+            end_line: 1,
+            byte_start: 0,
+            byte_end: 4,
+            language: "rust".to_string(),
+            kind: None,
+            name: None,
+            token_count: Some(1),
+            embedding: Some(vec![0.1; 768]),
+        };
+
+        let correlation_id = CorrelationId::new();
+
+        // Store chunks with different generations
+        storage
+            .store_chunks("repo", "main", &[chunk.clone()], 1, &correlation_id)
+            .await
+            .unwrap();
+        storage
+            .store_chunks("repo", "main", &[chunk.clone()], 2, &correlation_id)
+            .await
+            .unwrap();
+        storage
+            .store_chunks("repo", "main", &[chunk.clone()], 1, &correlation_id)
+            .await
+            .unwrap();
+
+        // Verify generation counting
+        assert_eq!(storage.chunk_count_by_generation(1), 2);
+        assert_eq!(storage.chunk_count_by_generation(2), 1);
+        assert_eq!(storage.chunk_count_by_generation(3), 0);
+    }
+
+    #[tokio::test]
+    async fn test_correlation_id_tracking() {
+        let storage = MockStorage::new();
+
+        let chunk = CodeChunk {
+            file_path: "test.rs".to_string(),
+            content: "test".to_string(),
+            start_line: 1,
+            end_line: 1,
+            byte_start: 0,
+            byte_end: 4,
+            language: "rust".to_string(),
+            kind: None,
+            name: None,
+            token_count: Some(1),
+            embedding: Some(vec![0.1; 768]),
+        };
+
+        // Test that correlation IDs are tracked
+        assert!(storage.last_correlation_id().is_none());
+
+        let correlation_id = CorrelationId::from("test-trace-123");
+        storage
+            .store_chunks("repo", "main", &[chunk], 1, &correlation_id)
+            .await
+            .unwrap();
+
+        assert_eq!(storage.last_correlation_id(), Some(correlation_id));
     }
 }

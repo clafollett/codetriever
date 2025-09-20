@@ -42,7 +42,10 @@ impl DbFileRepository {
 
 #[async_trait]
 impl FileRepository for DbFileRepository {
-    async fn ensure_project_branch(&self, ctx: &RepositoryContext) -> DatabaseResult<ProjectBranch> {
+    async fn ensure_project_branch(
+        &self,
+        ctx: &RepositoryContext,
+    ) -> DatabaseResult<ProjectBranch> {
         // Use write pool for INSERT/UPDATE operations
         let pool = self.pools.write_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -129,7 +132,7 @@ impl FileRepository for DbFileRepository {
                     // Use checked_add for generation tracking - overflow indicates data corruption
                     let new_generation = generation.checked_add(1).ok_or_else(|| {
                         DatabaseError::DataIntegrityError {
-                            operation: operation.clone(),
+                            operation: Box::new(operation.clone()),
                             message: "Generation counter overflow - indicates data corruption"
                                 .to_string(),
                             correlation_id: None,

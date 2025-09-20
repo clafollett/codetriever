@@ -2,6 +2,7 @@
 //!
 //! Run with: cargo test --test full_stack_integration -- --test-threads=1
 
+use codetriever_common::CorrelationId;
 use codetriever_data::{
     config::DatabaseConfig,
     generate_chunk_id,
@@ -181,10 +182,13 @@ fn helper() {
         println!("  [{i}] {id}");
     }
 
+    // Create a common correlation ID for Qdrant operations
+    let correlation_id = CorrelationId::new();
+
     // Verify data in Qdrant by searching
     let search_embedding = vec![0.5; 768]; // Mock embedding
     let search_results = storage
-        .search(search_embedding, 10)
+        .search(search_embedding, 10, &correlation_id)
         .await
         .expect("Failed to search Qdrant");
 
@@ -283,8 +287,9 @@ fn new_function() {
     // Verify Qdrant has the updated chunks
     // Since we can't easily verify deletion in Qdrant without unique identifiers,
     // we'll just ensure the new content is searchable
+
     let search_results2 = storage
-        .search(vec![0.5; 768], 20)
+        .search(vec![0.5; 768], 20, &correlation_id)
         .await
         .expect("Failed to search Qdrant after update");
 
@@ -382,8 +387,10 @@ async fn test_uuid_based_chunk_deletion() {
         },
     ];
 
+    let correlation_id = CorrelationId::new();
+
     let stored_ids = storage
-        .store_chunks_with_ids(test_repo, test_branch, &chunks, generation)
+        .store_chunks(test_repo, test_branch, &chunks, generation, &correlation_id)
         .await
         .expect("Failed to store chunks with IDs");
 
@@ -394,7 +401,7 @@ async fn test_uuid_based_chunk_deletion() {
 
     // Verify chunks exist in Qdrant
     let search_results = storage
-        .search(vec![0.15; 768], 10)
+        .search(vec![0.15; 768], 10, &correlation_id)
         .await
         .expect("Failed to search");
 
@@ -411,7 +418,7 @@ async fn test_uuid_based_chunk_deletion() {
 
     // Verify chunks are deleted
     let search_after_delete = storage
-        .search(vec![0.15; 768], 10)
+        .search(vec![0.15; 768], 10, &correlation_id)
         .await
         .expect("Failed to search after delete");
 

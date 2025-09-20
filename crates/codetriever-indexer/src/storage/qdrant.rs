@@ -37,6 +37,7 @@ use crate::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
+use codetriever_common::CorrelationId;
 use qdrant_client::qdrant::{
     CollectionExistsRequest, CreateCollection, DeleteCollection, Distance, PointId, PointStruct,
     SearchPoints, UpsertPoints, Value, VectorParams,
@@ -279,74 +280,6 @@ impl VectorStorage for QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(self, chunks), fields(chunk_count = chunks.len()))]
-    async fn store_chunks(&self, chunks: &[CodeChunk]) -> IndexerResult<usize> {
-        let mut points = Vec::new();
-        let mut point_id = 0u64;
-
-        // Convert chunks to Qdrant points
-        for chunk in chunks {
-            if let Some(ref embedding) = chunk.embedding {
-                let mut payload = HashMap::new();
-                payload.insert(
-                    "file_path".to_string(),
-                    Value::from(chunk.file_path.clone()),
-                );
-                payload.insert("content".to_string(), Value::from(chunk.content.clone()));
-                payload.insert(
-                    "start_line".to_string(),
-                    Value::from(chunk.start_line as i64),
-                );
-                payload.insert("end_line".to_string(), Value::from(chunk.end_line as i64));
-
-                // Add byte range information
-                payload.insert(
-                    "byte_start".to_string(),
-                    Value::from(chunk.byte_start as i64),
-                );
-                payload.insert("byte_end".to_string(), Value::from(chunk.byte_end as i64));
-
-                payload.insert("language".to_string(), Value::from(chunk.language.clone()));
-
-                // Store optional fields
-                if let Some(ref kind) = chunk.kind {
-                    payload.insert("kind".to_string(), Value::from(kind.clone()));
-                }
-                if let Some(ref name) = chunk.name {
-                    payload.insert("name".to_string(), Value::from(name.clone()));
-                }
-                if let Some(token_count) = chunk.token_count {
-                    payload.insert("token_count".to_string(), Value::from(token_count as i64));
-                }
-
-                points.push(PointStruct::new(
-                    point_id,
-                    embedding.clone(),
-                    Payload::from(payload),
-                ));
-                point_id += 1;
-            }
-        }
-
-        if points.is_empty() {
-            return Ok(0);
-        }
-
-        // Batch upsert points using new API
-        let upsert_request = UpsertPoints {
-            collection_name: self.collection_name.clone(),
-            points,
-            ..Default::default()
-        };
-
-        self.client
-            .upsert_points(upsert_request)
-            .await
-            .map_err(|e| IndexerError::Storage(format!("Failed to store chunks: {e}")))?;
-
-        Ok(point_id as usize)
-    }
-
     /// Performs semantic similarity search using vector embeddings.
     ///
     /// Searches for the most similar code chunks to the provided query vector
@@ -389,7 +322,12 @@ impl VectorStorage for QdrantStorage {
     /// # }
     /// ```
     #[tracing::instrument(skip(self, query), fields(query_dim = query.len(), limit))]
-    async fn search(&self, query: Vec<f32>, limit: usize) -> IndexerResult<Vec<StorageSearchResult>> {
+    async fn search(
+        &self,
+        query: Vec<f32>,
+        limit: usize,
+        correlation_id: &CorrelationId,
+    ) -> IndexerResult<Vec<StorageSearchResult>> {
         // Validate query vector dimensions
         if query.len() != 768 {
             return Err(IndexerError::Storage(format!(
@@ -397,6 +335,15 @@ impl VectorStorage for QdrantStorage {
                 query.len()
             )));
         }
+
+        // Log search operation with correlation ID for tracing
+        tracing::info!(
+            correlation_id = %correlation_id,
+            query_dim = query.len(),
+            limit = %limit,
+            collection = %self.collection_name,
+            "Performing vector search"
+        );
 
         let search_request = SearchPoints {
             collection_name: self.collection_name.clone(),
@@ -498,12 +445,13 @@ impl VectorStorage for QdrantStorage {
 
     /// Store chunks with deterministic IDs based on repository, branch, file, and generation
     #[tracing::instrument(skip(self, chunks), fields(repository_id, branch, chunk_count = chunks.len(), generation))]
-    async fn store_chunks_with_ids(
+    async fn store_chunks(
         &self,
         repository_id: &str,
         branch: &str,
         chunks: &[CodeChunk],
         generation: i64,
+        correlation_id: &CorrelationId,
     ) -> IndexerResult<Vec<uuid::Uuid>> {
         let mut points = Vec::new();
         let mut chunk_ids = Vec::new();
@@ -575,6 +523,16 @@ impl VectorStorage for QdrantStorage {
         if points.is_empty() {
             return Ok(Vec::new());
         }
+
+        // Log operation with correlation ID for tracing
+        tracing::info!(
+            correlation_id = %correlation_id,
+            repository_id = %repository_id,
+            branch = %branch,
+            generation = %generation,
+            chunk_count = chunks.len(),
+            "Storing chunks with deterministic IDs"
+        );
 
         // Batch upsert points using new API
         let upsert_request = UpsertPoints {

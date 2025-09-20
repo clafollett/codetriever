@@ -1,11 +1,9 @@
 pub mod indexer;
 pub mod service;
-pub mod streaming;
 pub mod watcher;
 
 pub use indexer::{IndexResult, Indexer};
 pub use service::{ApiIndexerService, IndexerService};
-pub use streaming::{StreamingConfig, StreamingIndexer};
 pub use watcher::FileWatcher;
 
 #[cfg(any(test, feature = "test-utils"))]
