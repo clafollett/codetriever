@@ -17,7 +17,7 @@
 //! - **Privacy-focused**: No code ever leaves your machine
 //! - **Performance-oriented**: Sub-10ms embedding for real-time search
 //! - **Language-agnostic**: Works with any programming language via transformer models
-use crate::Result;
+use crate::IndexerResult;
 use crate::embedding::jina_bert_v2::{BertModel as JinaBertModel, Config as JinaBertConfig};
 use candle_core::{D, DType, Device, Tensor};
 use candle_nn::VarBuilder;
@@ -28,25 +28,26 @@ use tokenizers::tokenizer::Tokenizer;
 
 /// Trait for embedding models to abstract over different BERT variants
 trait EmbedderModel: Send + Sync {
-    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor>;
+    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> IndexerResult<Tensor>;
 }
 
 impl EmbedderModel for BertModel {
-    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
+    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> IndexerResult<Tensor> {
         let token_type_ids = token_ids.zeros_like().map_err(|e| {
-            crate::Error::Embedding(format!("Failed to create token type ids: {e}"))
+            crate::IndexerError::Embedding(format!("Failed to create token type ids: {e}"))
         })?;
         // Pass attention mask through to BERT
         self.forward(token_ids, &token_type_ids, attention_mask)
-            .map_err(|e| crate::Error::Embedding(format!("BERT forward pass failed: {e}")))
+            .map_err(|e| crate::IndexerError::Embedding(format!("BERT forward pass failed: {e}")))
     }
 }
 
 impl EmbedderModel for JinaBertModel {
-    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
+    fn forward(&self, token_ids: &Tensor, attention_mask: Option<&Tensor>) -> IndexerResult<Tensor> {
         // Use our custom forward that handles attention mask
-        self.forward(token_ids, attention_mask)
-            .map_err(|e| crate::Error::Embedding(format!("JinaBERT forward pass failed: {e}")))
+        self.forward(token_ids, attention_mask).map_err(|e| {
+            crate::IndexerError::Embedding(format!("JinaBERT forward pass failed: {e}"))
+        })
     }
 }
 
@@ -108,10 +109,10 @@ impl EmbeddingModel {
     ///
     /// A vector of embeddings, where each embedding is a vector of f32 values.
     /// The dimensionality depends on the model (typically 768 for Jina models).
-    pub async fn embed(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+    pub async fn embed(&mut self, texts: &[&str]) -> IndexerResult<Vec<Vec<f32>>> {
         // Check for Hugging Face token for model downloading
         if std::env::var("HF_TOKEN").is_err() && std::env::var("HUGGING_FACE_HUB_TOKEN").is_err() {
-            return Err(crate::Error::config_error(
+            return Err(crate::IndexerError::config_error(
                 "HF_TOKEN or HUGGING_FACE_HUB_TOKEN environment variable required for model download",
             ));
         }
@@ -123,12 +124,12 @@ impl EmbeddingModel {
         let model = self
             .model
             .as_ref()
-            .ok_or_else(|| crate::Error::Embedding("Model not loaded".to_string()))?;
+            .ok_or_else(|| crate::IndexerError::Embedding("Model not loaded".to_string()))?;
 
         let tokenizer = self
             .tokenizer
             .as_mut()
-            .ok_or_else(|| crate::Error::Embedding("Tokenizer not loaded".to_string()))?;
+            .ok_or_else(|| crate::IndexerError::Embedding("Tokenizer not loaded".to_string()))?;
 
         // Use F32 for all models for numerical stability
         let dtype = DType::F32;
@@ -144,7 +145,7 @@ impl EmbeddingModel {
         let text_vec: Vec<&str> = texts.to_vec();
         let encodings = tokenizer
             .encode_batch(text_vec, true)
-            .map_err(|e| crate::Error::Embedding(format!("Tokenization failed: {e}")))?;
+            .map_err(|e| crate::IndexerError::Embedding(format!("Tokenization failed: {e}")))?;
         // Count truncations for summary
         let mut truncated_count = 0;
         for encoding in encodings.iter() {
@@ -182,7 +183,7 @@ impl EmbeddingModel {
         // Create tensors - input_ids stay as i64 as expected by embedding layer
         let input_ids =
             Tensor::from_vec(input_ids_vec.clone(), &[batch_size, max_len], &self.device).map_err(
-                |e| crate::Error::Embedding(format!("Failed to create input tensor: {e}")),
+                |e| crate::IndexerError::Embedding(format!("Failed to create input tensor: {e}")),
             )?;
 
         // Create attention mask based on actual attention mask from tokenizer
@@ -205,7 +206,7 @@ impl EmbeddingModel {
             Tensor::from_vec(attention_mask_vec, &[batch_size, max_len], &self.device)
                 .and_then(|t| t.to_dtype(dtype))
                 .map_err(|e| {
-                    crate::Error::Embedding(format!("Failed to create attention mask: {e}"))
+                    crate::IndexerError::Embedding(format!("Failed to create attention mask: {e}"))
                 })?;
 
         // Forward pass with attention mask
@@ -218,51 +219,57 @@ impl EmbeddingModel {
             .unsqueeze(2)
             .and_then(|m| m.broadcast_as(output.shape()))
             .and_then(|m| m.to_dtype(output.dtype()))
-            .map_err(|e| crate::Error::Embedding(format!("Failed to expand mask: {e}")))?;
+            .map_err(|e| crate::IndexerError::Embedding(format!("Failed to expand mask: {e}")))?;
 
         // Apply mask and sum
         let masked_output = output
             .broadcast_mul(&mask_expanded)
-            .map_err(|e| crate::Error::Embedding(format!("Failed to apply mask: {e}")))?;
+            .map_err(|e| crate::IndexerError::Embedding(format!("Failed to apply mask: {e}")))?;
         let sum_embeddings = masked_output
             .sum(1) // Sum over sequence dimension
-            .map_err(|e| crate::Error::Embedding(format!("Failed to sum embeddings: {e}")))?;
+            .map_err(|e| {
+                crate::IndexerError::Embedding(format!("Failed to sum embeddings: {e}"))
+            })?;
 
         // Sum mask for each sequence (to get count of non-padding tokens)
         // The Python version sums across dim 1 to get [batch, hidden_dim] -> [batch, 1]
         // We need to sum the expanded mask across the sequence dimension only
         let mask_sum = mask_expanded
             .sum(1) // This gives us [batch, hidden_dim] where each value is the count of non-padding tokens
-            .map_err(|e| crate::Error::Embedding(format!("Failed to sum mask: {e}")))?;
+            .map_err(|e| crate::IndexerError::Embedding(format!("Failed to sum mask: {e}")))?;
 
         // Avoid division by zero - clamp to minimum of 1e-9
         // mask_sum has shape [batch, hidden_dim] so we need to broadcast the minimum
         let min_val = 1e-9f32;
-        let mask_sum_clamped = mask_sum
-            .clamp(min_val, f32::INFINITY)
-            .map_err(|e| crate::Error::Embedding(format!("Failed to clamp mask sum: {e}")))?;
+        let mask_sum_clamped = mask_sum.clamp(min_val, f32::INFINITY).map_err(|e| {
+            crate::IndexerError::Embedding(format!("Failed to clamp mask sum: {e}"))
+        })?;
 
         // Mean pooling: divide sum by number of non-padding tokens
         let mean_pooled = sum_embeddings
             .broadcast_div(&mask_sum_clamped)
-            .map_err(|e| crate::Error::Embedding(format!("Failed to divide for mean: {e}")))?;
+            .map_err(|e| {
+                crate::IndexerError::Embedding(format!("Failed to divide for mean: {e}"))
+            })?;
 
         // Normalize embeddings for cosine similarity
         let norms = mean_pooled
             .sqr()
             .and_then(|x| x.sum_keepdim(D::Minus1))
             .and_then(|x| x.sqrt())
-            .map_err(|e| crate::Error::Embedding(format!("Failed to normalize: {e}")))?;
+            .map_err(|e| crate::IndexerError::Embedding(format!("Failed to normalize: {e}")))?;
 
-        let normalized = mean_pooled
-            .broadcast_div(&norms)
-            .map_err(|e| crate::Error::Embedding(format!("Failed to normalize embeddings: {e}")))?;
+        let normalized = mean_pooled.broadcast_div(&norms).map_err(|e| {
+            crate::IndexerError::Embedding(format!("Failed to normalize embeddings: {e}"))
+        })?;
 
         // Convert to Vec<Vec<f32>> - convert to F32 for output regardless of internal dtype
         let embeddings_vec = normalized
             .to_dtype(DType::F32)
             .and_then(|t| t.to_vec2::<f32>())
-            .map_err(|e| crate::Error::Embedding(format!("Failed to convert to vec: {e}")))?;
+            .map_err(|e| {
+                crate::IndexerError::Embedding(format!("Failed to convert to vec: {e}"))
+            })?;
 
         Ok(embeddings_vec)
     }
@@ -274,7 +281,7 @@ impl EmbeddingModel {
     }
 
     /// Ensures the model is loaded and ready for inference.
-    pub async fn ensure_model_loaded(&mut self) -> Result<()> {
+    pub async fn ensure_model_loaded(&mut self) -> IndexerResult<()> {
         if self.model.is_some() {
             return Ok(());
         }
@@ -284,18 +291,17 @@ impl EmbeddingModel {
         // Initialize API
         println!("Creating HuggingFace API client...");
         let api = Api::new()
-            .map_err(|e| crate::Error::Embedding(format!("Failed to create HF API: {e}")))?;
+            .map_err(|e| crate::IndexerError::Embedding(format!("Failed to create HF API: {e}")))?;
         let repo = api.repo(Repo::new(self.model_id.clone(), RepoType::Model));
 
         // Download config
-        let config_path = repo
-            .get("config.json")
-            .await
-            .map_err(|e| crate::Error::Embedding(format!("Failed to download config: {e}")))?;
+        let config_path = repo.get("config.json").await.map_err(|e| {
+            crate::IndexerError::Embedding(format!("Failed to download config: {e}"))
+        })?;
 
         // Parse config to determine model type
         let config_str = std::fs::read_to_string(&config_path)
-            .map_err(|e| crate::Error::Embedding(format!("Failed to read config: {e}")))?;
+            .map_err(|e| crate::IndexerError::Embedding(format!("Failed to read config: {e}")))?;
 
         // Check if it's a Jina model by looking for specific markers
         let is_jina = config_str.contains("\"position_embedding_type\": \"alibi\"")
@@ -306,7 +312,7 @@ impl EmbeddingModel {
         let weights_path = match repo.get("model.safetensors").await {
             Ok(path) => path,
             Err(_) => repo.get("pytorch_model.bin").await.map_err(|e| {
-                crate::Error::Embedding(format!("Failed to download model weights: {e}"))
+                crate::IndexerError::Embedding(format!("Failed to download model weights: {e}"))
             })?,
         };
 
@@ -314,7 +320,7 @@ impl EmbeddingModel {
         let model: Box<dyn EmbedderModel> = if is_jina {
             // Parse as JinaBERT config
             let mut config: JinaBertConfig = serde_json::from_str(&config_str).map_err(|e| {
-                crate::Error::Embedding(format!("Failed to parse Jina config: {e}"))
+                crate::IndexerError::Embedding(format!("Failed to parse Jina config: {e}"))
             })?;
 
             // Override max_position_embeddings to match our truncation limit
@@ -326,12 +332,12 @@ impl EmbeddingModel {
             let vb = unsafe {
                 VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &self.device)
                     .map_err(|e| {
-                        crate::Error::Embedding(format!("Failed to load Jina weights: {e}"))
+                        crate::IndexerError::Embedding(format!("Failed to load Jina weights: {e}"))
                     })?
             };
 
             Box::new(JinaBertModel::new(vb, &config).map_err(|e| {
-                crate::Error::Embedding(format!("Failed to initialize JinaBERT model: {e}"))
+                crate::IndexerError::Embedding(format!("Failed to initialize JinaBERT model: {e}"))
             })?)
         } else {
             // Standard loading for non-Jina models
@@ -339,33 +345,35 @@ impl EmbeddingModel {
                 unsafe {
                     VarBuilder::from_mmaped_safetensors(&[&weights_path], DType::F32, &self.device)
                         .map_err(|e| {
-                            crate::Error::Embedding(format!("Failed to load safetensors: {e}"))
+                            crate::IndexerError::Embedding(format!(
+                                "Failed to load safetensors: {e}"
+                            ))
                         })?
                 }
             } else {
                 VarBuilder::from_pth(&weights_path, DType::F32, &self.device).map_err(|e| {
-                    crate::Error::Embedding(format!("Failed to load pytorch weights: {e}"))
+                    crate::IndexerError::Embedding(format!("Failed to load pytorch weights: {e}"))
                 })?
             };
 
             // Parse as standard BERT config
             let config: BertConfig = serde_json::from_str(&config_str).map_err(|e| {
-                crate::Error::Embedding(format!("Failed to parse BERT config: {e}"))
+                crate::IndexerError::Embedding(format!("Failed to parse BERT config: {e}"))
             })?;
             Box::new(BertModel::load(vb, &config).map_err(|e| {
-                crate::Error::Embedding(format!("Failed to initialize BERT model: {e}"))
+                crate::IndexerError::Embedding(format!("Failed to initialize BERT model: {e}"))
             })?)
         };
 
         self.model = Some(model);
 
         // Download and load tokenizer
-        let tokenizer_path = repo
-            .get("tokenizer.json")
-            .await
-            .map_err(|e| crate::Error::Embedding(format!("Failed to download tokenizer: {e}")))?;
-        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| crate::Error::Embedding(format!("Failed to load tokenizer: {e}")))?;
+        let tokenizer_path = repo.get("tokenizer.json").await.map_err(|e| {
+            crate::IndexerError::Embedding(format!("Failed to download tokenizer: {e}"))
+        })?;
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|e| {
+            crate::IndexerError::Embedding(format!("Failed to load tokenizer: {e}"))
+        })?;
 
         // Configure tokenizer for batch processing with padding and truncation
         use tokenizers::{PaddingParams, TruncationParams};
@@ -378,7 +386,9 @@ impl EmbeddingModel {
                 max_length: self.max_tokens,
                 ..Default::default()
             }))
-            .map_err(|e| crate::Error::Embedding(format!("Failed to set truncation: {e}")))?;
+            .map_err(|e| {
+                crate::IndexerError::Embedding(format!("Failed to set truncation: {e}"))
+            })?;
 
         self.tokenizer = Some(tokenizer);
 

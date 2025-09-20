@@ -3,7 +3,7 @@
 //! This module provides trait abstractions for vector storage backends,
 //! enabling pluggable storage implementations and better testability.
 
-use crate::{CorrelationId, Result, parsing::CodeChunk};
+use crate::{CorrelationId, IndexerResult, parsing::CodeChunk};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -24,7 +24,7 @@ pub trait VectorStorage: Send + Sync {
     /// Store code chunks with their embeddings (backward compatible)
     ///
     /// Returns the number of chunks successfully stored
-    async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize> {
+    async fn store_chunks(&self, chunks: &[CodeChunk]) -> IndexerResult<usize> {
         let correlation_id = uuid::Uuid::new_v4().to_string();
         self.store_chunks_with_correlation_id(chunks, &correlation_id)
             .await
@@ -37,7 +37,7 @@ pub trait VectorStorage: Send + Sync {
         &self,
         chunks: &[CodeChunk],
         correlation_id: &CorrelationId,
-    ) -> Result<usize>;
+    ) -> IndexerResult<usize>;
 
     /// Store chunks with predetermined IDs (backward compatible)
     ///
@@ -49,7 +49,7 @@ pub trait VectorStorage: Send + Sync {
         branch: &str,
         chunks: &[CodeChunk],
         generation: i64,
-    ) -> Result<Vec<Uuid>> {
+    ) -> IndexerResult<Vec<Uuid>> {
         let correlation_id = uuid::Uuid::new_v4().to_string();
         self.store_chunks_with_ids_and_correlation_id(
             repository_id,
@@ -72,7 +72,7 @@ pub trait VectorStorage: Send + Sync {
         chunks: &[CodeChunk],
         generation: i64,
         correlation_id: &CorrelationId,
-    ) -> Result<Vec<Uuid>>;
+    ) -> IndexerResult<Vec<Uuid>>;
 
     /// Search for similar code chunks (backward compatible)
     ///
@@ -81,7 +81,7 @@ pub trait VectorStorage: Send + Sync {
         &self,
         query_embedding: Vec<f32>,
         limit: usize,
-    ) -> Result<Vec<StorageSearchResult>> {
+    ) -> IndexerResult<Vec<StorageSearchResult>> {
         let correlation_id = uuid::Uuid::new_v4().to_string();
         self.search_with_correlation_id(query_embedding, limit, &correlation_id)
             .await
@@ -95,26 +95,26 @@ pub trait VectorStorage: Send + Sync {
         query_embedding: Vec<f32>,
         limit: usize,
         correlation_id: &CorrelationId,
-    ) -> Result<Vec<StorageSearchResult>>;
+    ) -> IndexerResult<Vec<StorageSearchResult>>;
 
     /// Delete chunks by their IDs
     ///
     /// Used for atomic replacement when files are updated
-    async fn delete_chunks(&self, chunk_ids: &[Uuid]) -> Result<()>;
+    async fn delete_chunks(&self, chunk_ids: &[Uuid]) -> IndexerResult<()>;
 
     /// Check if the storage collection exists
-    async fn collection_exists(&self) -> Result<bool>;
+    async fn collection_exists(&self) -> IndexerResult<bool>;
 
     /// Create the storage collection if it doesn't exist
-    async fn ensure_collection(&self) -> Result<()>;
+    async fn ensure_collection(&self) -> IndexerResult<()>;
 
     /// Drop the entire collection
     ///
     /// WARNING: This deletes all data in the collection
-    async fn drop_collection(&self) -> Result<bool>;
+    async fn drop_collection(&self) -> IndexerResult<bool>;
 
     /// Get storage statistics
-    async fn get_stats(&self) -> Result<StorageStats>;
+    async fn get_stats(&self) -> IndexerResult<StorageStats>;
 }
 
 /// Statistics about the vector storage

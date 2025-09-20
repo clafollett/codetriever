@@ -1,7 +1,7 @@
 //! Jina model token counter implementation
 
 use super::traits::TokenCounter;
-use crate::Result;
+use crate::IndexerResult;
 use std::sync::Arc;
 use tokenizers::Tokenizer;
 
@@ -21,7 +21,7 @@ impl JinaTokenCounter {
     }
 
     /// Load tokenizer from the model
-    pub async fn from_model_id(model_id: &str, max_tokens: usize) -> Result<Self> {
+    pub async fn from_model_id(model_id: &str, max_tokens: usize) -> IndexerResult<Self> {
         use crate::embedding::model::EmbeddingModel;
 
         // Create a temporary model just to get the tokenizer
@@ -30,7 +30,7 @@ impl JinaTokenCounter {
 
         let tokenizer = model
             .get_tokenizer()
-            .ok_or_else(|| crate::Error::Other("Failed to load tokenizer".into()))?;
+            .ok_or_else(|| crate::IndexerError::Other("Failed to load tokenizer".into()))?;
 
         Ok(Self {
             tokenizer,

@@ -4,7 +4,7 @@
 //! useful for unit tests and development without requiring a real Qdrant instance.
 
 use crate::{
-    Result,
+    IndexerResult,
     parsing::CodeChunk,
     storage::{StorageSearchResult, StorageStats, VectorStorage},
 };
@@ -61,9 +61,9 @@ impl Default for MockStorage {
 
 #[async_trait]
 impl VectorStorage for MockStorage {
-    async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize> {
+    async fn store_chunks(&self, chunks: &[CodeChunk]) -> IndexerResult<usize> {
         if self.fail_on_store {
-            return Err(crate::Error::Storage(
+            return Err(crate::IndexerError::Storage(
                 "Mock storage configured to fail".into(),
             ));
         }
@@ -79,9 +79,9 @@ impl VectorStorage for MockStorage {
         branch: &str,
         chunks: &[CodeChunk],
         generation: i64,
-    ) -> Result<Vec<Uuid>> {
+    ) -> IndexerResult<Vec<Uuid>> {
         if self.fail_on_store {
-            return Err(crate::Error::Storage(
+            return Err(crate::IndexerError::Storage(
                 "Mock storage configured to fail".into(),
             ));
         }
@@ -106,9 +106,9 @@ impl VectorStorage for MockStorage {
         &self,
         _query_embedding: Vec<f32>,
         limit: usize,
-    ) -> Result<Vec<StorageSearchResult>> {
+    ) -> IndexerResult<Vec<StorageSearchResult>> {
         if self.fail_on_search {
-            return Err(crate::Error::Storage(
+            return Err(crate::IndexerError::Storage(
                 "Mock storage configured to fail".into(),
             ));
         }
@@ -130,7 +130,7 @@ impl VectorStorage for MockStorage {
         Ok(results)
     }
 
-    async fn delete_chunks(&self, chunk_ids: &[Uuid]) -> Result<()> {
+    async fn delete_chunks(&self, chunk_ids: &[Uuid]) -> IndexerResult<()> {
         // In a real mock, we'd track chunks by ID and remove them
         // For simplicity, just clear all chunks when delete is called
         if !chunk_ids.is_empty() {
@@ -140,23 +140,23 @@ impl VectorStorage for MockStorage {
         Ok(())
     }
 
-    async fn collection_exists(&self) -> Result<bool> {
+    async fn collection_exists(&self) -> IndexerResult<bool> {
         Ok(*self.collection_exists.lock().unwrap())
     }
 
-    async fn ensure_collection(&self) -> Result<()> {
+    async fn ensure_collection(&self) -> IndexerResult<()> {
         *self.collection_exists.lock().unwrap() = true;
         Ok(())
     }
 
-    async fn drop_collection(&self) -> Result<bool> {
+    async fn drop_collection(&self) -> IndexerResult<bool> {
         let existed = *self.collection_exists.lock().unwrap();
         *self.collection_exists.lock().unwrap() = false;
         self.chunks.lock().unwrap().clear();
         Ok(existed)
     }
 
-    async fn get_stats(&self) -> Result<StorageStats> {
+    async fn get_stats(&self) -> IndexerResult<StorageStats> {
         let stored = self.chunks.lock().unwrap();
         Ok(StorageStats {
             vector_count: stored.len(),

@@ -4,7 +4,7 @@
 //! files in batches without loading all chunks into memory at once.
 
 use crate::{
-    Result,
+    IndexerResult,
     embedding::EmbeddingService,
     parsing::{CodeChunk, CodeParser, get_language_from_extension},
     storage::VectorStorage,
@@ -65,7 +65,7 @@ where
     }
 
     /// Process files in a streaming fashion, yielding control periodically
-    pub async fn index_directory(&mut self, path: &Path, recursive: bool) -> Result<IndexResult> {
+    pub async fn index_directory(&mut self, path: &Path, recursive: bool) -> IndexerResult<IndexResult> {
         // Ensure embedding provider is ready
         self.embedding_service.provider().ensure_ready().await?;
 
@@ -131,7 +131,7 @@ where
     }
 
     /// Process a batch of chunks: generate embeddings and store
-    async fn process_chunk_batch(&mut self, chunks: &mut [CodeChunk]) -> Result<usize> {
+    async fn process_chunk_batch(&mut self, chunks: &mut [CodeChunk]) -> IndexerResult<usize> {
         if chunks.is_empty() {
             return Ok(0);
         }
@@ -162,7 +162,7 @@ pub struct IndexResult {
 }
 
 // Helper function to collect files
-fn collect_files(dir: &Path, recursive: bool) -> Result<Vec<std::path::PathBuf>> {
+fn collect_files(dir: &Path, recursive: bool) -> IndexerResult<Vec<std::path::PathBuf>> {
     use walkdir::WalkDir;
 
     let walker = if recursive {
@@ -210,7 +210,7 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingService for TestEmbeddingService {
-        async fn generate_embeddings(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+        async fn generate_embeddings(&self, texts: Vec<&str>) -> IndexerResult<Vec<Vec<f32>>> {
             // Return dummy embeddings using the optimized interface
             Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
         }
@@ -234,7 +234,7 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingProvider for TestEmbeddingProvider {
-        async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        async fn embed_batch(&self, texts: &[&str]) -> IndexerResult<Vec<Vec<f32>>> {
             // Return dummy embeddings for each text
             Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
         }
@@ -255,7 +255,7 @@ mod tests {
             true
         }
 
-        async fn ensure_ready(&self) -> Result<()> {
+        async fn ensure_ready(&self) -> IndexerResult<()> {
             Ok(())
         }
     }

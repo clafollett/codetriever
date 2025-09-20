@@ -20,7 +20,7 @@ pub mod mock;
 pub use chunk_id::{generate_chunk_id, hash_content};
 pub use client::DataClient;
 pub use config::DatabaseConfig;
-pub use error::{DatabaseError, DatabaseErrorExt, DatabaseOperation, PoolType};
+pub use error::{ConnectionPoolType, DatabaseError, DatabaseErrorExt, DatabaseOperation};
 pub use migrations::{run_migrations, wait_for_migrations};
 pub use models::*;
 pub use pool::{create_pool, initialize_database};

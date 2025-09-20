@@ -1,6 +1,6 @@
 //! Code parsing module for extracting meaningful code elements using tree-sitter and heuristics
 
-use crate::Result;
+use crate::IndexerResult;
 use crate::parsing::languages::get_language_config;
 use crate::parsing::traits::ContentParser;
 use once_cell::sync::Lazy;
@@ -43,7 +43,7 @@ static QUERY_CACHE: Lazy<std::sync::Mutex<QueryCache>> =
     Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
 
 /// Get a cached tree-sitter query, compiling it only once per (language, query_str) pair
-fn get_cached_query(language: &Language, query_str: &str) -> Result<Arc<Query>> {
+fn get_cached_query(language: &Language, query_str: &str) -> IndexerResult<Arc<Query>> {
     // Create cache key using language pointer address (more reliable than language.id())
     let lang_ptr = language as *const Language as usize;
     let key = (lang_ptr, query_str.to_string());
@@ -52,7 +52,7 @@ fn get_cached_query(language: &Language, query_str: &str) -> Result<Arc<Query>> 
     {
         let cache = QUERY_CACHE
             .lock()
-            .map_err(|_| crate::Error::parse_error("Query cache lock poisoned".to_string()))?;
+            .map_err(|_| crate::IndexerError::parse_error("Query cache lock poisoned".to_string()))?;
         if let Some(cached_query) = cache.get(&key) {
             return Ok(cached_query.clone());
         }
@@ -60,14 +60,14 @@ fn get_cached_query(language: &Language, query_str: &str) -> Result<Arc<Query>> 
 
     // Compile query if not cached
     let query = Query::new(language, query_str)
-        .map_err(|e| crate::Error::parse_error(format!("Failed to compile query: {e}")))?;
+        .map_err(|e| crate::IndexerError::parse_error(format!("Failed to compile query: {e}")))?;
     let arc_query = Arc::new(query);
 
     // Cache the compiled query
     {
         let mut cache = QUERY_CACHE
             .lock()
-            .map_err(|_| crate::Error::parse_error("Query cache lock poisoned".to_string()))?;
+            .map_err(|_| crate::IndexerError::parse_error("Query cache lock poisoned".to_string()))?;
         cache.insert(key, arc_query.clone());
     }
 
@@ -420,7 +420,7 @@ impl CodeParser {
     }
 
     /// Parses source code and extracts meaningful code chunks
-    pub fn parse(&self, code: &str, language: &str, file_path: &str) -> Result<Vec<CodeChunk>> {
+    pub fn parse(&self, code: &str, language: &str, file_path: &str) -> IndexerResult<Vec<CodeChunk>> {
         // Normalize line endings to LF for consistent parsing
         // This handles files with mixed line endings (CRLF, LF, or both)
         let normalized_code = code.replace("\r\n", "\n").replace('\r', "\n");
@@ -456,7 +456,7 @@ impl CodeParser {
         file_path: &str,
         tree_sitter_language: &tree_sitter::Language,
         query_str: &str,
-    ) -> Result<Vec<CodeChunk>> {
+    ) -> IndexerResult<Vec<CodeChunk>> {
         // Create a parser for this language
         let mut parser = Self::create_parser_for_language(tree_sitter_language)
             .ok_or_else(|| anyhow::anyhow!("Failed to create parser for language"))?;
@@ -554,7 +554,7 @@ impl CodeParser {
         language: &str,
         file_path: &str,
         config: Option<&'static crate::parsing::languages::LanguageConfig>,
-    ) -> Result<Vec<CodeChunk>> {
+    ) -> IndexerResult<Vec<CodeChunk>> {
         let mut chunks = Vec::new();
 
         // Line endings are already normalized to LF in parse()
@@ -899,7 +899,7 @@ impl ContentParser for CodeParser {
         "tree-sitter-parser"
     }
 
-    fn parse(&self, content: &str, language: &str, file_path: &str) -> Result<Vec<CodeChunk>> {
+    fn parse(&self, content: &str, language: &str, file_path: &str) -> IndexerResult<Vec<CodeChunk>> {
         // Delegate to the existing parse method
         CodeParser::parse(self, content, language, file_path)
     }

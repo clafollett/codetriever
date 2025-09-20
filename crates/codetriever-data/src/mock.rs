@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use crate::error::{DatabaseError, DatabaseOperation, Result};
+use crate::error::{DatabaseError, DatabaseOperation, DatabaseResult};
 
 use crate::models::{
     ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
@@ -69,7 +69,7 @@ impl MockFileRepository {
     }
 
     /// Check if should fail and reset
-    fn check_fail(&self) -> Result<()> {
+    fn check_fail(&self) -> DatabaseResult<()> {
         let should_fail = *self.should_fail_next.lock().unwrap();
         if should_fail {
             *self.should_fail_next.lock().unwrap() = false;
@@ -88,7 +88,10 @@ impl MockFileRepository {
 
 #[async_trait]
 impl FileRepository for MockFileRepository {
-    async fn ensure_project_branch(&self, ctx: &RepositoryContext) -> Result<ProjectBranch> {
+    async fn ensure_project_branch(
+        &self,
+        ctx: &RepositoryContext,
+    ) -> DatabaseResult<ProjectBranch> {
         self.check_fail()?;
 
         let key = (ctx.repository_id.clone(), ctx.branch.clone());
@@ -111,7 +114,7 @@ impl FileRepository for MockFileRepository {
         branch: &str,
         file_path: &str,
         content_hash: &str,
-    ) -> Result<FileState> {
+    ) -> DatabaseResult<FileState> {
         self.check_fail()?;
 
         let key = (
@@ -136,7 +139,7 @@ impl FileRepository for MockFileRepository {
         repository_id: &str,
         branch: &str,
         metadata: &FileMetadata,
-    ) -> Result<IndexedFile> {
+    ) -> DatabaseResult<IndexedFile> {
         self.check_fail()?;
 
         let key = (
@@ -166,7 +169,7 @@ impl FileRepository for MockFileRepository {
         repository_id: &str,
         branch: &str,
         chunks: Vec<ChunkMetadata>,
-    ) -> Result<()> {
+    ) -> DatabaseResult<()> {
         self.check_fail()?;
 
         let mut stored_chunks = self.chunks.lock().unwrap();
@@ -184,7 +187,7 @@ impl FileRepository for MockFileRepository {
         branch: &str,
         file_path: &str,
         new_generation: i64,
-    ) -> Result<Vec<Uuid>> {
+    ) -> DatabaseResult<Vec<Uuid>> {
         self.check_fail()?;
 
         let mut chunks = self.chunks.lock().unwrap();
@@ -214,7 +217,7 @@ impl FileRepository for MockFileRepository {
         repository_id: &str,
         branch: &str,
         commit_sha: Option<&str>,
-    ) -> Result<IndexingJob> {
+    ) -> DatabaseResult<IndexingJob> {
         self.check_fail()?;
 
         let job_id = Uuid::new_v4();
@@ -241,7 +244,7 @@ impl FileRepository for MockFileRepository {
         job_id: &Uuid,
         files_processed: i32,
         chunks_created: i32,
-    ) -> Result<()> {
+    ) -> DatabaseResult<()> {
         self.check_fail()?;
 
         let mut jobs = self.jobs.lock().unwrap();
@@ -257,7 +260,7 @@ impl FileRepository for MockFileRepository {
         job_id: &Uuid,
         status: JobStatus,
         error: Option<String>,
-    ) -> Result<()> {
+    ) -> DatabaseResult<()> {
         self.check_fail()?;
 
         let mut jobs = self.jobs.lock().unwrap();
@@ -274,7 +277,7 @@ impl FileRepository for MockFileRepository {
         repository_id: &str,
         branch: &str,
         file_path: &str,
-    ) -> Result<Vec<ChunkMetadata>> {
+    ) -> DatabaseResult<Vec<ChunkMetadata>> {
         self.check_fail()?;
 
         let chunks = self.chunks.lock().unwrap();
@@ -291,7 +294,7 @@ impl FileRepository for MockFileRepository {
         &self,
         repository_id: &str,
         branch: &str,
-    ) -> Result<Vec<IndexedFile>> {
+    ) -> DatabaseResult<Vec<IndexedFile>> {
         self.check_fail()?;
 
         let files = self.indexed_files.lock().unwrap();
@@ -302,7 +305,7 @@ impl FileRepository for MockFileRepository {
             .collect())
     }
 
-    async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> Result<bool> {
+    async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> DatabaseResult<bool> {
         self.check_fail()?;
 
         let jobs = self.jobs.lock().unwrap();
@@ -318,7 +321,7 @@ impl FileRepository for MockFileRepository {
         repository_id: &str,
         branch: &str,
         file_path: &str,
-    ) -> Result<Option<IndexedFile>> {
+    ) -> DatabaseResult<Option<IndexedFile>> {
         self.check_fail()?;
 
         let key = (
@@ -330,7 +333,7 @@ impl FileRepository for MockFileRepository {
         Ok(files.get(&key).cloned())
     }
 
-    async fn get_files_metadata(&self, file_paths: &[&str]) -> Result<Vec<IndexedFile>> {
+    async fn get_files_metadata(&self, file_paths: &[&str]) -> DatabaseResult<Vec<IndexedFile>> {
         self.check_fail()?;
 
         let files = self.indexed_files.lock().unwrap();
@@ -352,7 +355,7 @@ impl FileRepository for MockFileRepository {
         &self,
         repository_id: &str,
         branch: &str,
-    ) -> Result<Option<ProjectBranch>> {
+    ) -> DatabaseResult<Option<ProjectBranch>> {
         self.check_fail()?;
 
         let key = (repository_id.to_string(), branch.to_string());
@@ -363,7 +366,7 @@ impl FileRepository for MockFileRepository {
     async fn get_project_branches(
         &self,
         repo_branches: &[(String, String)],
-    ) -> Result<Vec<ProjectBranch>> {
+    ) -> DatabaseResult<Vec<ProjectBranch>> {
         self.check_fail()?;
 
         let branches = self.project_branches.lock().unwrap();

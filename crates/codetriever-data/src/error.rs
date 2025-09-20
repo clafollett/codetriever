@@ -8,11 +8,11 @@ use thiserror::Error;
 use uuid::Uuid;
 
 /// Result type alias for database operations
-pub type Result<T> = std::result::Result<T, DatabaseError>;
+pub type DatabaseResult<T> = std::result::Result<T, DatabaseError>;
 
 /// Pool type for connection pool identification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PoolType {
+pub enum ConnectionPoolType {
     /// Write pool for INSERT/UPDATE/DELETE operations
     Write,
     /// Read pool for SELECT queries
@@ -21,7 +21,7 @@ pub enum PoolType {
     Analytics,
 }
 
-impl fmt::Display for PoolType {
+impl fmt::Display for ConnectionPoolType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Write => write!(f, "write"),
@@ -233,7 +233,7 @@ pub enum DatabaseError {
         "Connection pool exhausted for {pool_type} pool (max={max_connections}, timeout={timeout_secs}s, correlation_id={correlation_id:?})"
     )]
     ConnectionPoolExhausted {
-        pool_type: PoolType,
+        pool_type: ConnectionPoolType,
         max_connections: u32,
         timeout_secs: u64,
         correlation_id: Option<String>,
@@ -244,7 +244,7 @@ pub enum DatabaseError {
         "Failed to create {pool_type} connection pool: {message} (correlation_id={correlation_id:?})"
     )]
     PoolCreationFailed {
-        pool_type: PoolType,
+        pool_type: ConnectionPoolType,
         message: String,
         correlation_id: Option<String>,
         #[source]
@@ -256,7 +256,7 @@ pub enum DatabaseError {
         "Database connection failed for {pool_type} pool: {message} (correlation_id={correlation_id:?})"
     )]
     ConnectionFailed {
-        pool_type: PoolType,
+        pool_type: ConnectionPoolType,
         message: String,
         correlation_id: Option<String>,
         #[source]
@@ -410,7 +410,7 @@ impl DatabaseError {
 
     /// Create a connection failed error
     pub fn connection_failed(
-        pool_type: PoolType,
+        pool_type: ConnectionPoolType,
         source: sqlx::Error,
         correlation_id: Option<String>,
     ) -> Self {
@@ -424,7 +424,7 @@ impl DatabaseError {
 
     /// Create a pool exhausted error
     pub const fn pool_exhausted(
-        pool_type: PoolType,
+        pool_type: ConnectionPoolType,
         max_connections: u32,
         timeout_secs: u64,
         correlation_id: Option<String>,
@@ -514,7 +514,11 @@ pub trait DatabaseErrorExt<T> {
     ///
     /// # Errors
     /// Returns `DatabaseError` with operation context and correlation ID
-    fn map_db_err(self, operation: DatabaseOperation, correlation_id: Option<String>) -> Result<T>;
+    fn map_db_err(
+        self,
+        operation: DatabaseOperation,
+        correlation_id: Option<String>,
+    ) -> DatabaseResult<T>;
 
     /// Convert to `DatabaseError` with operation context and custom error mapping
     ///
@@ -525,13 +529,17 @@ pub trait DatabaseErrorExt<T> {
         operation: DatabaseOperation,
         correlation_id: Option<String>,
         f: F,
-    ) -> Result<T>
+    ) -> DatabaseResult<T>
     where
         F: FnOnce(sqlx::Error) -> DatabaseError;
 }
 
 impl<T> DatabaseErrorExt<T> for std::result::Result<T, sqlx::Error> {
-    fn map_db_err(self, operation: DatabaseOperation, correlation_id: Option<String>) -> Result<T> {
+    fn map_db_err(
+        self,
+        operation: DatabaseOperation,
+        correlation_id: Option<String>,
+    ) -> DatabaseResult<T> {
         self.map_err(|e| DatabaseError::query_failed(operation, e, correlation_id))
     }
 
@@ -541,7 +549,7 @@ impl<T> DatabaseErrorExt<T> for std::result::Result<T, sqlx::Error> {
         _operation: DatabaseOperation,
         correlation_id: Option<String>,
         f: F,
-    ) -> Result<T>
+    ) -> DatabaseResult<T>
     where
         F: FnOnce(sqlx::Error) -> DatabaseError,
     {
@@ -567,9 +575,9 @@ mod tests {
 
     #[test]
     fn test_pool_type_display() {
-        assert_eq!(PoolType::Write.to_string(), "write");
-        assert_eq!(PoolType::Read.to_string(), "read");
-        assert_eq!(PoolType::Analytics.to_string(), "analytics");
+        assert_eq!(ConnectionPoolType::Write.to_string(), "write");
+        assert_eq!(ConnectionPoolType::Read.to_string(), "read");
+        assert_eq!(ConnectionPoolType::Analytics.to_string(), "analytics");
     }
 
     #[test]
@@ -587,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_correlation_id_propagation() {
-        let error = DatabaseError::pool_exhausted(PoolType::Write, 10, 30, None);
+        let error = DatabaseError::pool_exhausted(ConnectionPoolType::Write, 10, 30, None);
 
         let error_with_id = error.with_correlation_id("test-123".to_string());
         assert_eq!(error_with_id.correlation_id(), Some("test-123"));

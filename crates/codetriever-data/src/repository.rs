@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::error::{DatabaseError, DatabaseErrorExt, DatabaseOperation, Result};
+use crate::error::{DatabaseError, DatabaseErrorExt, DatabaseOperation, DatabaseResult};
 use crate::models::{
     ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
     RepositoryContext,
@@ -42,7 +42,7 @@ impl DbFileRepository {
 
 #[async_trait]
 impl FileRepository for DbFileRepository {
-    async fn ensure_project_branch(&self, ctx: &RepositoryContext) -> Result<ProjectBranch> {
+    async fn ensure_project_branch(&self, ctx: &RepositoryContext) -> DatabaseResult<ProjectBranch> {
         // Use write pool for INSERT/UPDATE operations
         let pool = self.pools.write_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -88,7 +88,7 @@ impl FileRepository for DbFileRepository {
         branch: &str,
         file_path: &str,
         content_hash: &str,
-    ) -> Result<FileState> {
+    ) -> DatabaseResult<FileState> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -149,7 +149,7 @@ impl FileRepository for DbFileRepository {
         repository_id: &str,
         branch: &str,
         metadata: &FileMetadata,
-    ) -> Result<IndexedFile> {
+    ) -> DatabaseResult<IndexedFile> {
         // Use write pool for INSERT operations
         let pool = self.pools.write_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -211,7 +211,7 @@ impl FileRepository for DbFileRepository {
         repository_id: &str,
         branch: &str,
         chunks: Vec<ChunkMetadata>,
-    ) -> Result<()> {
+    ) -> DatabaseResult<()> {
         if chunks.is_empty() {
             return Ok(());
         }
@@ -302,7 +302,7 @@ impl FileRepository for DbFileRepository {
         branch: &str,
         file_path: &str,
         new_generation: i64,
-    ) -> Result<Vec<Uuid>> {
+    ) -> DatabaseResult<Vec<Uuid>> {
         // Use analytics pool for operations that might affect many rows
         let pool = self.pools.analytics_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -336,7 +336,7 @@ impl FileRepository for DbFileRepository {
         repository_id: &str,
         branch: &str,
         commit_sha: Option<&str>,
-    ) -> Result<IndexingJob> {
+    ) -> DatabaseResult<IndexingJob> {
         // Use write pool for INSERT
         let pool = self.pools.write_pool();
         let job_id = Uuid::new_v4();
@@ -386,7 +386,7 @@ impl FileRepository for DbFileRepository {
         job_id: &Uuid,
         files_processed: i32,
         chunks_created: i32,
-    ) -> Result<()> {
+    ) -> DatabaseResult<()> {
         // Use write pool for UPDATE
         let pool = self.pools.write_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -416,7 +416,7 @@ impl FileRepository for DbFileRepository {
         job_id: &Uuid,
         status: JobStatus,
         error: Option<String>,
-    ) -> Result<()> {
+    ) -> DatabaseResult<()> {
         // Use write pool for UPDATE operations
         let pool = self.pools.write_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -467,7 +467,7 @@ impl FileRepository for DbFileRepository {
         repository_id: &str,
         branch: &str,
         file_path: &str,
-    ) -> Result<Vec<ChunkMetadata>> {
+    ) -> DatabaseResult<Vec<ChunkMetadata>> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -522,7 +522,7 @@ impl FileRepository for DbFileRepository {
         &self,
         repository_id: &str,
         branch: &str,
-    ) -> Result<Vec<IndexedFile>> {
+    ) -> DatabaseResult<Vec<IndexedFile>> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -565,7 +565,7 @@ impl FileRepository for DbFileRepository {
         Ok(files)
     }
 
-    async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> Result<bool> {
+    async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> DatabaseResult<bool> {
         // Use read pool for quick SELECT operations
         let pool = self.pools.read_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -599,7 +599,7 @@ impl FileRepository for DbFileRepository {
         repository_id: &str,
         branch: &str,
         file_path: &str,
-    ) -> Result<Option<IndexedFile>> {
+    ) -> DatabaseResult<Option<IndexedFile>> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -641,7 +641,7 @@ impl FileRepository for DbFileRepository {
     }
 
     #[tracing::instrument(skip(self), fields(file_count = file_paths.len()))]
-    async fn get_files_metadata(&self, file_paths: &[&str]) -> Result<Vec<IndexedFile>> {
+    async fn get_files_metadata(&self, file_paths: &[&str]) -> DatabaseResult<Vec<IndexedFile>> {
         if file_paths.is_empty() {
             return Ok(vec![]);
         }
@@ -693,7 +693,7 @@ impl FileRepository for DbFileRepository {
         &self,
         repository_id: &str,
         branch: &str,
-    ) -> Result<Option<ProjectBranch>> {
+    ) -> DatabaseResult<Option<ProjectBranch>> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -731,7 +731,7 @@ impl FileRepository for DbFileRepository {
     async fn get_project_branches(
         &self,
         repo_branches: &[(String, String)],
-    ) -> Result<Vec<ProjectBranch>> {
+    ) -> DatabaseResult<Vec<ProjectBranch>> {
         if repo_branches.is_empty() {
             return Ok(Vec::new());
         }

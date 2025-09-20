@@ -1,7 +1,7 @@
 //! Trait definitions for content parsing
 
 use super::code_parser::CodeChunk;
-use crate::Result;
+use crate::IndexerResult;
 
 /// Trait for parsing content into semantic chunks
 ///
@@ -17,7 +17,12 @@ pub trait ContentParser: Send + Sync {
     ///
     /// Returns a vector of CodeChunks representing logical units
     /// like functions, classes, or other semantic boundaries
-    fn parse(&self, content: &str, language: &str, file_path: &str) -> Result<Vec<CodeChunk>>;
+    fn parse(
+        &self,
+        content: &str,
+        language: &str,
+        file_path: &str,
+    ) -> IndexerResult<Vec<CodeChunk>>;
 
     /// Check if this parser supports a given language
     fn supports_language(&self, language: &str) -> bool;
@@ -64,7 +69,12 @@ impl ContentParser for CompositeParser {
         "composite-parser"
     }
 
-    fn parse(&self, content: &str, language: &str, file_path: &str) -> Result<Vec<CodeChunk>> {
+    fn parse(
+        &self,
+        content: &str,
+        language: &str,
+        file_path: &str,
+    ) -> IndexerResult<Vec<CodeChunk>> {
         let parser = self.find_parser(language);
         parser.parse(content, language, file_path)
     }

@@ -5,7 +5,7 @@
 
 use super::model::EmbeddingModel;
 use super::traits::{EmbeddingConfig, EmbeddingProvider, EmbeddingService, EmbeddingStats};
-use crate::Result;
+use crate::IndexerResult;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -37,7 +37,7 @@ impl DefaultEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for DefaultEmbeddingProvider {
-    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+    async fn embed_batch(&self, texts: &[&str]) -> IndexerResult<Vec<Vec<f32>>> {
         // Zero-copy optimization: convert &[&str] to Vec<&str> for internal processing
         // This avoids the expensive String allocations that were happening before
         let text_refs: Vec<&str> = texts.to_vec();
@@ -65,7 +65,7 @@ impl EmbeddingProvider for DefaultEmbeddingProvider {
         model.ensure_model_loaded().await.is_ok()
     }
 
-    async fn ensure_ready(&self) -> Result<()> {
+    async fn ensure_ready(&self) -> IndexerResult<()> {
         if !self.is_ready().await {
             // The model loads on first use, so trigger a dummy embedding with string refs
             let _ = self.embed_batch(&["test"]).await?;
@@ -119,7 +119,7 @@ impl DefaultEmbeddingService {
 
 #[async_trait]
 impl EmbeddingService for DefaultEmbeddingService {
-    async fn generate_embeddings(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+    async fn generate_embeddings(&self, texts: Vec<&str>) -> IndexerResult<Vec<Vec<f32>>> {
         use std::time::Instant;
 
         // Ensure provider is ready
@@ -184,9 +184,9 @@ impl MockEmbeddingProvider {
 #[cfg(test)]
 #[async_trait]
 impl EmbeddingProvider for MockEmbeddingProvider {
-    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+    async fn embed_batch(&self, texts: &[&str]) -> IndexerResult<Vec<Vec<f32>>> {
         if self.fail {
-            return Err(crate::Error::Other("Mock embedding failure".into()));
+            return Err(crate::IndexerError::Other("Mock embedding failure".into()));
         }
 
         // Return mock embeddings
@@ -209,7 +209,7 @@ impl EmbeddingProvider for MockEmbeddingProvider {
         true
     }
 
-    async fn ensure_ready(&self) -> Result<()> {
+    async fn ensure_ready(&self) -> IndexerResult<()> {
         Ok(())
     }
 }

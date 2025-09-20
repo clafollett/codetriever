@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
 
 use super::{RepositoryMetadata, SearchProvider, SearchResult};
-use crate::{CorrelationId, Indexer, Result};
+use crate::{CorrelationId, Indexer, IndexerResult};
 use codetriever_data::{DataClient, FileRepository, ProjectBranch};
 
 // Type aliases to simplify complex types
@@ -82,7 +82,7 @@ impl SearchService {
         &self,
         mut results: Vec<SearchResult>,
         correlation_id: &CorrelationId,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> IndexerResult<Vec<SearchResult>> {
         // Record correlation ID in tracing span
         tracing::Span::current().record("correlation_id", correlation_id);
         // If no database client, return results without metadata enrichment
@@ -161,7 +161,7 @@ impl SearchProvider for SearchService {
         query: &str,
         limit: usize,
         correlation_id: CorrelationId,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> IndexerResult<Vec<SearchResult>> {
         // Record correlation ID in tracing span
         tracing::Span::current().record("correlation_id", &correlation_id);
         let start_time = std::time::Instant::now();
@@ -235,7 +235,7 @@ impl SearchService {
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> IndexerResult<Vec<SearchResult>> {
         // Record correlation ID in tracing span
         tracing::Span::current().record("correlation_id", correlation_id);
         // Wrap entire search operation in timeout for production resilience
@@ -262,7 +262,7 @@ impl SearchService {
                 query,
                 correlation_id
             );
-            crate::Error::search_timeout(query, self.search_timeout, correlation_id.clone())
+            crate::IndexerError::search_timeout(query, self.search_timeout, correlation_id.clone())
         })?
     }
 }

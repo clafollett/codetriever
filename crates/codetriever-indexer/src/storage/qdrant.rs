@@ -31,7 +31,7 @@
 //! ```
 
 use crate::{
-    Error, Result,
+    IndexerError, IndexerResult,
     parsing::CodeChunk,
     storage::{StorageSearchResult, VectorStorage},
 };
@@ -106,7 +106,7 @@ impl QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn new(url: String, collection_name: String) -> Result<Self> {
+    pub async fn new(url: String, collection_name: String) -> IndexerResult<Self> {
         // Connect to Qdrant server
         // Note: The message "Failed to obtain server version" is expected and can be ignored
         // as it's just a compatibility check that may fail with certain network configurations
@@ -121,7 +121,7 @@ impl QdrantStorage {
 
         let client = builder
             .build()
-            .map_err(|e| Error::Storage(format!("Failed to create Qdrant client: {e}")))?;
+            .map_err(|e| IndexerError::Storage(format!("Failed to create Qdrant client: {e}")))?;
 
         let storage = Self {
             client,
@@ -147,14 +147,14 @@ impl VectorStorage for QdrantStorage {
     ///
     /// Returns error if the check fails for reasons other than non-existence.
     #[tracing::instrument(skip(self))]
-    async fn collection_exists(&self) -> Result<bool> {
+    async fn collection_exists(&self) -> IndexerResult<bool> {
         let request = CollectionExistsRequest {
             collection_name: self.collection_name.clone(),
         };
 
         match self.client.collection_exists(request).await {
             Ok(response) => Ok(response),
-            Err(e) => Err(crate::Error::Storage(format!(
+            Err(e) => Err(crate::IndexerError::Storage(format!(
                 "Failed to check collection exists: {e}"
             ))),
         }
@@ -169,7 +169,7 @@ impl VectorStorage for QdrantStorage {
     /// # Errors
     ///
     /// Returns error if the collection creation fails for reasons other than non-existence.
-    async fn ensure_collection(&self) -> Result<()> {
+    async fn ensure_collection(&self) -> IndexerResult<()> {
         if self.collection_exists().await? {
             return Ok(());
         }
@@ -189,7 +189,7 @@ impl VectorStorage for QdrantStorage {
 
         match self.client.create_collection(request).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(crate::Error::Storage(format!(
+            Err(e) => Err(crate::IndexerError::Storage(format!(
                 "Failed to create collection '{}': {e}",
                 self.collection_name
             ))),
@@ -208,7 +208,7 @@ impl VectorStorage for QdrantStorage {
     /// # Errors
     ///
     /// Returns error if the drop operation fails for reasons other than non-existence.
-    async fn drop_collection(&self) -> Result<bool> {
+    async fn drop_collection(&self) -> IndexerResult<bool> {
         if !self.collection_exists().await? {
             return Ok(false);
         }
@@ -224,7 +224,7 @@ impl VectorStorage for QdrantStorage {
                 println!("Dropped collection '{}'", self.collection_name);
                 Ok(true)
             }
-            Err(e) => Err(crate::Error::Storage(format!(
+            Err(e) => Err(crate::IndexerError::Storage(format!(
                 "Failed to drop collection '{}': {e}",
                 self.collection_name
             ))),
@@ -280,7 +280,7 @@ impl VectorStorage for QdrantStorage {
     /// # }
     /// ```
     #[tracing::instrument(skip(self, chunks), fields(chunk_count = chunks.len()))]
-    async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize> {
+    async fn store_chunks(&self, chunks: &[CodeChunk]) -> IndexerResult<usize> {
         let mut points = Vec::new();
         let mut point_id = 0u64;
 
@@ -342,7 +342,7 @@ impl VectorStorage for QdrantStorage {
         self.client
             .upsert_points(upsert_request)
             .await
-            .map_err(|e| Error::Storage(format!("Failed to store chunks: {e}")))?;
+            .map_err(|e| IndexerError::Storage(format!("Failed to store chunks: {e}")))?;
 
         Ok(point_id as usize)
     }
@@ -389,10 +389,10 @@ impl VectorStorage for QdrantStorage {
     /// # }
     /// ```
     #[tracing::instrument(skip(self, query), fields(query_dim = query.len(), limit))]
-    async fn search(&self, query: Vec<f32>, limit: usize) -> Result<Vec<StorageSearchResult>> {
+    async fn search(&self, query: Vec<f32>, limit: usize) -> IndexerResult<Vec<StorageSearchResult>> {
         // Validate query vector dimensions
         if query.len() != 768 {
-            return Err(Error::Storage(format!(
+            return Err(IndexerError::Storage(format!(
                 "Query vector must be 768 dimensions, got {}",
                 query.len()
             )));
@@ -410,7 +410,7 @@ impl VectorStorage for QdrantStorage {
             .client
             .search_points(search_request)
             .await
-            .map_err(|e| Error::Storage(format!("Search failed: {e}")))?;
+            .map_err(|e| IndexerError::Storage(format!("Search failed: {e}")))?;
 
         let mut results = Vec::new();
 
@@ -504,7 +504,7 @@ impl VectorStorage for QdrantStorage {
         branch: &str,
         chunks: &[CodeChunk],
         generation: i64,
-    ) -> Result<Vec<uuid::Uuid>> {
+    ) -> IndexerResult<Vec<uuid::Uuid>> {
         let mut points = Vec::new();
         let mut chunk_ids = Vec::new();
 
@@ -586,13 +586,13 @@ impl VectorStorage for QdrantStorage {
         self.client
             .upsert_points(upsert_request)
             .await
-            .map_err(|e| Error::Storage(format!("Failed to store chunks: {e}")))?;
+            .map_err(|e| IndexerError::Storage(format!("Failed to store chunks: {e}")))?;
 
         Ok(chunk_ids)
     }
 
     /// Delete chunks from Qdrant by their IDs
-    async fn delete_chunks(&self, chunk_ids: &[uuid::Uuid]) -> Result<()> {
+    async fn delete_chunks(&self, chunk_ids: &[uuid::Uuid]) -> IndexerResult<()> {
         if chunk_ids.is_empty() {
             return Ok(());
         }
@@ -626,7 +626,7 @@ impl VectorStorage for QdrantStorage {
         Ok(())
     }
 
-    async fn get_stats(&self) -> Result<crate::storage::StorageStats> {
+    async fn get_stats(&self) -> IndexerResult<crate::storage::StorageStats> {
         // Get collection info from Qdrant
         use qdrant_client::qdrant::GetCollectionInfoRequest;
 
@@ -642,7 +642,7 @@ impl VectorStorage for QdrantStorage {
 
         let result = info
             .result
-            .ok_or_else(|| Error::Other("Missing collection info result".into()))?;
+            .ok_or_else(|| IndexerError::Other("Missing collection info result".into()))?;
 
         Ok(crate::storage::StorageStats {
             vector_count: result.vectors_count.unwrap_or(0) as usize,

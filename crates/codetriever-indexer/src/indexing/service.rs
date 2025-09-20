@@ -11,17 +11,17 @@ pub trait IndexerService: Send + Sync {
         &mut self,
         path: &std::path::Path,
         recursive: bool,
-    ) -> crate::Result<IndexResult>;
+    ) -> crate::IndexerResult<IndexResult>;
 
     /// Index file content directly without filesystem access
     async fn index_file_content(
         &mut self,
         project_id: &str,
         files: Vec<FileContent>,
-    ) -> crate::Result<IndexResult>;
+    ) -> crate::IndexerResult<IndexResult>;
 
     /// Drop the collection from storage
-    async fn drop_collection(&mut self) -> crate::Result<bool>;
+    async fn drop_collection(&mut self) -> crate::IndexerResult<bool>;
 }
 
 /// Represents a file with its content for indexing
@@ -65,7 +65,7 @@ impl IndexerService for ApiIndexerService {
         &mut self,
         path: &std::path::Path,
         recursive: bool,
-    ) -> crate::Result<IndexResult> {
+    ) -> crate::IndexerResult<IndexResult> {
         self.indexer.index_directory(path, recursive).await
     }
 
@@ -73,11 +73,11 @@ impl IndexerService for ApiIndexerService {
         &mut self,
         project_id: &str,
         files: Vec<FileContent>,
-    ) -> crate::Result<IndexResult> {
+    ) -> crate::IndexerResult<IndexResult> {
         self.indexer.index_file_content(project_id, files).await
     }
 
-    async fn drop_collection(&mut self) -> crate::Result<bool> {
+    async fn drop_collection(&mut self) -> crate::IndexerResult<bool> {
         self.indexer.drop_collection().await
     }
 }
@@ -118,9 +118,9 @@ pub mod test_utils {
             &mut self,
             _path: &std::path::Path,
             _recursive: bool,
-        ) -> crate::Result<IndexResult> {
+        ) -> crate::IndexerResult<IndexResult> {
             if self.should_error {
-                Err(crate::Error::Io("Mock error".to_string()))
+                Err(crate::IndexerError::Io("Mock error".to_string()))
             } else {
                 Ok(IndexResult {
                     files_indexed: self.files_to_return,
@@ -134,9 +134,9 @@ pub mod test_utils {
             &mut self,
             _project_id: &str,
             _files: Vec<FileContent>,
-        ) -> crate::Result<IndexResult> {
+        ) -> crate::IndexerResult<IndexResult> {
             if self.should_error {
-                Err(crate::Error::Io("Mock error".to_string()))
+                Err(crate::IndexerError::Io("Mock error".to_string()))
             } else {
                 Ok(IndexResult {
                     files_indexed: self.files_to_return,
@@ -146,9 +146,9 @@ pub mod test_utils {
             }
         }
 
-        async fn drop_collection(&mut self) -> crate::Result<bool> {
+        async fn drop_collection(&mut self) -> crate::IndexerResult<bool> {
             if self.should_error {
-                Err(crate::Error::Io("Mock error".to_string()))
+                Err(crate::IndexerError::Io("Mock error".to_string()))
             } else {
                 Ok(true)
             }

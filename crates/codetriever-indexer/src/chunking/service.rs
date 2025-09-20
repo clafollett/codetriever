@@ -1,7 +1,7 @@
 //! Chunking service for token-aware text splitting
 
 use super::traits::TokenCounterRef;
-use crate::Result;
+use crate::IndexerResult;
 use crate::parsing::code_parser::CodeChunk;
 
 /// Token budget configuration for chunking
@@ -60,7 +60,7 @@ impl ChunkingService {
     }
 
     /// Chunk a list of code spans into token-limited chunks
-    pub fn chunk_spans(&self, file_path: &str, spans: Vec<CodeSpan>) -> Result<Vec<CodeChunk>> {
+    pub fn chunk_spans(&self, file_path: &str, spans: Vec<CodeSpan>) -> IndexerResult<Vec<CodeChunk>> {
         let mut chunks = Vec::new();
         let mut current_content = String::new();
         let mut current_start_line = 0;
@@ -171,7 +171,7 @@ impl ChunkingService {
     }
 
     /// Split a large span that exceeds the hard token limit
-    fn split_large_span(&self, file_path: &str, span: CodeSpan) -> Result<Vec<CodeChunk>> {
+    fn split_large_span(&self, file_path: &str, span: CodeSpan) -> IndexerResult<Vec<CodeChunk>> {
         let mut chunks = Vec::new();
         let lines: Vec<&str> = span.content.lines().collect();
 

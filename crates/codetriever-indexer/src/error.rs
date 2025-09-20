@@ -13,7 +13,7 @@ pub type CorrelationId = String;
 
 /// Structured error enum with rich context for debugging and monitoring
 #[derive(Error, Debug)]
-pub enum Error {
+pub enum IndexerError {
     // ========== Common Error Variants ==========
     #[error("IO error: {message}")]
     Io {
@@ -88,7 +88,7 @@ pub enum Error {
     Serialization(#[from] serde_json::Error),
 }
 
-impl Error {
+impl IndexerError {
     // ========== Structured Error Constructors ==========
 
     /// Create a search timeout error with full context
@@ -170,7 +170,7 @@ impl Error {
 }
 
 // Implement the CommonError trait (for backward compatibility)
-impl CommonError for Error {
+impl CommonError for IndexerError {
     fn io_error(msg: impl Into<String>) -> Self {
         Self::Io {
             message: msg.into(),
@@ -196,7 +196,7 @@ impl CommonError for Error {
 }
 
 // Standard library error conversions
-impl From<std::io::Error> for Error {
+impl From<std::io::Error> for IndexerError {
     fn from(e: std::io::Error) -> Self {
         Self::Io {
             message: e.to_string(),
@@ -205,10 +205,10 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<anyhow::Error> for Error {
+impl From<anyhow::Error> for IndexerError {
     fn from(e: anyhow::Error) -> Self {
         Self::Other(e.to_string())
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type IndexerResult<T> = std::result::Result<T, IndexerError>;

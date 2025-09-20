@@ -1,5 +1,5 @@
 use crate::{
-    CorrelationId, Result,
+    CorrelationId, IndexerResult,
     config::Config,
     embedding::{DefaultEmbeddingService, EmbeddingConfig, EmbeddingService},
     indexing::service::FileContent,
@@ -393,7 +393,7 @@ impl Indexer {
         &mut self,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<crate::search::SearchResult>> {
+    ) -> IndexerResult<Vec<crate::search::SearchResult>> {
         // Generate embedding for the query
         let embeddings = self
             .embedding_service
@@ -401,7 +401,7 @@ impl Indexer {
             .await?;
 
         let query_embedding = embeddings.into_iter().next().ok_or_else(|| {
-            crate::Error::Embedding("Failed to generate query embedding".to_string())
+            crate::IndexerError::Embedding("Failed to generate query embedding".to_string())
         })?;
 
         // Search in Qdrant if storage is configured
@@ -441,7 +441,7 @@ impl Indexer {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn index_directory(&mut self, path: &Path, recursive: bool) -> Result<IndexResult> {
+    pub async fn index_directory(&mut self, path: &Path, recursive: bool) -> IndexerResult<IndexResult> {
         println!("Starting index_directory for {path:?}");
 
         // Ensure embedding provider is ready
@@ -578,7 +578,7 @@ impl Indexer {
         &mut self,
         project_id: &str,
         files: Vec<FileContent>,
-    ) -> Result<IndexResult> {
+    ) -> IndexerResult<IndexResult> {
         println!("Starting index_file_content for project: {project_id}");
 
         // Parse project_id to extract repository_id and branch if using database
@@ -798,7 +798,7 @@ impl Indexer {
     }
 
     /// Drop the collection from storage
-    pub async fn drop_collection(&mut self) -> Result<bool> {
+    pub async fn drop_collection(&mut self) -> IndexerResult<bool> {
         // Drop collection if storage is configured
         if let Some(ref storage) = self.storage {
             storage.drop_collection().await
@@ -812,7 +812,7 @@ impl Indexer {
         self.storage = Some(Box::new(storage));
     }
 
-    async fn index_file_path(&self, path: &Path) -> Result<Vec<CodeChunk>> {
+    async fn index_file_path(&self, path: &Path) -> IndexerResult<Vec<CodeChunk>> {
         // Only index code files - comprehensive language support
         let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
@@ -822,7 +822,7 @@ impl Indexer {
         }
 
         let content = std::fs::read_to_string(path).map_err(|e| {
-            crate::Error::io_error_with_source(format!("Failed to read file: {e}"), Some(e))
+            crate::IndexerError::io_error_with_source(format!("Failed to read file: {e}"), Some(e))
         })?;
 
         // Determine language from extension
@@ -837,12 +837,12 @@ impl Indexer {
 }
 
 // Standalone function to collect files using functional iterator patterns
-fn collect_files(dir: &Path, recursive: bool) -> Result<Vec<std::path::PathBuf>> {
+fn collect_files(dir: &Path, recursive: bool) -> IndexerResult<Vec<std::path::PathBuf>> {
     std::fs::read_dir(dir)?
         .filter_map(|entry_result| entry_result.ok()) // Handle IO errors gracefully
         .try_fold(
             Vec::new(),
-            |mut acc, entry| -> Result<Vec<std::path::PathBuf>> {
+            |mut acc, entry| -> IndexerResult<Vec<std::path::PathBuf>> {
                 let path = entry.path();
                 if path.is_file() {
                     acc.push(path);

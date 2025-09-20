@@ -3,7 +3,7 @@
 //! This module provides trait abstractions for embedding providers,
 //! enabling pluggable implementations and better testability.
 
-use crate::Result;
+use crate::IndexerResult;
 use async_trait::async_trait;
 
 /// Trait for embedding generation providers
@@ -16,7 +16,7 @@ pub trait EmbeddingProvider: Send + Sync {
     ///
     /// Returns a vector of embeddings, one for each input text.
     /// The dimensionality depends on the model being used.
-    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
+    async fn embed_batch(&self, texts: &[&str]) -> IndexerResult<Vec<Vec<f32>>>;
 
     /// Get the dimensionality of embeddings produced by this provider
     fn embedding_dimension(&self) -> usize;
@@ -31,7 +31,7 @@ pub trait EmbeddingProvider: Send + Sync {
     async fn is_ready(&self) -> bool;
 
     /// Ensure the model is loaded and ready
-    async fn ensure_ready(&self) -> Result<()>;
+    async fn ensure_ready(&self) -> IndexerResult<()>;
 }
 
 /// Configuration for embedding providers
@@ -75,7 +75,7 @@ pub trait EmbeddingService: Send + Sync {
     ///
     /// This is an optimized version that avoids cloning strings when the caller
     /// already has string references available.
-    async fn generate_embeddings(&self, texts: Vec<&str>) -> Result<Vec<Vec<f32>>>;
+    async fn generate_embeddings(&self, texts: Vec<&str>) -> IndexerResult<Vec<Vec<f32>>>;
 
     /// Get the embedding provider being used
     fn provider(&self) -> &dyn EmbeddingProvider;

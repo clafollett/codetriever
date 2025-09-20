@@ -1,4 +1,4 @@
-use crate::Result;
+use crate::IndexerResult;
 
 pub struct FileWatcher {
     // TODO: Add fields
@@ -15,7 +15,7 @@ impl FileWatcher {
         Self {}
     }
 
-    pub async fn watch(&self, _path: &std::path::Path) -> Result<()> {
+    pub async fn watch(&self, _path: &std::path::Path) -> IndexerResult<()> {
         // TODO: Implement
         Ok(())
     }
