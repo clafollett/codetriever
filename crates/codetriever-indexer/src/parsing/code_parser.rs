@@ -52,7 +52,7 @@ fn get_cached_query(language: &Language, query_str: &str) -> Result<Arc<Query>> 
     {
         let cache = QUERY_CACHE
             .lock()
-            .map_err(|_| crate::Error::Parse("Query cache lock poisoned".to_string()))?;
+            .map_err(|_| crate::Error::parse_error("Query cache lock poisoned".to_string()))?;
         if let Some(cached_query) = cache.get(&key) {
             return Ok(cached_query.clone());
         }
@@ -60,14 +60,14 @@ fn get_cached_query(language: &Language, query_str: &str) -> Result<Arc<Query>> 
 
     // Compile query if not cached
     let query = Query::new(language, query_str)
-        .map_err(|e| crate::Error::Parse(format!("Failed to compile query: {e}")))?;
+        .map_err(|e| crate::Error::parse_error(format!("Failed to compile query: {e}")))?;
     let arc_query = Arc::new(query);
 
     // Cache the compiled query
     {
         let mut cache = QUERY_CACHE
             .lock()
-            .map_err(|_| crate::Error::Parse("Query cache lock poisoned".to_string()))?;
+            .map_err(|_| crate::Error::parse_error("Query cache lock poisoned".to_string()))?;
         cache.insert(key, arc_query.clone());
     }
 

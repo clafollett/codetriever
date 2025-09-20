@@ -1,9 +1,9 @@
 //! Database repository trait for dependency injection and testing
 
-use anyhow::Result;
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use crate::error::Result;
 use crate::models::{
     ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
     RepositoryContext,

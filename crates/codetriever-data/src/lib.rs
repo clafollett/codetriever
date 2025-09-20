@@ -4,6 +4,7 @@
 pub mod chunk_id;
 pub mod client;
 pub mod config;
+pub mod error;
 pub mod git;
 pub mod migrations;
 pub mod models;
@@ -19,6 +20,7 @@ pub mod mock;
 pub use chunk_id::{generate_chunk_id, hash_content};
 pub use client::DataClient;
 pub use config::DatabaseConfig;
+pub use error::{DatabaseError, DatabaseErrorExt, DatabaseOperation, PoolType};
 pub use migrations::{run_migrations, wait_for_migrations};
 pub use models::*;
 pub use pool::{create_pool, initialize_database};

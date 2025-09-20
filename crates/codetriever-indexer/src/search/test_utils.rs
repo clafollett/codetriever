@@ -1,7 +1,7 @@
 //! Test utilities for search services
 
 use super::{SearchProvider, SearchResult};
-use crate::{CodeChunk, Result};
+use crate::{CodeChunk, CorrelationId, Result};
 use async_trait::async_trait;
 
 /// Type alias for test search results (file_path, content, similarity)
@@ -47,7 +47,12 @@ impl MockSearchService {
 
 #[async_trait]
 impl SearchProvider for MockSearchService {
-    async fn search(&self, _query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    async fn search_with_correlation_id(
+        &self,
+        _query: &str,
+        limit: usize,
+        _correlation_id: CorrelationId,
+    ) -> Result<Vec<SearchResult>> {
         let results: Vec<SearchResult> = self.results.iter().take(limit).cloned().collect();
         Ok(results)
     }

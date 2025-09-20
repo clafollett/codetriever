@@ -111,8 +111,8 @@ impl EmbeddingModel {
     pub async fn embed(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         // Check for Hugging Face token for model downloading
         if std::env::var("HF_TOKEN").is_err() && std::env::var("HUGGING_FACE_HUB_TOKEN").is_err() {
-            return Err(crate::Error::Configuration(
-                "HF_TOKEN or HUGGING_FACE_HUB_TOKEN environment variable required for model download".to_string(),
+            return Err(crate::Error::config_error(
+                "HF_TOKEN or HUGGING_FACE_HUB_TOKEN environment variable required for model download",
             ));
         }
 

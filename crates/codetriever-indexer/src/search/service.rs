@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
 
 use super::{RepositoryMetadata, SearchProvider, SearchResult};
-use crate::{Indexer, Result};
+use crate::{CorrelationId, Indexer, Result};
 use codetriever_data::{DataClient, FileRepository, ProjectBranch};
 
 // Type aliases to simplify complex types
@@ -77,10 +77,14 @@ impl SearchService {
     }
 
     /// Enrich search results with repository metadata from database (if available)
+    #[tracing::instrument(skip(self, results), fields(correlation_id, result_count = results.len()))]
     async fn enrich_with_metadata(
         &self,
         mut results: Vec<SearchResult>,
+        correlation_id: &CorrelationId,
     ) -> Result<Vec<SearchResult>> {
+        // Record correlation ID in tracing span
+        tracing::Span::current().record("correlation_id", correlation_id);
         // If no database client, return results without metadata enrichment
         let db_client = match &self.db_client {
             Some(client) => client,
@@ -151,8 +155,15 @@ impl SearchService {
 
 #[async_trait]
 impl SearchProvider for SearchService {
-    #[tracing::instrument(skip(self), fields(query, limit, cached = false))]
-    async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    #[tracing::instrument(skip(self), fields(query, limit, correlation_id, cached = false))]
+    async fn search_with_correlation_id(
+        &self,
+        query: &str,
+        limit: usize,
+        correlation_id: CorrelationId,
+    ) -> Result<Vec<SearchResult>> {
+        // Record correlation ID in tracing span
+        tracing::Span::current().record("correlation_id", &correlation_id);
         let start_time = std::time::Instant::now();
 
         // Check cache first
@@ -170,7 +181,7 @@ impl SearchProvider for SearchService {
 
         // Retry search with exponential backoff for resilience
         for attempt in 0..=self.max_retries {
-            match self.try_search(query, limit).await {
+            match self.try_search(query, limit, &correlation_id).await {
                 Ok(results) => {
                     // Cache successful results
                     if let Ok(mut cache) = self.cache.lock() {
@@ -218,8 +229,15 @@ impl SearchProvider for SearchService {
 
 impl SearchService {
     /// Internal search attempt - can fail and be retried
-    #[tracing::instrument(skip(self))]
-    async fn try_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    #[tracing::instrument(skip(self), fields(correlation_id))]
+    async fn try_search(
+        &self,
+        query: &str,
+        limit: usize,
+        correlation_id: &CorrelationId,
+    ) -> Result<Vec<SearchResult>> {
+        // Record correlation ID in tracing span
+        tracing::Span::current().record("correlation_id", correlation_id);
         // Wrap entire search operation in timeout for production resilience
         tokio::time::timeout(self.search_timeout, async {
             // First get basic search results from indexer
@@ -232,14 +250,19 @@ impl SearchService {
 
             // Enrich with database metadata
             tracing::debug!("Enriching with database metadata");
-            let enriched = self.enrich_with_metadata(results).await?;
+            let enriched = self.enrich_with_metadata(results, correlation_id).await?;
             tracing::debug!("Metadata enrichment complete");
             Ok(enriched)
         })
         .await
         .map_err(|_| {
-            tracing::error!("Search operation timed out after {:?}", self.search_timeout);
-            crate::Error::Other("Search operation timed out".to_string())
+            tracing::error!(
+                "Search operation timed out after {:?} for query '{}' (correlation_id: {})",
+                self.search_timeout,
+                query,
+                correlation_id
+            );
+            crate::Error::search_timeout(query, self.search_timeout, correlation_id.clone())
         })?
     }
 }

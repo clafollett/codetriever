@@ -6,12 +6,13 @@
 #![allow(clippy::arithmetic_side_effects)] // Test counters can overflow
 #![allow(clippy::significant_drop_tightening)] // Mock locks don't need optimization
 
-use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
+
+use crate::error::{DatabaseError, DatabaseOperation, Result};
 
 use crate::models::{
     ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
@@ -72,7 +73,14 @@ impl MockFileRepository {
         let should_fail = *self.should_fail_next.lock().unwrap();
         if should_fail {
             *self.should_fail_next.lock().unwrap() = false;
-            anyhow::bail!("{}", *self.error_message.lock().unwrap());
+            let message = self.error_message.lock().unwrap().clone();
+            return Err(DatabaseError::UnexpectedState {
+                operation: DatabaseOperation::Query {
+                    description: "mock operation".to_string(),
+                },
+                message,
+                correlation_id: None,
+            });
         }
         Ok(())
     }

@@ -3,11 +3,11 @@
 //! Uses separate connection pools for different operation types to prevent
 //! resource contention and improve performance.
 
-use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sqlx::Row;
 use uuid::Uuid;
 
+use crate::error::{DatabaseError, DatabaseErrorExt, DatabaseOperation, Result};
 use crate::models::{
     ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
     RepositoryContext,
@@ -34,7 +34,7 @@ impl DbFileRepository {
     /// - `DATABASE_URL` environment variable is not set
     /// - Database connection fails
     /// - Pool manager creation fails (see `PoolManager::from_env` errors)
-    pub async fn from_env() -> Result<Self> {
+    pub async fn from_env() -> std::result::Result<Self, anyhow::Error> {
         let pools = PoolManager::from_env().await?;
         Ok(Self::new(pools))
     }
@@ -45,18 +45,24 @@ impl FileRepository for DbFileRepository {
     async fn ensure_project_branch(&self, ctx: &RepositoryContext) -> Result<ProjectBranch> {
         // Use write pool for INSERT/UPDATE operations
         let pool = self.pools.write_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::EnsureProjectBranch {
+            repository_id: ctx.repository_id.clone(),
+            branch: ctx.branch.clone(),
+        };
 
         let row = sqlx::query(
             r"
             INSERT INTO project_branches (repository_id, branch, repository_url)
             VALUES ($1, $2, $3)
-            ON CONFLICT (repository_id, branch) 
+            ON CONFLICT (repository_id, branch)
             DO UPDATE SET repository_url = EXCLUDED.repository_url
-            RETURNING 
-                repository_id, 
-                branch, 
-                repository_url, 
-                first_seen, 
+            RETURNING
+                repository_id,
+                branch,
+                repository_url,
+                first_seen,
                 last_indexed
             ",
         )
@@ -65,7 +71,7 @@ impl FileRepository for DbFileRepository {
         .bind(&ctx.repository_url)
         .fetch_one(pool)
         .await
-        .context("Failed to ensure project branch")?;
+        .map_db_err(operation, correlation_id)?;
 
         Ok(ProjectBranch {
             repository_id: row.get("repository_id"),
@@ -85,6 +91,13 @@ impl FileRepository for DbFileRepository {
     ) -> Result<FileState> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::CheckFileState {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+            file_path: file_path.to_string(),
+        };
 
         let existing = sqlx::query(
             r"
@@ -98,7 +111,7 @@ impl FileRepository for DbFileRepository {
         .bind(file_path)
         .fetch_optional(pool)
         .await
-        .context("Failed to check file state")?;
+        .map_db_err(operation.clone(), correlation_id)?;
 
         match existing {
             None => {
@@ -114,9 +127,14 @@ impl FileRepository for DbFileRepository {
                     // Content changed, increment generation
                     let generation: i64 = row.get("generation");
                     // Use checked_add for generation tracking - overflow indicates data corruption
-                    let new_generation = generation
-                        .checked_add(1)
-                        .context("Generation counter overflow - indicates data corruption")?;
+                    let new_generation = generation.checked_add(1).ok_or_else(|| {
+                        DatabaseError::DataIntegrityError {
+                            operation: operation.clone(),
+                            message: "Generation counter overflow - indicates data corruption"
+                                .to_string(),
+                            correlation_id: None,
+                        }
+                    })?;
                     Ok(FileState::Updated {
                         old_generation: generation,
                         new_generation,
@@ -134,6 +152,13 @@ impl FileRepository for DbFileRepository {
     ) -> Result<IndexedFile> {
         // Use write pool for INSERT operations
         let pool = self.pools.write_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::RecordFileIndexing {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+            file_path: metadata.path.clone(),
+        };
 
         let row = sqlx::query(
             r"
@@ -165,7 +190,7 @@ impl FileRepository for DbFileRepository {
         .bind(&metadata.author)
         .fetch_one(pool)
         .await
-        .context("Failed to record file indexing")?;
+        .map_db_err(operation, correlation_id)?;
 
         Ok(IndexedFile {
             repository_id: row.get("repository_id"),
@@ -192,6 +217,14 @@ impl FileRepository for DbFileRepository {
         }
 
         let pool = self.pools.write_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+        let chunk_count = chunks.len();
+
+        let operation = DatabaseOperation::InsertChunks {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+            chunk_count,
+        };
 
         // Use UNNEST for bulk insert - drastically faster than loop
         // Pre-allocate with exact capacity to avoid reallocations
@@ -258,7 +291,7 @@ impl FileRepository for DbFileRepository {
         .bind(&names)
         .execute(pool)
         .await
-        .context("Failed to batch insert chunks")?;
+        .map_db_err(operation, correlation_id)?;
 
         Ok(())
     }
@@ -272,6 +305,14 @@ impl FileRepository for DbFileRepository {
     ) -> Result<Vec<Uuid>> {
         // Use analytics pool for operations that might affect many rows
         let pool = self.pools.analytics_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::ReplaceFileChunks {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+            file_path: file_path.to_string(),
+            new_generation,
+        };
 
         let rows = sqlx::query("SELECT * FROM replace_file_chunks($1, $2, $3, $4)")
             .bind(repository_id)
@@ -280,7 +321,7 @@ impl FileRepository for DbFileRepository {
             .bind(new_generation)
             .fetch_all(pool)
             .await
-            .context("Failed to replace file chunks")?;
+            .map_db_err(operation, correlation_id)?;
 
         let deleted_ids = rows
             .into_iter()
@@ -299,11 +340,17 @@ impl FileRepository for DbFileRepository {
         // Use write pool for INSERT
         let pool = self.pools.write_pool();
         let job_id = Uuid::new_v4();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::CreateIndexingJob {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+        };
 
         let row = sqlx::query(
             r"
             INSERT INTO indexing_jobs (
-                job_id, repository_id, branch, status, 
+                job_id, repository_id, branch, status,
                 files_processed, chunks_created, commit_sha, started_at
             )
             VALUES ($1, $2, $3, $4, 0, 0, $5, NOW())
@@ -317,7 +364,7 @@ impl FileRepository for DbFileRepository {
         .bind(commit_sha)
         .fetch_one(pool)
         .await
-        .context("Failed to create indexing job")?;
+        .map_db_err(operation, correlation_id)?;
 
         Ok(IndexingJob {
             job_id: row.get("job_id"),
@@ -342,6 +389,9 @@ impl FileRepository for DbFileRepository {
     ) -> Result<()> {
         // Use write pool for UPDATE
         let pool = self.pools.write_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::UpdateJobProgress { job_id: *job_id };
 
         sqlx::query(
             r"
@@ -356,7 +406,7 @@ impl FileRepository for DbFileRepository {
         .bind(chunks_created)
         .execute(pool)
         .await
-        .context("Failed to update job progress")?;
+        .map_db_err(operation.clone(), correlation_id)?;
 
         Ok(())
     }
@@ -369,6 +419,9 @@ impl FileRepository for DbFileRepository {
     ) -> Result<()> {
         // Use write pool for UPDATE operations
         let pool = self.pools.write_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::CompleteJob { job_id: *job_id };
 
         sqlx::query(
             r"
@@ -384,7 +437,7 @@ impl FileRepository for DbFileRepository {
         .bind(error)
         .execute(pool)
         .await
-        .context("Failed to complete job")?;
+        .map_db_err(operation.clone(), correlation_id.clone())?;
 
         // Update project last_indexed timestamp
         if status == JobStatus::Completed {
@@ -403,7 +456,7 @@ impl FileRepository for DbFileRepository {
             .bind(job_id)
             .execute(pool)
             .await
-            .context("Failed to update last_indexed")?;
+            .map_db_err(operation, correlation_id.clone())?;
         }
 
         Ok(())
@@ -417,10 +470,17 @@ impl FileRepository for DbFileRepository {
     ) -> Result<Vec<ChunkMetadata>> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::GetFileChunks {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+            file_path: file_path.to_string(),
+        };
 
         let rows = sqlx::query(
             r"
-            SELECT 
+            SELECT
                 chunk_id, repository_id, branch, file_path,
                 chunk_index, generation, start_line, end_line,
                 byte_start, byte_end, kind, name, created_at
@@ -434,7 +494,7 @@ impl FileRepository for DbFileRepository {
         .bind(file_path)
         .fetch_all(pool)
         .await
-        .context("Failed to get file chunks")?;
+        .map_db_err(operation, correlation_id)?;
 
         let chunks = rows
             .into_iter()
@@ -465,6 +525,12 @@ impl FileRepository for DbFileRepository {
     ) -> Result<Vec<IndexedFile>> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::GetIndexedFiles {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+        };
 
         let rows = sqlx::query(
             r"
@@ -478,7 +544,7 @@ impl FileRepository for DbFileRepository {
         .bind(branch)
         .fetch_all(pool)
         .await
-        .context("Failed to get indexed files")?;
+        .map_db_err(operation, correlation_id)?;
 
         let files = rows
             .into_iter()
@@ -502,12 +568,18 @@ impl FileRepository for DbFileRepository {
     async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> Result<bool> {
         // Use read pool for quick SELECT operations
         let pool = self.pools.read_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::CheckRunningJobs {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+        };
 
         let row = sqlx::query(
             r"
             SELECT COUNT(*) as count
             FROM indexing_jobs
-            WHERE repository_id = $1 
+            WHERE repository_id = $1
               AND branch = $2
               AND status IN ('pending', 'running')
             ",
@@ -516,7 +588,7 @@ impl FileRepository for DbFileRepository {
         .bind(branch)
         .fetch_one(pool)
         .await
-        .context("Failed to check running jobs")?;
+        .map_db_err(operation, correlation_id)?;
 
         let count: i64 = row.get("count");
         Ok(count > 0)
@@ -530,6 +602,13 @@ impl FileRepository for DbFileRepository {
     ) -> Result<Option<IndexedFile>> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::GetFileMetadata {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+            file_path: file_path.to_string(),
+        };
 
         let row = sqlx::query(
             r"
@@ -543,7 +622,7 @@ impl FileRepository for DbFileRepository {
         .bind(file_path)
         .fetch_optional(pool)
         .await
-        .context("Failed to get file metadata")?;
+        .map_db_err(operation, correlation_id)?;
 
         row.map_or(Ok(None), |row| {
             Ok(Some(IndexedFile {
@@ -569,6 +648,11 @@ impl FileRepository for DbFileRepository {
 
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::GetFilesMetadata {
+            file_count: file_paths.len(),
+        };
 
         // Convert to Vec<String> for sqlx binding
         let file_paths_vec: Vec<String> = file_paths.iter().map(|&s| s.to_string()).collect();
@@ -584,7 +668,7 @@ impl FileRepository for DbFileRepository {
         .bind(&file_paths_vec)
         .fetch_all(pool)
         .await
-        .context("Failed to get files metadata")?;
+        .map_db_err(operation, correlation_id)?;
 
         let files = rows
             .into_iter()
@@ -612,6 +696,12 @@ impl FileRepository for DbFileRepository {
     ) -> Result<Option<ProjectBranch>> {
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::GetProjectBranch {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+        };
 
         let row = sqlx::query(
             r"
@@ -624,7 +714,7 @@ impl FileRepository for DbFileRepository {
         .bind(branch)
         .fetch_optional(pool)
         .await
-        .context("Failed to get project branch")?;
+        .map_db_err(operation, correlation_id)?;
 
         row.map_or(Ok(None), |row| {
             Ok(Some(ProjectBranch {
@@ -647,6 +737,11 @@ impl FileRepository for DbFileRepository {
         }
 
         let pool = self.pools.read_pool();
+        let correlation_id = None; // Will be passed from upper layers in future
+
+        let operation = DatabaseOperation::GetProjectBranches {
+            count: repo_branches.len(),
+        };
 
         // Build parameterized query for batch fetch
         let mut query_builder = sqlx::QueryBuilder::new(
@@ -670,7 +765,7 @@ impl FileRepository for DbFileRepository {
             .build()
             .fetch_all(pool)
             .await
-            .context("Failed to batch fetch project branches")?;
+            .map_db_err(operation, correlation_id)?;
 
         let branches = rows
             .into_iter()

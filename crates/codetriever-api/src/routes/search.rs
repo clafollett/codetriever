@@ -31,10 +31,18 @@
 //! }
 //! ```
 
-use axum::{Json, Router, extract::State, routing::post};
+use crate::middleware::RequestContext;
+use crate::{ApiError, ApiResult, generate_correlation_id};
+use axum::{
+    Json, Router,
+    extract::{Extension, State},
+    routing::post,
+};
 use codetriever_indexer::{SearchProvider, SearchService};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
+use tracing::{error, info, instrument, warn};
 use utoipa::ToSchema;
 
 /// Request payload for code search operations.
@@ -341,44 +349,136 @@ fn highlight_search_terms(content: &str, query: &str) -> Vec<Range> {
         (status = 500, description = "Internal server error")
     )
 )]
-/// HTTP handler for search requests.
+/// HTTP handler for search requests with structured error handling.
 ///
 /// This asynchronous function processes search requests by accepting a JSON payload
-/// containing search parameters and returning matching results.
+/// containing search parameters and returning matching results with proper error handling.
 ///
 /// # Parameters
 ///
+/// * `search_service` - Injected search service handle
+/// * `context` - Optional request context with correlation ID from middleware
 /// * `req` - JSON-deserialized [`SearchRequest`] containing the search query and options
 ///
 /// # Returns
 ///
 /// Returns a JSON response containing search results in the [`SearchResponse`] format
-/// with matches array and metadata.
+/// with matches array and metadata, or a structured error response.
 ///
 /// # Error Handling
 ///
-/// Currently returns empty results on error, but could be enhanced to handle:
-/// - Invalid query parameters
-/// - Database/index unavailability
-/// - Internal search engine errors
+/// Provides comprehensive error handling with correlation IDs:
+/// - Invalid query parameters (400 Bad Request)
+/// - Search service unavailability (503 Service Unavailable)
+/// - Database timeouts (503 Service Unavailable)
+/// - Internal server errors (500 Internal Server Error)
+///
+/// All errors include correlation IDs for tracking and debugging.
+#[instrument(skip(search_service), fields(correlation_id))]
 pub async fn search_handler(
     State(search_service): State<SearchServiceHandle>,
+    context: Option<Extension<RequestContext>>,
     Json(req): Json<SearchRequest>,
-) -> Json<SearchResponse> {
+) -> ApiResult<Json<SearchResponse>> {
     let start = std::time::Instant::now();
+    // Use correlation ID from middleware if available, otherwise generate one
+    let correlation_id = context
+        .as_ref()
+        .map(|ctx| ctx.correlation_id.clone())
+        .unwrap_or_else(generate_correlation_id);
 
-    // Use provided limit or default to 10
-    let limit = req.limit.unwrap_or(10);
+    // Add correlation ID to tracing span for all subsequent logs
+    tracing::Span::current().record("correlation_id", &correlation_id);
+
+    info!(
+        correlation_id = %correlation_id,
+        query = %req.query,
+        limit = req.limit,
+        "Processing search request"
+    );
+
+    // Validate query parameters
+    if req.query.trim().is_empty() {
+        warn!(
+            correlation_id = %correlation_id,
+            "Empty search query rejected"
+        );
+        return Err(ApiError::invalid_query(
+            req.query,
+            "Query cannot be empty".to_string(),
+            correlation_id,
+        ));
+    }
+
+    if req.query.len() > 1000 {
+        warn!(
+            correlation_id = %correlation_id,
+            query_length = req.query.len(),
+            "Query too long rejected"
+        );
+        return Err(ApiError::invalid_query(
+            req.query,
+            "Query exceeds maximum length of 1000 characters".to_string(),
+            correlation_id,
+        ));
+    }
+
+    // Use provided limit or default to 10, with reasonable bounds
+    let limit = req.limit.unwrap_or(10).min(100); // Cap at 100 results
     let query = req.query.clone();
 
-    // Perform search - handle errors properly instead of swallowing them
-    let results = match search_service.search(&query, limit).await {
-        Ok(results) => results,
-        Err(e) => {
-            tracing::error!("Search failed: {:?}", e);
-            // Return empty results with error indication in metadata rather than failing
-            // This provides better UX while still logging the error
-            vec![]
+    // Perform search with proper error handling
+    let results = match tokio::time::timeout(
+        Duration::from_secs(30), // 30-second timeout for search operations
+        search_service.search(&query, limit),
+    )
+    .await
+    {
+        Ok(Ok(results)) => {
+            info!(
+                correlation_id = %correlation_id,
+                result_count = results.len(),
+                query_time_ms = start.elapsed().as_millis(),
+                "Search completed successfully"
+            );
+            results
+        }
+        Ok(Err(search_error)) => {
+            error!(
+                correlation_id = %correlation_id,
+                error = %search_error,
+                query = %query,
+                "Search service returned error"
+            );
+
+            // Convert search service errors to appropriate API errors
+            if search_error.to_string().contains("timeout") {
+                return Err(ApiError::database_timeout(
+                    "search".to_string(),
+                    correlation_id,
+                ));
+            } else if search_error.to_string().contains("unavailable")
+                || search_error.to_string().contains("connection")
+            {
+                return Err(ApiError::SearchServiceUnavailable {
+                    correlation_id,
+                    timeout_duration: Duration::from_secs(30),
+                });
+            } else {
+                return Err(ApiError::InternalServerError { correlation_id });
+            }
+        }
+        Err(_timeout) => {
+            error!(
+                correlation_id = %correlation_id,
+                timeout_duration_ms = 30000,
+                query = %query,
+                "Search operation timed out"
+            );
+            return Err(ApiError::SearchServiceUnavailable {
+                correlation_id,
+                timeout_duration: Duration::from_secs(30),
+            });
         }
     };
 
@@ -451,7 +551,15 @@ pub async fn search_handler(
     let query_time_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     let returned = matches.len();
 
-    Json(SearchResponse {
+    info!(
+        correlation_id = %correlation_id,
+        total_matches,
+        returned,
+        query_time_ms,
+        "Search request completed successfully"
+    );
+
+    Ok(Json(SearchResponse {
         matches,
         metadata: SearchMetadata {
             total_matches,
@@ -461,7 +569,7 @@ pub async fn search_handler(
             index_version: None,
             search_type: Some("semantic".to_string()),
         },
-    })
+    }))
 }
 
 /// Handler with injected service for testing

@@ -1,6 +1,6 @@
 //! Search service module for querying indexed code
 
-use crate::{CodeChunk, Result};
+use crate::{CodeChunk, CorrelationId, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
@@ -32,9 +32,22 @@ pub struct SearchResult {
     pub repository_metadata: Option<RepositoryMetadata>,
 }
 
-/// Trait for search operations
+/// Trait for search operations with correlation ID support
 #[async_trait]
 pub trait SearchProvider: Send + Sync {
     /// Search for code chunks matching the query
-    async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>>;
+    async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        // Default implementation delegates to correlation-aware version with generated ID
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+        self.search_with_correlation_id(query, limit, correlation_id)
+            .await
+    }
+
+    /// Search with correlation ID for tracing and error context
+    async fn search_with_correlation_id(
+        &self,
+        query: &str,
+        limit: usize,
+        correlation_id: CorrelationId,
+    ) -> Result<Vec<SearchResult>>;
 }

@@ -1,5 +1,5 @@
 use crate::{
-    Result,
+    CorrelationId, Result,
     config::Config,
     embedding::{DefaultEmbeddingService, EmbeddingConfig, EmbeddingService},
     indexing::service::FileContent,
@@ -821,8 +821,9 @@ impl Indexer {
             return Ok(vec![]);
         }
 
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| crate::Error::Io(format!("Failed to read file: {e}")))?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            crate::Error::io_error_with_source(format!("Failed to read file: {e}"), Some(e))
+        })?;
 
         // Determine language from extension
         let ext_lower = extension.to_lowercase();

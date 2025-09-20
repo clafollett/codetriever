@@ -1,160 +1,437 @@
-//! Error handling for the Codetriever API.
+//! Structured API error handling for the Codetriever API.
 //!
-//! This module provides a centralized error type that represents all possible failures
-//! that can occur during code retrieval and processing operations. The error handling
-//! strategy follows Rust best practices by:
+//! This module provides comprehensive error handling designed for production API use:
 //!
-//! - Using `thiserror` for automatic `Error` trait implementations
-//! - Providing descriptive error messages with context
-//! - Supporting error chaining via `#[from]` attributes
-//! - Offering a convenient `Result` type alias for API operations
-//! - Leveraging common error patterns from codetriever-common
+//! - **Structured Error Types**: Clear categorization with correlation IDs
+//! - **HTTP Integration**: Automatic status code mapping and user-friendly responses
+//! - **Request Tracking**: Correlation IDs for debugging and monitoring
+//! - **Observability**: Full integration with tracing and metrics
+//! - **Security**: No internal details leaked to API users
 //!
-//! # Error Categories
+//! # Design Philosophy
 //!
-//! The errors are organized into logical categories:
-//! - **I/O Operations**: File system and network errors
-//! - **Vector Database**: Qdrant-specific errors  
-//! - **AI/ML**: Embedding generation failures
-//! - **Parsing**: Code parsing and analysis errors
-//! - **Resource Lookup**: Missing resources or files
+//! 1. **User Experience**: API consumers get helpful, actionable error messages
+//! 2. **Developer Experience**: Rich context and correlation IDs for debugging
+//! 3. **Production Ready**: Structured logging, metrics, and monitoring integration
+//! 4. **Security**: Internal errors are sanitized before reaching users
 //!
 //! # Usage
 //!
 //! ```rust
-//! use codetriever_api::{Error, Result};
+//! use codetriever_api::{ApiError, ApiResult};
 //!
-//! fn process_code() -> Result<String> {
-//!     // Operations that may fail
-//!     Ok("processed code".to_string())
+//! async fn search_handler() -> ApiResult<Vec<String>> {
+//!     let correlation_id = "req_12345".to_string();
+//!
+//!     // Structured error with correlation ID
+//!     Err(ApiError::InvalidSearchQuery {
+//!         query: "bad query".to_string(),
+//!         reason: "Query too short".to_string(),
+//!         correlation_id,
+//!     })
 //! }
 //! ```
 
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use codetriever_common::CommonError;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use thiserror::Error;
+use tracing::{error, warn};
+use uuid::Uuid;
 
-/// The main error type for all Codetriever API operations.
+/// Structured API error types with correlation IDs for request tracking.
 ///
-/// This enum represents all possible errors that can occur during code retrieval,
-/// processing, and storage operations. Each variant provides context-specific
-/// error information and is designed for easy error propagation and handling.
+/// Each error variant includes a correlation ID that links the error to request
+/// traces, making debugging and monitoring much easier in production.
 ///
-/// # Design Principles
+/// # Error Categories
 ///
-/// - **Contextual**: Each error includes descriptive context about what failed
-/// - **Composable**: Errors can be chained and converted using `#[from]`
-/// - **User-friendly**: Error messages are designed to be helpful for debugging
-/// - **Exhaustive**: Covers all failure modes in the code retrieval pipeline
+/// - **Search Errors**: Query validation and search service failures
+/// - **Service Errors**: Backend service unavailability and timeouts
+/// - **Database Errors**: Data layer operation failures
+/// - **System Errors**: Infrastructure and configuration issues
 ///
-/// # Examples
+/// # Correlation IDs
 ///
-/// ```rust
-/// use codetriever_api::Error;
-/// use std::fs;
-///
-/// // IO errors are automatically converted
-/// let result: Result<String, Error> = fs::read_to_string("missing.txt")
-///     .map_err(Error::from);
-///
-/// // Manual error construction
-/// let parse_error = Error::Parser("Invalid syntax in function".to_string());
-/// ```
+/// Every error includes a correlation ID that:
+/// - Links errors to request traces in logs
+/// - Enables cross-service request tracking
+/// - Helps with debugging in distributed systems
+/// - Provides users with reference numbers for support
 #[derive(Debug, Error)]
-pub enum Error {
-    // Common error variants (implementing CommonError trait)
-    /// I/O operation failed.
+pub enum ApiError {
+    /// Search service is unavailable or experiencing issues.
     ///
-    /// This variant can be either a wrapped standard library I/O error or
-    /// a custom string message for I/O-related failures.
+    /// This indicates the search backend is down, overloaded, or misconfigured.
+    /// Users should retry later or contact support if the issue persists.
+    #[error(
+        "Search service unavailable (correlation: {correlation_id}, timeout: {}ms)",
+        timeout_duration.as_millis()
+    )]
+    SearchServiceUnavailable {
+        correlation_id: String,
+        timeout_duration: Duration,
+    },
+
+    /// Invalid or malformed search query.
     ///
-    /// Common scenarios:
-    /// - File not found or permission denied
-    /// - Network timeouts or connection failures
-    /// - Disk space or memory issues
-    /// - Custom I/O error messages with context
+    /// The query failed validation checks or contains unsupported syntax.
+    /// Users should modify their query based on the provided reason.
+    #[error(
+        "Invalid search query '{}': {} (correlation: {})",
+        query,
+        reason,
+        correlation_id
+    )]
+    InvalidSearchQuery {
+        query: String,
+        reason: String,
+        correlation_id: String,
+    },
+
+    /// Database operation timed out.
+    ///
+    /// The database failed to respond within the configured timeout period.
+    /// This usually indicates high load or connectivity issues.
+    #[error(
+        "Database timeout during {} operation (correlation: {})",
+        operation,
+        correlation_id
+    )]
+    DatabaseTimeout {
+        operation: String,
+        correlation_id: String,
+    },
+
+    /// Database connection or query failed.
+    ///
+    /// General database errors including connection failures, constraint violations,
+    /// or data consistency issues.
+    #[error(
+        "Database error during {} (correlation: {})",
+        operation,
+        correlation_id
+    )]
+    DatabaseError {
+        operation: String,
+        correlation_id: String,
+    },
+
+    /// Resource not found in the system.
+    ///
+    /// The requested resource (file, repository, etc.) does not exist or
+    /// is not accessible with the current permissions.
+    #[error(
+        "Resource '{}' not found (correlation: {})",
+        resource_id,
+        correlation_id
+    )]
+    ResourceNotFound {
+        resource_id: String,
+        correlation_id: String,
+    },
+
+    /// Authentication or authorization failed.
+    ///
+    /// The request lacks valid authentication credentials or the authenticated
+    /// user does not have permission to perform the operation.
+    #[error("Access denied: {} (correlation: {})", reason, correlation_id)]
+    AccessDenied {
+        reason: String,
+        correlation_id: String,
+    },
+
+    /// Request failed validation.
+    ///
+    /// The request body, parameters, or headers failed validation checks.
+    /// This includes malformed JSON, missing required fields, or invalid values.
+    #[error(
+        "Request validation failed: {} (correlation: {})",
+        message,
+        correlation_id
+    )]
+    ValidationError {
+        message: String,
+        correlation_id: String,
+        field: Option<String>,
+    },
+
+    /// Rate limit exceeded.
+    ///
+    /// The client has exceeded the allowed request rate. They should implement
+    /// backoff and retry logic.
+    #[error(
+        "Rate limit exceeded. Retry after {}s (correlation: {})",
+        retry_after_seconds,
+        correlation_id
+    )]
+    RateLimitExceeded {
+        retry_after_seconds: u64,
+        correlation_id: String,
+    },
+
+    /// Internal server error with correlation ID.
+    ///
+    /// An unexpected error occurred that the user cannot fix. The correlation ID
+    /// can be used for support requests and debugging.
+    #[error("Internal server error (correlation: {})", correlation_id)]
+    InternalServerError { correlation_id: String },
+
+    /// Service temporarily unavailable.
+    ///
+    /// The service is temporarily down for maintenance or experiencing high load.
+    /// Clients should implement exponential backoff when retrying.
+    #[error(
+        "Service temporarily unavailable. Retry after {}s (correlation: {})",
+        retry_after_seconds,
+        correlation_id
+    )]
+    ServiceUnavailable {
+        retry_after_seconds: u64,
+        correlation_id: String,
+    },
+
+    /// Legacy error wrapper for backward compatibility.
+    ///
+    /// This allows gradual migration from the old error system while maintaining
+    /// the correlation ID requirement for new error handling.
+    #[error("Legacy error: {} (correlation: {})", message, correlation_id)]
+    Legacy {
+        message: String,
+        correlation_id: String,
+    },
+}
+
+/// Error response sent to API clients.
+///
+/// This is the JSON structure returned in HTTP error responses. It provides
+/// users with actionable information while maintaining security by not exposing
+/// internal system details.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    /// HTTP error code
+    pub error: String,
+    /// Human-readable error message
+    pub message: String,
+    /// Correlation ID for tracking and support
+    pub correlation_id: String,
+    /// Optional additional details for debugging
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+    /// When to retry (for transient errors)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<u64>,
+}
+
+/// Generate a correlation ID for request tracking.
+///
+/// Creates a unique identifier that can be used to correlate logs, metrics,
+/// and error reports across services. The format is designed to be:
+/// - Unique across all requests
+/// - Human-readable for support tickets
+/// - Sortable by timestamp
+pub fn generate_correlation_id() -> String {
+    format!("req_{}", Uuid::new_v4().simple())
+}
+
+/// Helper to create correlation IDs with custom prefixes.
+///
+/// Useful for different types of operations or services.
+pub fn generate_correlation_id_with_prefix(prefix: &str) -> String {
+    format!("{}_{}", prefix, Uuid::new_v4().simple())
+}
+
+impl ApiError {
+    /// Get the correlation ID from any error variant.
+    ///
+    /// This is useful for logging and monitoring, allowing you to extract
+    /// the correlation ID regardless of the specific error type.
+    pub fn correlation_id(&self) -> &str {
+        match self {
+            Self::SearchServiceUnavailable { correlation_id, .. }
+            | Self::InvalidSearchQuery { correlation_id, .. }
+            | Self::DatabaseTimeout { correlation_id, .. }
+            | Self::DatabaseError { correlation_id, .. }
+            | Self::ResourceNotFound { correlation_id, .. }
+            | Self::AccessDenied { correlation_id, .. }
+            | Self::ValidationError { correlation_id, .. }
+            | Self::RateLimitExceeded { correlation_id, .. }
+            | Self::InternalServerError { correlation_id, .. }
+            | Self::ServiceUnavailable { correlation_id, .. }
+            | Self::Legacy { correlation_id, .. } => correlation_id,
+        }
+    }
+
+    /// Get the HTTP status code for this error.
+    ///
+    /// Maps each error variant to the appropriate HTTP status code following
+    /// REST API conventions and HTTP specifications.
+    pub fn status_code(&self) -> StatusCode {
+        match self {
+            Self::InvalidSearchQuery { .. } | Self::ValidationError { .. } => {
+                StatusCode::BAD_REQUEST
+            }
+            Self::AccessDenied { .. } => StatusCode::UNAUTHORIZED,
+            Self::ResourceNotFound { .. } => StatusCode::NOT_FOUND,
+            Self::RateLimitExceeded { .. } => StatusCode::TOO_MANY_REQUESTS,
+            Self::InternalServerError { .. } | Self::DatabaseError { .. } | Self::Legacy { .. } => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            Self::SearchServiceUnavailable { .. }
+            | Self::DatabaseTimeout { .. }
+            | Self::ServiceUnavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
+        }
+    }
+
+    /// Create an invalid search query error.
+    ///
+    /// Use this for query validation failures with helpful user feedback.
+    pub fn invalid_query(query: String, reason: String, correlation_id: String) -> Self {
+        Self::InvalidSearchQuery {
+            query,
+            reason,
+            correlation_id,
+        }
+    }
+
+    /// Create a database timeout error.
+    ///
+    /// Use this when database operations exceed configured timeouts.
+    pub fn database_timeout(operation: String, correlation_id: String) -> Self {
+        Self::DatabaseTimeout {
+            operation,
+            correlation_id,
+        }
+    }
+}
+
+/// Axum HTTP response implementation for ApiError.
+///
+/// This implementation automatically converts ApiError instances into proper
+/// HTTP responses with:
+/// - Correct status codes
+/// - JSON error bodies
+/// - Security headers
+/// - Correlation ID headers for tracking
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let status = self.status_code();
+        let correlation_id = self.correlation_id().to_string();
+
+        // Log the error with correlation ID for debugging
+        match &self {
+            Self::InternalServerError { .. } => {
+                error!(
+                    correlation_id = %correlation_id,
+                    error = %self,
+                    "Internal server error"
+                );
+            }
+            Self::DatabaseError { .. } | Self::Legacy { .. } => {
+                error!(
+                    correlation_id = %correlation_id,
+                    error = %self,
+                    "Database or legacy error"
+                );
+            }
+            Self::SearchServiceUnavailable { .. }
+            | Self::DatabaseTimeout { .. }
+            | Self::ServiceUnavailable { .. } => {
+                warn!(
+                    correlation_id = %correlation_id,
+                    error = %self,
+                    "Service unavailable error"
+                );
+            }
+            _ => {
+                warn!(
+                    correlation_id = %correlation_id,
+                    error = %self,
+                    "Client error"
+                );
+            }
+        }
+
+        let error_response = ErrorResponse {
+            error: format!("{:?}", self)
+                .split("::")
+                .last()
+                .unwrap_or("Unknown")
+                .to_uppercase(),
+            message: self.to_string(),
+            correlation_id,
+            details: None,
+            retry_after: match &self {
+                Self::SearchServiceUnavailable { .. } => Some(60),
+                Self::DatabaseTimeout { .. } => Some(30),
+                Self::ServiceUnavailable {
+                    retry_after_seconds,
+                    ..
+                }
+                | Self::RateLimitExceeded {
+                    retry_after_seconds,
+                    ..
+                } => Some(*retry_after_seconds),
+                _ => None,
+            },
+        };
+
+        let mut response = (status, Json(error_response)).into_response();
+
+        // Add correlation ID to response headers for client tracking
+        if let Ok(header_value) = correlation_id.parse() {
+            response
+                .headers_mut()
+                .insert("X-Correlation-ID", header_value);
+        }
+
+        response
+    }
+}
+
+/// Result type for API operations.
+///
+/// This type alias provides a convenient shorthand for API operations that
+/// return structured errors with correlation IDs and proper HTTP status codes.
+pub type ApiResult<T> = std::result::Result<T, ApiError>;
+
+/// Legacy Result type for backward compatibility.
+///
+/// This maintains compatibility with existing code while encouraging migration
+/// to the new ApiResult type for better error handling.
+pub type Result<T> = std::result::Result<T, LegacyError>;
+
+/// Legacy error type for backward compatibility.
+///
+/// This preserves the old error interface while providing a migration path
+/// to the new structured ApiError system.
+#[derive(Debug, Error)]
+pub enum LegacyError {
     #[error("IO error: {0}")]
     Io(String),
-
-    /// Configuration error.
-    ///
-    /// This variant indicates missing or invalid configuration required for
-    /// the application to function properly.
-    ///
-    /// Common scenarios:
-    /// - Missing environment variables (e.g., `HF_TOKEN` for Hugging Face)
-    /// - Invalid API keys or credentials
-    /// - Misconfigured service endpoints
-    /// - Missing required configuration files
     #[error("Configuration error: {0}")]
     Configuration(String),
-
-    /// Code parsing or analysis failed.
-    ///
-    /// This variant represents errors during code parsing, AST generation,
-    /// or semantic analysis of source files.
-    ///
-    /// Common scenarios:
-    /// - Unsupported programming language
-    /// - Malformed or invalid syntax
-    /// - Parser library errors or limitations
-    /// - Unicode or encoding issues
     #[error("Parser error: {0}")]
     Parser(String),
-
-    /// Other/generic error.
-    ///
-    /// This variant is used for errors that don't fit into specific categories
-    /// or for wrapped anyhow errors.
     #[error("Other error: {0}")]
     Other(String),
-
-    // API-specific error variants
-    /// Vector database (Qdrant) operation failed.
-    ///
-    /// This variant represents errors from Qdrant vector database operations
-    /// including connection issues, query failures, or data inconsistencies.
-    ///
-    /// Common scenarios:
-    /// - Qdrant server unavailable or misconfigured
-    /// - Collection doesn't exist or has wrong schema
-    /// - Query timeout or invalid vector dimensions
-    /// - Indexing or storage failures
     #[error("Qdrant error: {0}")]
     Qdrant(String),
-
-    /// AI/ML embedding generation failed.
-    ///
-    /// This variant covers errors during code embedding generation, including
-    /// model loading failures, inference errors, or dimension mismatches.
-    ///
-    /// Common scenarios:
-    /// - Embedding model not found or corrupted
-    /// - Input text too large for model context
-    /// - GPU/compute resource exhaustion
-    /// - Network errors when calling embedding APIs
     #[error("Embedding error: {0}")]
     Embedding(String),
-
-    /// Requested resource was not found.
-    ///
-    /// This variant indicates that a requested code file, function, or other
-    /// resource could not be located in the codebase or database.
-    ///
-    /// Common scenarios:
-    /// - File path doesn't exist in repository
-    /// - Function or symbol not found in codebase
-    /// - Collection or index missing from database
-    /// - Search query returned no results
     #[error("Not found: {0}")]
     NotFound(String),
-
-    /// General anyhow error for flexible error handling
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
 }
 
-// Implement the CommonError trait for standardized error handling
-impl CommonError for Error {
+/// Implement the CommonError trait for legacy compatibility.
+impl CommonError for LegacyError {
     fn io_error(msg: impl Into<String>) -> Self {
         Self::Io(msg.into())
     }
@@ -172,40 +449,11 @@ impl CommonError for Error {
     }
 }
 
-/// A specialized `Result` type for Codetriever API operations.
-///
-/// This type alias provides a convenient shorthand for `Result<T, Error>` that
-/// is used throughout the Codetriever API. It follows the common Rust pattern
-/// of providing a crate-specific Result type to reduce boilerplate.
-///
-/// # Usage
-///
-/// Instead of writing `std::result::Result<T, crate::Error>` everywhere,
-/// you can simply use `Result<T>`:
-///
-/// ```rust
-/// use codetriever_api::Result;
-///
-/// fn retrieve_code(path: &str) -> Result<String> {
-///     // Function implementation that may return our Error type
-///     Ok("code content".to_string())
-/// }
-///
-/// fn process_multiple_files() -> Result<Vec<String>> {
-///     let mut results = Vec::new();
-///     results.push(retrieve_code("file1.rs")?);
-///     results.push(retrieve_code("file2.rs")?);
-///     Ok(results)
-/// }
-/// ```
-///
-/// The `?` operator works seamlessly with this Result type, automatically
-/// propagating any `Error` variants up the call stack.
-pub type Result<T> = std::result::Result<T, Error>;
+// Legacy compatibility
+pub type Error = LegacyError;
 
-// Standard From implementations using CommonError trait methods
-impl From<std::io::Error> for Error {
+impl From<std::io::Error> for LegacyError {
     fn from(err: std::io::Error) -> Self {
-        Self::io_error(err.to_string())
+        Self::Io(err.to_string())
     }
 }

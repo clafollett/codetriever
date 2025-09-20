@@ -3,7 +3,7 @@
 //! This module provides trait abstractions for vector storage backends,
 //! enabling pluggable storage implementations and better testability.
 
-use crate::{Result, parsing::CodeChunk};
+use crate::{CorrelationId, Result, parsing::CodeChunk};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -14,18 +14,32 @@ pub struct StorageSearchResult {
     pub similarity: f32,
 }
 
-/// Trait for vector storage backends
+/// Trait for vector storage backends with correlation ID support
 ///
 /// This trait abstracts vector database operations, allowing different
 /// implementations (Qdrant, Pinecone, Weaviate, etc.) to be used interchangeably.
+/// All methods support correlation IDs for structured error handling and tracing.
 #[async_trait]
 pub trait VectorStorage: Send + Sync {
-    /// Store code chunks with their embeddings
+    /// Store code chunks with their embeddings (backward compatible)
     ///
     /// Returns the number of chunks successfully stored
-    async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize>;
+    async fn store_chunks(&self, chunks: &[CodeChunk]) -> Result<usize> {
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+        self.store_chunks_with_correlation_id(chunks, &correlation_id)
+            .await
+    }
 
-    /// Store chunks with predetermined IDs (for deterministic storage)
+    /// Store code chunks with correlation ID for error tracing
+    ///
+    /// Returns the number of chunks successfully stored
+    async fn store_chunks_with_correlation_id(
+        &self,
+        chunks: &[CodeChunk],
+        correlation_id: &CorrelationId,
+    ) -> Result<usize>;
+
+    /// Store chunks with predetermined IDs (backward compatible)
     ///
     /// This is useful for generation-based versioning where chunk IDs
     /// need to be predictable for deletion operations.
@@ -35,15 +49,52 @@ pub trait VectorStorage: Send + Sync {
         branch: &str,
         chunks: &[CodeChunk],
         generation: i64,
+    ) -> Result<Vec<Uuid>> {
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+        self.store_chunks_with_ids_and_correlation_id(
+            repository_id,
+            branch,
+            chunks,
+            generation,
+            &correlation_id,
+        )
+        .await
+    }
+
+    /// Store chunks with predetermined IDs and correlation ID for error tracing
+    ///
+    /// This is useful for generation-based versioning where chunk IDs
+    /// need to be predictable for deletion operations.
+    async fn store_chunks_with_ids_and_correlation_id(
+        &self,
+        repository_id: &str,
+        branch: &str,
+        chunks: &[CodeChunk],
+        generation: i64,
+        correlation_id: &CorrelationId,
     ) -> Result<Vec<Uuid>>;
 
-    /// Search for similar code chunks
+    /// Search for similar code chunks (backward compatible)
     ///
     /// Returns chunks ordered by similarity to the query embedding with their scores
     async fn search(
         &self,
         query_embedding: Vec<f32>,
         limit: usize,
+    ) -> Result<Vec<StorageSearchResult>> {
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+        self.search_with_correlation_id(query_embedding, limit, &correlation_id)
+            .await
+    }
+
+    /// Search for similar code chunks with correlation ID for error tracing
+    ///
+    /// Returns chunks ordered by similarity to the query embedding with their scores
+    async fn search_with_correlation_id(
+        &self,
+        query_embedding: Vec<f32>,
+        limit: usize,
+        correlation_id: &CorrelationId,
     ) -> Result<Vec<StorageSearchResult>>;
 
     /// Delete chunks by their IDs
