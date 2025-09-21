@@ -4,7 +4,7 @@ You MUST read and follow ALL instructions found in the common Agent rules docume
 
 ## Development Environment
 
-**IMPORTANT**: Before working on MAOS, source the development stack environment:
+**IMPORTANT**: Before working on Codetriever, source the development stack environment:
 
 ```bash
 source stack.env

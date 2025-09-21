@@ -26,7 +26,7 @@ Open VS Code settings and add to MCP servers configuration. See [Claude Code MCP
       "args": ["mcp"],
       "env": {
         "DATABASE_URL": "postgresql://codetriever:codetriever@localhost:5432/codetriever",
-        "QDRANT_URL": "http://localhost:6333"
+        "QDRANT_URL": "http://localhost:6334"
       }
     }
   }
@@ -50,7 +50,7 @@ Use the codetriever_index tool to index /path/to/my/project
 Once configured, Claude can use these tools:
 
 - `codetriever_index` - Index a repository
-- `codetriever_search` - Search for code (currently broken!)
+- `codetriever_search` - Search for code
 - `codetriever_similar` - Find similar code chunks
 - `codetriever_context` - Get context around a code location
 - `codetriever_usages` - Find usages of a symbol
@@ -121,7 +121,7 @@ Optional configuration:
 export DATABASE_URL="postgresql://user:pass@host:5432/db"
 
 # Custom Qdrant URL
-export QDRANT_URL="http://localhost:6333"
+export QDRANT_URL="http://localhost:6334"
 
 # Logging level
 export RUST_LOG="info"

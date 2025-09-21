@@ -2,11 +2,11 @@
 
 ## 🔴 What's Actually Broken Right Now
 
-### Search Returns Empty Results
-- **Issue**: `/api/search` endpoint returns `{"results": []}`
-- **Impact**: The MAIN feature doesn't work yet
-- **Fix ETA**: This week (or sooner with your help!)
-- **Workaround**: None - indexing works but you can't search
+### MCP Server Untested
+- **Issue**: MCP server exists but never tested with Claude
+- **Impact**: Can't integrate with Claude Code or other MCP clients yet
+- **Fix ETA**: Need community testing
+- **Workaround**: Use REST API directly
 
 ## ⚠️ Performance Limitations
 
@@ -36,12 +36,12 @@
 - Can't configure via CLI flags
 
 ### API Endpoints Missing
-- `/similar` - Returns stub
-- `/context` - Returns stub
-- `/usages` - Returns stub
-- `/stats` - Returns stub
-- `/clean` - Not implemented
-- `/compact` - Not implemented
+- `/similar` - Not implemented yet
+- `/context` - Not implemented yet
+- `/usages` - Not implemented yet
+- `/stats` - Not implemented yet
+- `/clean` - Not implemented yet
+- `/compact` - Not implemented yet
 
 ### No File Watching
 - Manual re-indexing required
@@ -109,4 +109,4 @@ Want to help fix something? Check [CONTRIBUTING.md](CONTRIBUTING.md) and grab an
 
 ---
 
-*Last updated: January 30, 2025 - Week 2 of development*
+*Last updated: September 21, 2025 - Search API now working*
