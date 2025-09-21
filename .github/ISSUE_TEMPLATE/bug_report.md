@@ -24,7 +24,10 @@ assignees: ''
 <!-- If applicable, add screenshots to help explain the problem -->
 
 ## Environment
-- Agenterra Version: <!-- e.g. 0.1.0 -->
+- Codetriever Version: <!-- e.g. 0.1.0 -->
+- OS: <!-- e.g. macOS 14, Ubuntu 22.04, Windows 11 -->
+- Rust Version: <!-- e.g. 1.75.0 -->
+- Docker Version: <!-- e.g. 24.0.0 -->
 
 ## Additional Context
 <!-- Any other relevant information about the problem -->

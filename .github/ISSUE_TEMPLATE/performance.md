@@ -1,6 +1,6 @@
 ---
 name: Performance Improvement
-about: Suggest performance optimizations for the Agenterra CLI
+about: Suggest performance optimizations for Codetriever
 title: '[PERF] '
 labels: performance
 assignees: ''
@@ -10,7 +10,7 @@ assignees: ''
 <!-- Describe the current performance issue or bottleneck -->
 
 ## Affected Components
-<!-- Which parts of the Agenterra CLI are affected? -->
+<!-- Which parts of Codetriever are affected? (e.g., indexing, search, parsing, API) -->
 
 ## Current Measurements
 <!-- If available, provide metrics showing the current performance (execution time, memory usage, etc.) -->

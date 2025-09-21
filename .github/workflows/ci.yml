@@ -3,25 +3,77 @@ name: CI
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  # Quick tests on push to main
+  # Fast quality checks using mocks (no Docker required)
   test:
-    name: Test
+    name: Test & Quality
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: Swatinem/rust-cache@v2
-      
-      # Just run tests - no complex validation
-      - name: Run tests
-        run: cargo test
-      
-      # Quick format check
-      - name: Check formatting
-        run: cargo fmt -- --check
-        continue-on-error: true  # Don't block on formatting
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Format check
+        run: just fmt --check
+
+      - name: Lint check
+        run: just lint
+
+      - name: Security audit
+        run: just audit
+        continue-on-error: true  # Don't block on advisories for alpha
+
+      - name: Run unit tests
+        run: just test-unit
+
+      - name: Build check
+        run: just build
+
+  # Optional compatibility check
+  compatibility:
+    name: Rust Compatibility
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    strategy:
+      matrix:
+        rust: [stable, beta]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build test
+        run: cargo build --all-targets
+
+      - name: Unit tests only
+        run: cargo test --all --lib
