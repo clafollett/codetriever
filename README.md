@@ -36,18 +36,19 @@ Every AI coding tool needs semantic search. We're building the **open protocol**
 - **Smart chunking** - Respects token limits, preserves context
 - **Vector storage** - Qdrant for embeddings, PostgreSQL for metadata
 - **Database tracking** - Knows what files have been indexed
+- **REST API** - Working indexing and search endpoints
+- **Semantic search** - Returns ranked results from vector database
 
 ### 🤷 What Might Work (Untested)
 - **MCP server** - Agenterra scaffolded it, never tested with Claude
 - **Incremental updates** - Code exists, not proven
+- **CLI commands** - Exist but may have bugs
 
 ### 🚧 Coming Soon
-- **Remaining API endpoints**
-  - /search - Semantic code search (THE broken one)
+- **Additional API endpoints**
   - /similar - Find similar code chunks
   - /context - Get surrounding code context
   - /usages - Find symbol usages
-  - /index - Trigger reindexing
   - /status - System health and metrics
   - /stats - Quick statistics
   - /clean - Remove stale entries
@@ -124,7 +125,7 @@ codetriever-api
 
 # Index via API (requires file CONTENT, not filesystem paths - SaaS-ready!)
 # Path should be repo-relative (e.g., "src/main.rs" not "/Users/bob/code/project/src/main.rs")
-curl -X POST http://localhost:3000/index \
+curl -X POST http://localhost:8080/index \
   -H "Content-Type: application/json" \
   -d '{
     "project_id": "my-project",
@@ -136,10 +137,10 @@ curl -X POST http://localhost:3000/index \
     ]
   }'
 
-# Search via API (returns empty array - BROKEN)
-curl -X POST http://localhost:3000/search \
+# Search via API (works! returns semantic results)
+curl -X POST http://localhost:8080/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "database migrations", "limit": 10}'
+  -d '{"query": "function that prints hello", "limit": 10}'
 
 # MCP server (exists but untested, probably broken)
 codetriever mcp
@@ -253,6 +254,8 @@ cargo test -p codetriever-meta-data
 - [x] REST API with Axum
 - [x] Incremental indexing
 - [x] Comprehensive test suite
+- [x] Working semantic search API
+- [x] File content indexing API
 
 ### In Progress
 - [ ] Performance optimization
@@ -272,15 +275,15 @@ See [docs/architecture/current-architecture.md](docs/architecture/current-archit
 
 ## 🤝 Contributing - We Need You!
 
-**The search endpoint is literally broken.** Want to be the hero who fixes it? 🦸
+**Want to make AI coding better?** 🦸
 
 ### Quick Wins for First Contributors
-- [ ] Fix the search endpoint to return actual results
 - [ ] Add CLI commands for search/similar/context
 - [ ] **Upgrade to NEW Jina code models** (released Sept 3, 2025! 0.5b/1.5b/GGUF versions)
 - [ ] Improve error messages
 - [ ] Add more language tests
 - [ ] Write documentation
+- [ ] Test MCP server integration
 
 ### How to Contribute
 1. **Fork and clone** the repository
@@ -303,7 +306,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup details.
 
 **Week 2**: PostgreSQL state management, MCP server (via our Agenterra tool), comprehensive testing. Refactored everything twice because why not.
 
-**Today**: Open sourcing as an alpha experiment. Search is broken, MCP untested, but the indexing is solid!
+**Today**: Open sourcing as an alpha experiment. Indexing and search work, MCP untested but ready for contributors!
 
 **2 weeks. 1 human architect. 1 AI developer. Pure collaboration.**
 
