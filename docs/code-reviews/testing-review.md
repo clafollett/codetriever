@@ -3,7 +3,7 @@
 **Date**: September 17, 2025
 **Reviewer**: QA Engineer Agent
 **Scope**: Staged git changes focusing on search functionality, API endpoints, and database integration
-**Files Analyzed**: 27 modified files across `codetriever-api`, `codetriever-indexer`, and `codetriever-data` crates
+**Files Analyzed**: 27 modified files across `codetriever-api`, `codetriever-indexer`, and `codetriever-meta-data` crates
 
 ## Executive Summary
 

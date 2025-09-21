@@ -12,7 +12,7 @@ Codetriever has a **fully functional indexing engine** but needs its **user inte
 | Component | Status | Description | Location |
 |-----------|--------|-------------|----------|
 | **Indexing Engine** | ✅ Complete | Parses, chunks, embeds code | `crates/codetriever-indexer/` |
-| **Storage Layer** | ✅ Complete | PostgreSQL + Qdrant integration | `crates/codetriever-data/` |
+| **Storage Layer** | ✅ Complete | PostgreSQL + Qdrant integration | `crates/codetriever-meta-data/` |
 | **MCP Server** | ✅ Complete | 9 tools via Agenterra scaffolding | `crates/codetriever/` |
 | **Docker Setup** | ✅ Complete | Multi-service architecture | `docker/` |
 | **API Framework** | ✅ Complete | Axum server with routing | `crates/codetriever-api/` |

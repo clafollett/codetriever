@@ -112,7 +112,7 @@ let text_refs = texts; // &[&str] can be used directly
 
 ### 4. Builder Pattern Implementation 🎯
 
-**File**: `crates/codetriever-data/src/pool_builder.rs`
+**File**: `crates/codetriever-meta-data/src/pool_builder.rs`
 
 **SOLID**: Excellent builder pattern with const methods:
 
@@ -264,7 +264,7 @@ let text_refs: Vec<&str> = texts.to_vec();  // Unnecessary allocation
 **Issue**: Imperative mapping could be more functional
 
 #### L3: Enum Variant Naming
-**File**: `crates/codetriever-data/src/models.rs:92-94`
+**File**: `crates/codetriever-meta-data/src/models.rs:92-94`
 **Issue**: `from_str` could use `Self` instead of `JobStatus`
 
 ---

@@ -3,7 +3,7 @@
 //! HTTP API server for semantic code search with vector embeddings.
 
 use codetriever_api::routes;
-use codetriever_indexer::config::Config;
+use codetriever_indexing::config::Config;
 use std::net::SocketAddr;
 use tracing::info;
 

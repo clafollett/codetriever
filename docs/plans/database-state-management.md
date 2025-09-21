@@ -227,7 +227,7 @@ This ensures no mixed state or orphaned chunks.
 
 ## Implementation Status
 
-- [ ] Create codetriever-data crate
+- [ ] Create codetriever-meta-data crate
 - [ ] Design database schema
 - [ ] Implement repository detection
 - [ ] Build migration runner

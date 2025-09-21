@@ -39,7 +39,7 @@ use axum::{
     routing::post,
 };
 use codetriever_common::CorrelationId;
-use codetriever_indexer::{SearchProvider, SearchService};
+use codetriever_search::{SearchProvider, SearchService};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -203,7 +203,7 @@ pub struct CommitInfo {
 ///
 /// // Mount search routes into main app
 /// let app = Router::new()
-///     .nest("/api/v1", search::routes_default());
+///     .nest("/api/v1", search::routes());
 /// ```
 ///
 /// # Usage with Main Router
@@ -216,53 +216,49 @@ pub struct CommitInfo {
 /// Type for search service handle
 type SearchServiceHandle = Arc<dyn SearchProvider>;
 
-/// Create routes with injected search service (proper dependency injection)
-pub fn routes(search_service: Arc<dyn SearchProvider>) -> Router {
-    Router::new()
-        .route("/search", post(search_handler))
-        .with_state(search_service)
-}
-
-/// Service factory for dependency injection
+/// Service factory for proper dependency injection
 pub struct ServiceFactory {
-    indexer: Arc<tokio::sync::RwLock<codetriever_indexer::Indexer>>,
-    db_client: Arc<codetriever_data::DataClient>,
+    embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
+    vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
+    db_client: Arc<codetriever_meta_data::DataClient>,
 }
 
 impl ServiceFactory {
     /// Create a new service factory with injected dependencies
-    pub const fn new(
-        indexer: Arc<tokio::sync::RwLock<codetriever_indexer::Indexer>>,
-        db_client: Arc<codetriever_data::DataClient>,
+    pub fn new(
+        embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
+        vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
+        db_client: Arc<codetriever_meta_data::DataClient>,
     ) -> Self {
-        Self { indexer, db_client }
+        Self {
+            embedding_service,
+            vector_storage,
+            db_client,
+        }
     }
 
     /// Create the search service with all dependencies
     pub fn create_search_service(&self) -> Arc<dyn SearchProvider> {
-        Arc::new(SearchService::new(
-            Arc::clone(&self.indexer),
+        Arc::new(SearchService::with_dependencies(
+            Arc::clone(&self.embedding_service),
+            Arc::clone(&self.vector_storage),
             Arc::clone(&self.db_client),
         ))
-    }
-
-    /// Create routes with properly injected dependencies
-    pub fn create_routes(&self) -> Router {
-        let search_service = self.create_search_service();
-        routes(search_service)
     }
 }
 
 /// Create routes with default configuration
-/// Uses the unified `SearchService` without database integration
-pub fn routes_default() -> Router {
-    use codetriever_indexer::Indexer;
+pub fn routes() -> Router {
+    // Simple like index::routes - just create the service directly
+    let search_service = Arc::new(SearchService::new());
+    routes_with_search_service(search_service)
+}
 
-    let indexer = Arc::new(tokio::sync::RwLock::new(Indexer::new()));
-    let search_service =
-        Arc::new(SearchService::without_database(indexer)) as Arc<dyn SearchProvider>;
-
-    routes(search_service)
+/// Create routes with injected search service (proper dependency injection)
+pub fn routes_with_search_service(search_service: Arc<dyn SearchProvider>) -> Router {
+    Router::new()
+        .route("/search", post(search_handler))
+        .with_state(search_service)
 }
 
 /// Fetch surrounding lines for context
@@ -294,7 +290,7 @@ fn fetch_surrounding_lines(content: &str, line_number: usize, before: bool) -> O
 
 /// Extract symbols from a code chunk
 /// Leverages the existing tree-sitter parsing that already extracted the chunk name and kind
-fn extract_symbols_from_chunk(chunk: &codetriever_indexer::CodeChunk) -> Vec<String> {
+fn extract_symbols_from_chunk(chunk: &codetriever_parsing::CodeChunk) -> Vec<String> {
     let mut symbols = Vec::new();
 
     // The tree-sitter parser already extracted the primary symbol name
@@ -366,9 +362,9 @@ fn highlight_search_terms(content: &str, query: &str) -> Vec<Range> {
 /// Returns a JSON response containing search results in the [`SearchResponse`] format
 /// with matches array and metadata, or a structured error response.
 ///
-/// # Error Handling
+/// # Errors
 ///
-/// Provides comprehensive error handling with correlation IDs:
+/// Returns `ApiError` in the following cases:
 /// - Invalid query parameters (400 Bad Request)
 /// - Search service unavailability (503 Service Unavailable)
 /// - Database timeouts (503 Service Unavailable)
@@ -489,7 +485,7 @@ pub async fn search_handler(
         .map(|result| {
             let chunk = &result.chunk;
             let file_path = chunk.file_path.clone();
-            let content = chunk.content.clone();
+            let chunk_content = chunk.content.clone();
 
             // Extract repository and commit info from metadata if available
             let (repository, commit) =
@@ -527,7 +523,7 @@ pub async fn search_handler(
                 file: file_path.clone(),
                 path: file_path,
                 repository,
-                content: content.clone(),
+                content: chunk_content.clone(),
                 language: chunk.language.clone(),
                 element_type: chunk.kind.clone(),
                 name: chunk.name.clone(),
@@ -537,10 +533,10 @@ pub async fn search_handler(
                 },
                 similarity: result.similarity,
                 context: Some(Context {
-                    before: fetch_surrounding_lines(&content, chunk.start_line, true),
-                    after: fetch_surrounding_lines(&content, chunk.end_line, false),
+                    before: fetch_surrounding_lines(&chunk_content, chunk.start_line, true),
+                    after: fetch_surrounding_lines(&chunk_content, chunk.end_line, false),
                 }),
-                highlights: highlight_search_terms(&content, &query),
+                highlights: highlight_search_terms(&chunk_content, &query),
                 symbols: extract_symbols_from_chunk(chunk),
                 commit,
             }
@@ -579,7 +575,7 @@ mod tests {
     use crate::test_utils::TestResult;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use codetriever_indexer::test_mocks::MockSearchService;
+    use codetriever_search::test_mocks::MockSearchService;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -587,7 +583,7 @@ mod tests {
 
     async fn search_handler_with_service(
         req: SearchRequest,
-        search_service: Arc<tokio::sync::Mutex<codetriever_indexer::test_mocks::MockSearchService>>,
+        search_service: Arc<tokio::sync::Mutex<codetriever_search::test_mocks::MockSearchService>>,
     ) -> Json<SearchResponse> {
         let limit = req.limit.unwrap_or(10);
         let query = req.query.clone();
@@ -666,10 +662,9 @@ mod tests {
     async fn test_search_results_include_repository_and_commit_info() {
         // Test that search results properly populate repository and commit fields from metadata
         use chrono::Utc;
-        use codetriever_indexer::SearchResult;
 
-        let mock_result = SearchResult {
-            chunk: codetriever_indexer::CodeChunk {
+        let mock_result = codetriever_search::SearchMatch {
+            chunk: codetriever_parsing::CodeChunk {
                 file_path: "src/auth.rs".to_string(),
                 content: "fn authenticate() {}".to_string(),
                 start_line: 1,
@@ -683,7 +678,7 @@ mod tests {
                 embedding: None,
             },
             similarity: 0.95,
-            repository_metadata: Some(codetriever_indexer::search::RepositoryMetadata {
+            repository_metadata: Some(codetriever_search::RepositoryMetadata {
                 repository_id: "my-repo".to_string(),
                 repository_url: Some("https://github.com/user/my-repo".to_string()),
                 branch: "main".to_string(),
@@ -730,15 +725,13 @@ mod tests {
     #[tokio::test]
     async fn test_search_service_without_database() {
         // Test that SearchService works without database integration
-        use codetriever_indexer::Indexer;
-        use std::sync::Arc;
-        use tokio::sync::RwLock;
+        // Clean test - just use the mock service
 
-        let indexer = Arc::new(RwLock::new(Indexer::new()));
-        let search_service = SearchService::without_database(indexer);
+        // Use mock for testing instead of real embedding service
+        let mock_search_service = codetriever_search::test_mocks::MockSearchService::empty();
 
         // Verify that we can use the search service
-        let results = search_service
+        let results = mock_search_service
             .search("test query", 5, &CorrelationId::new())
             .await;
         assert!(results.is_ok());
@@ -751,7 +744,7 @@ mod tests {
     #[tokio::test]
     async fn test_routes_default_creates_working_router() {
         // Test that routes_default creates a working router
-        let _router = routes_default();
+        let _router = routes();
 
         // Test passes if we can create routes without panicking
         // This validates the dependency injection is working

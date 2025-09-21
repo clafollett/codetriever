@@ -6,7 +6,7 @@ use axum::{
     response::IntoResponse,
     routing::post,
 };
-use codetriever_indexer::{ApiIndexerService, IndexerService};
+use codetriever_indexing::{ApiIndexerService, IndexerService};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -97,7 +97,7 @@ pub async fn index_handler(
             hasher.update(&f.content);
             let hash = format!("{:x}", hasher.finalize());
 
-            codetriever_indexer::indexing::service::FileContent {
+            codetriever_indexing::indexing::FileContent {
                 path: f.path,
                 content: f.content,
                 hash,
@@ -128,7 +128,7 @@ mod tests {
     use crate::test_utils::TestResult;
     use axum::body::Body;
     use axum::http::{StatusCode, header};
-    use codetriever_indexer::test_mocks::MockIndexerService;
+    use codetriever_indexing::test_mocks::MockIndexerService;
     use tower::ServiceExt;
 
     #[tokio::test]

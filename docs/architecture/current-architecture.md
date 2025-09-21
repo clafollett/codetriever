@@ -17,7 +17,7 @@ graph TB
     subgraph "Codetriever System"
         API[codetriever-api]
         IDX[codetriever-indexer]
-        DATA[codetriever-data]
+        DATA[codetriever-meta-data]
     end
     
     API --> IDX

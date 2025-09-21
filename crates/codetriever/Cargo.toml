@@ -45,4 +45,4 @@ dotenv = { workspace = true }
 
 
 [dev-dependencies]
-wiremock = "0.6"
+wiremock = { workspace = true }

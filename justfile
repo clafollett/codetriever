@@ -109,7 +109,7 @@ db-setup: docker-up
     @echo "   DB_NAME=${DB_NAME}"
     @echo "   DB_USER=${DB_USER}"
     @echo "🔧 Running database migrations..."
-    cargo run -p codetriever-data --example run_migrations
+    cargo run -p codetriever-meta-data --example run_migrations
     @echo "✅ Database setup complete"
 
 # Run migrations

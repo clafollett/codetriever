@@ -132,7 +132,7 @@ Consider using `RwLock` for read-heavy operations or connection pooling pattern.
 ### 3.1 Module Organization ✅
 
 **Strengths:**
-- Clear crate separation: `codetriever-api`, `codetriever-indexer`, `codetriever-data`
+- Clear crate separation: `codetriever-api`, `codetriever-indexer`, `codetriever-meta-data`
 - Minimal cross-crate dependencies
 - Well-defined public APIs
 

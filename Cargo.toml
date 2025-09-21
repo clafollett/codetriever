@@ -3,10 +3,12 @@ members = [
     "crates/codetriever",
     "crates/codetriever-api",
     "crates/codetriever-common",
-    "crates/codetriever-data",
-    "crates/codetriever-indexer",
-    # Future crates:
-    # "crates/codetriever-core",
+    "crates/codetriever-meta-data",
+    "crates/codetriever-embeddings",
+    "crates/codetriever-vector-data",
+    "crates/codetriever-parsing",
+    "crates/codetriever-search",
+    "crates/codetriever-indexing",
 ]
 resolver = "3"
 
@@ -22,6 +24,7 @@ repository = "https://github.com/clafollett/codetriever"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 futures = "0.3.31"
+async-trait = "0.1.89"
 
 # Web framework
 axum = { version = "0.8.3", features = ["json", "macros", "ws", "multipart"] }
@@ -71,6 +74,56 @@ urlencoding = "2.1.3"
 dirs = "6"
 tempfile = "3"
 dotenv = "0.15"
+lazy_static = "1.5.0"
+once_cell = "1.20"
+lru = "0.12.5"
+bytes = "1"
+walkdir = "2.5"
+ignore = "0.4"
+rayon = "1.10"
+
+# Performance & Observability
+metrics = "0.24.2"
+metrics-exporter-prometheus = "0.17.2"
+opentelemetry = "0.30.0"
+opentelemetry-otlp = "0.30.0"
+tracing-opentelemetry = "0.31.0"
+
+# Cryptography
+sha2 = "0.10"
+
+# Git integration
+git2 = "0.19"
+
+# ML/AI dependencies
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
+hf-hub = { version = "0.4.3", features = ["tokio"] }
+tokenizers = { version = "0.22.0", default-features = false, features = ["onig"] }
+tiktoken-rs = "0.6"
+
+# Vector database
+qdrant-client = "1.15"
+
+# Tree-sitter language support
+tree-sitter = "0.25.8"
+tree-sitter-rust = "0.24.0"
+tree-sitter-python = "0.23.6"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-go = "0.25.0"
+tree-sitter-c = "0.24.1"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-java = "0.23.5"
+tree-sitter-c-sharp = "0.23.1"
+tree-sitter-json = "0.24.8"
+tree-sitter-xml = "0.7.0"
+tree-sitter-yaml = "0.7.1"
+tree-sitter-bash = "0.25.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-powershell = "0.25.8"
+tree-sitter-sequel = "0.3.8"
 
 # MCP/Agenterra
 agenterra-rmcp = { version = "0.1.5", features = [
@@ -91,6 +144,10 @@ signal-hook-tokio = "0.3.1"
 
 # Template engine
 tera = "1.17"
+
+# Dev/Test dependencies
+wiremock = "0.6"
+tokio-test = "0.4"
 
 [workspace.lints.clippy]
 # Enforce pedantic and nursery lint groups for better code quality

@@ -221,7 +221,7 @@ just test-integration
 
 # Run specific crate tests
 cargo test -p codetriever-indexer
-cargo test -p codetriever-data
+cargo test -p codetriever-meta-data
 ```
 
 ## Testing Infrastructure
