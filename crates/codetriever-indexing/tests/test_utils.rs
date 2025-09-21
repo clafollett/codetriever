@@ -3,7 +3,7 @@
 //! This module provides common testing utilities used across multiple test files.
 //! Functions are only compiled into test binaries that actually use them.
 
-use codetriever_indexing::config::Config;
+use codetriever_indexing::config::{ApplicationConfig, Profile};
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
 
 /// Get the Qdrant URL for testing, defaulting to localhost
@@ -51,8 +51,8 @@ pub async fn create_test_storage(test_name: &str) -> Result<QdrantStorage, Strin
 
 /// Get default test configuration
 #[allow(unused)]
-pub fn test_config() -> Config {
-    Config::default()
+pub fn test_config() -> ApplicationConfig {
+    ApplicationConfig::with_profile(Profile::Test)
 }
 
 /// Clean up test storage by dropping the collection

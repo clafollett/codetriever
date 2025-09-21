@@ -20,6 +20,7 @@ lru = { workspace = true }
 
 # Internal dependencies
 codetriever-common = { path = "../codetriever-common" }
+codetriever-config = { path = "../codetriever-config" }
 codetriever-embeddings = { path = "../codetriever-embeddings" }
 codetriever-vector-data = { path = "../codetriever-vector-data" }
 codetriever-meta-data = { path = "../codetriever-meta-data" }

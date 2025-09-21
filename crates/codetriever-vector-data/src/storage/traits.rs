@@ -76,24 +76,3 @@ pub struct StorageStats {
     /// Storage backend type (e.g., "qdrant", "pinecone")
     pub storage_type: String,
 }
-
-/// Configuration for vector storage backends
-#[derive(Debug, Clone)]
-pub struct StorageConfig {
-    /// Storage backend URL
-    pub url: String,
-    /// Collection/index name
-    pub collection_name: String,
-    /// Additional backend-specific configuration
-    pub extra_config: Option<serde_json::Value>,
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            url: "http://localhost:6334".to_string(),
-            collection_name: "codetriever".to_string(),
-            extra_config: None,
-        }
-    }
-}

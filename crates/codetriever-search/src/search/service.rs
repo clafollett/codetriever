@@ -39,8 +39,11 @@ impl SearchService {
     /// Create a new search service with default configuration (like ApiIndexerService::new)
     pub fn new() -> Self {
         // Construct dependencies with defaults - no injection needed for simple usage
+        // Use unified configuration system with test profile for mock service
+        let config =
+            codetriever_config::ApplicationConfig::with_profile(codetriever_config::Profile::Test);
         let embedding_service = Arc::new(codetriever_embeddings::DefaultEmbeddingService::new(
-            codetriever_embeddings::EmbeddingConfig::default(),
+            config.embedding,
         )) as Arc<dyn EmbeddingService>;
 
         let vector_storage =

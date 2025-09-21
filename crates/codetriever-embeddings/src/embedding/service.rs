@@ -4,9 +4,10 @@
 //! that uses the existing EmbeddingModel.
 
 use super::model::EmbeddingModel;
-use super::traits::{EmbeddingConfig, EmbeddingProvider, EmbeddingService, EmbeddingStats};
+use super::traits::{EmbeddingProvider, EmbeddingService, EmbeddingStats};
 use crate::EmbeddingResult;
 use async_trait::async_trait;
+use codetriever_config::EmbeddingConfig; // Use unified configuration
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -19,7 +20,8 @@ pub struct DefaultEmbeddingProvider {
 impl DefaultEmbeddingProvider {
     /// Create a new embedding provider with the given configuration
     pub fn new(config: EmbeddingConfig) -> Self {
-        let model = EmbeddingModel::new(config.model_id.clone(), config.max_tokens);
+        // Use new nested configuration structure - no wrapper needed
+        let model = EmbeddingModel::new(config.model.id.clone(), config.model.max_tokens);
         Self {
             model: Arc::new(Mutex::new(model)),
             config,
@@ -52,11 +54,11 @@ impl EmbeddingProvider for DefaultEmbeddingProvider {
     }
 
     fn max_tokens(&self) -> usize {
-        self.config.max_tokens
+        self.config.model.max_tokens
     }
 
     fn model_name(&self) -> &str {
-        &self.config.model_id
+        &self.config.model.id
     }
 
     async fn is_ready(&self) -> bool {
@@ -84,8 +86,8 @@ pub struct DefaultEmbeddingService {
 impl DefaultEmbeddingService {
     /// Create a new embedding service with the default provider
     pub fn new(config: EmbeddingConfig) -> Self {
-        let batch_size = config.batch_size;
-        let model_name = config.model_id.clone();
+        let batch_size = config.performance.batch_size;
+        let model_name = config.model.id.clone();
         let provider = Box::new(DefaultEmbeddingProvider::new(config));
 
         let stats = Arc::new(RwLock::new(EmbeddingStats {

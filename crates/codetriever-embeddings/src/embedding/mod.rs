@@ -5,4 +5,5 @@ pub mod traits;
 
 pub use model::EmbeddingModel;
 pub use service::{DefaultEmbeddingProvider, DefaultEmbeddingService};
-pub use traits::{EmbeddingConfig, EmbeddingProvider, EmbeddingService, EmbeddingStats};
+pub use traits::{EmbeddingProvider, EmbeddingService, EmbeddingStats};
+// EmbeddingConfig now comes from codetriever-config crate to eliminate duplication

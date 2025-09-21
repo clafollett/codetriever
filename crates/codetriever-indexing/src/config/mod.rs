@@ -1,5 +1,4 @@
-pub mod api;
-pub mod builder;
-
-pub use api::Config;
-pub use builder::ConfigBuilder;
+// Re-export unified configuration system - ConfigBuilder eliminated
+pub use codetriever_config::{
+    ApplicationConfig, EmbeddingConfig, IndexingConfig, Profile, VectorStorageConfig,
+};

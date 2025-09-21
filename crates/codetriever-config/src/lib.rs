@@ -182,11 +182,8 @@ impl EmbeddingConfig {
             .unwrap_or_default();
 
         // Model configuration with comprehensive environment override support
-        let model_id =
-            std::env::var("CODETRIEVER_EMBEDDING_MODEL").unwrap_or_else(|_| match profile {
-                Profile::Test => "test-embedding-model".to_string(),
-                _ => "jinaai/jina-embeddings-v2-base-code".to_string(),
-            });
+        let model_id = std::env::var("CODETRIEVER_EMBEDDING_MODEL")
+            .unwrap_or_else(|_| "jinaai/jina-embeddings-v2-base-code".to_string());
 
         let max_tokens = std::env::var("CODETRIEVER_EMBEDDING_MAX_TOKENS")
             .ok()
@@ -512,17 +509,41 @@ impl validation::Validate for VectorStorageConfig {
     }
 }
 
-/// Database configuration
+/// Database configuration - comprehensive `PostgreSQL` configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DatabaseConfig {
-    /// Database URL
+    /// Database URL (full connection string)
     pub url: String,
+
+    /// Database host
+    pub host: String,
+
+    /// Database port
+    pub port: u16,
+
+    /// Database name
+    pub database: String,
+
+    /// Username for authentication
+    pub username: String,
+
+    /// Password for authentication (use environment variables for security)
+    pub password: String,
+
+    /// SSL mode for connections
+    pub ssl_mode: String, // "disable", "prefer", "require"
 
     /// Maximum number of connections in pool
     pub max_connections: u32,
 
+    /// Minimum number of connections in pool
+    pub min_connections: u32,
+
     /// Connection timeout in seconds
     pub timeout_seconds: u64,
+
+    /// Idle timeout in seconds
+    pub idle_timeout_seconds: u64,
 
     /// Enable migrations on startup
     pub auto_migrate: bool,
@@ -530,16 +551,48 @@ pub struct DatabaseConfig {
 
 impl DatabaseConfig {
     pub fn for_profile(profile: Profile) -> Self {
-        // Environment variables override profile defaults
-        let url = std::env::var("CODETRIEVER_DATABASE_URL").unwrap_or_else(|_| match profile {
-            Profile::Development => "postgresql://localhost:5432/codetriever_dev".to_string(),
-            Profile::Staging => {
-                "postgresql://postgres-staging:5432/codetriever_staging".to_string()
-            }
-            Profile::Production => "postgresql://postgres:5432/codetriever".to_string(),
-            Profile::Test => "postgresql://localhost:5432/codetriever_test".to_string(),
-        });
+        // Environment variables override profile defaults - comprehensive PostgreSQL configuration
 
+        // Individual connection components with environment overrides
+        let host = std::env::var("CODETRIEVER_DATABASE_HOST")
+            .or_else(|_| std::env::var("DB_HOST"))
+            .unwrap_or_else(|_| "localhost".to_string());
+
+        let port = std::env::var("CODETRIEVER_DATABASE_PORT")
+            .or_else(|_| std::env::var("DB_PORT"))
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5432);
+
+        let database = std::env::var("CODETRIEVER_DATABASE_NAME")
+            .or_else(|_| std::env::var("DB_NAME"))
+            .unwrap_or_else(|_| match profile {
+                Profile::Development => "codetriever_dev".to_string(),
+                Profile::Staging => "codetriever_staging".to_string(),
+                Profile::Production => "codetriever".to_string(),
+                Profile::Test => "codetriever_test".to_string(),
+            });
+
+        let username = std::env::var("CODETRIEVER_DATABASE_USERNAME")
+            .or_else(|_| std::env::var("DB_USER"))
+            .unwrap_or_else(|_| "codetriever".to_string());
+
+        let password = std::env::var("CODETRIEVER_DATABASE_PASSWORD")
+            .or_else(|_| std::env::var("DB_PASSWORD"))
+            .unwrap_or_else(|_| match profile {
+                Profile::Development => "localdev123".to_string(),
+                Profile::Test => "test".to_string(),
+                _ => String::new(), // Production should always use env vars
+            });
+
+        let ssl_mode = std::env::var("CODETRIEVER_DATABASE_SSL_MODE")
+            .or_else(|_| std::env::var("DB_SSLMODE"))
+            .unwrap_or_else(|_| match profile {
+                Profile::Development | Profile::Test => "disable".to_string(),
+                _ => "prefer".to_string(),
+            });
+
+        // Connection pool settings
         let max_connections = std::env::var("CODETRIEVER_DATABASE_MAX_CONNECTIONS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -547,6 +600,16 @@ impl DatabaseConfig {
                 Profile::Development => 5,
                 Profile::Staging => 10,
                 Profile::Production => 50,
+                Profile::Test => 1,
+            });
+
+        let min_connections = std::env::var("CODETRIEVER_DATABASE_MIN_CONNECTIONS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(match profile {
+                Profile::Development => 2,
+                Profile::Staging => 5,
+                Profile::Production => 10,
                 Profile::Test => 1,
             });
 
@@ -560,15 +623,38 @@ impl DatabaseConfig {
                 Profile::Test => 5,
             });
 
+        let idle_timeout_seconds = std::env::var("CODETRIEVER_DATABASE_IDLE_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(match profile {
+                Profile::Development => 600,
+                Profile::Staging => 300,
+                Profile::Production => 180,
+                Profile::Test => 10,
+            });
+
         let auto_migrate = std::env::var("CODETRIEVER_DATABASE_AUTO_MIGRATE")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(!matches!(profile, Profile::Production));
 
+        // Construct comprehensive URL if not provided
+        let url = std::env::var("CODETRIEVER_DATABASE_URL").unwrap_or_else(|_| {
+            format!("postgresql://{username}:{password}@{host}:{port}/{database}")
+        });
+
         Self {
             url,
+            host,
+            port,
+            database,
+            username,
+            password,
+            ssl_mode,
             max_connections,
+            min_connections,
             timeout_seconds,
+            idle_timeout_seconds,
             auto_migrate,
         }
     }
@@ -906,7 +992,7 @@ mod tests {
         // This test will fail initially - RED phase
         let config = ApplicationConfig::with_profile(Profile::Test);
         assert_eq!(config.profile, Profile::Test);
-        assert!(config.embedding.model.id.contains("test"));
+        assert!(config.embedding.model.id.contains("jina")); // Now uses real model
     }
 
     #[test]
@@ -988,8 +1074,8 @@ mod tests {
 
         // Test model should use minimal memory (100 base + 10 test model + minimal extras)
         assert!(
-            memory_usage < 200,
-            "Test config memory usage was: {memory_usage} MB"
+            memory_usage < 2300,
+            "Test config memory usage was: {memory_usage} MB (now uses real model)"
         );
 
         let prod_config = ApplicationConfig::with_profile(Profile::Production);
@@ -1048,8 +1134,11 @@ mod tests {
             "jinaai/jina-embeddings-v2-base-code"
         );
 
-        // Test profile should use test model
-        assert_eq!(test_config.embedding.model.id, "test-embedding-model");
+        // Test profile should use same real model but with minimal settings
+        assert_eq!(
+            test_config.embedding.model.id,
+            "jinaai/jina-embeddings-v2-base-code"
+        );
     }
 
     #[test]

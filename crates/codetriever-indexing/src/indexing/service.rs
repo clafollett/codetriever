@@ -52,7 +52,7 @@ impl ApiIndexerService {
     }
 
     /// Create a new IndexerServiceImpl with specific configuration
-    pub fn with_config(config: &crate::config::Config) -> Self {
+    pub fn with_config(config: &crate::config::ApplicationConfig) -> Self {
         Self {
             indexer: super::Indexer::with_config(config),
         }

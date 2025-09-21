@@ -14,6 +14,7 @@ test-utils = []
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 codetriever-common = { path = "../codetriever-common" }
+codetriever-config = { path = "../codetriever-config" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

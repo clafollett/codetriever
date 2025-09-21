@@ -10,6 +10,7 @@ pub mod storage;
 // Re-export main types
 pub use error::{VectorDataError, VectorDataResult};
 pub use storage::{
-    CodeChunk, MockStorage, QdrantStorage, StorageConfig, StorageSearchResult, StorageStats,
-    VectorStorage,
+    CodeChunk, MockStorage, QdrantStorage, StorageSearchResult, StorageStats, VectorStorage,
 };
+// Use unified configuration from codetriever-config
+pub use codetriever_config::VectorStorageConfig;

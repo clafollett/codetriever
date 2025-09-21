@@ -27,6 +27,7 @@ serde_json = { workspace = true }
 
 # Internal dependencies
 codetriever-common = { path = "../codetriever-common" }
+codetriever-config = { path = "../codetriever-config" }
 
 [features]
 default = []

@@ -24,6 +24,7 @@ async-trait = { workspace = true }
 
 # Internal dependencies
 codetriever-common = { path = "../codetriever-common" }
+codetriever-config = { path = "../codetriever-config" }
 codetriever-parsing = { path = "../codetriever-parsing" }
 codetriever-meta-data = { path = "../codetriever-meta-data" }
 

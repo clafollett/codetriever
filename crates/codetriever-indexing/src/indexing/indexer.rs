@@ -1,6 +1,7 @@
-use crate::{IndexerResult, config::Config, indexing::service::FileContent};
+use crate::{IndexerResult, indexing::service::FileContent};
 use codetriever_common::CorrelationId;
-use codetriever_embeddings::{DefaultEmbeddingService, EmbeddingConfig, EmbeddingService};
+use codetriever_config::{ApplicationConfig, Profile};
+use codetriever_embeddings::{DefaultEmbeddingService, EmbeddingService};
 use codetriever_parsing::CodeChunk as ParsingCodeChunk;
 use codetriever_parsing::{CodeParser, get_language_from_extension};
 use codetriever_vector_data::{CodeChunk, VectorStorage};
@@ -257,13 +258,13 @@ pub struct Indexer {
     embedding_service: EmbeddingServiceRef,
     storage: VectorStorageRef, // Optional storage backend using trait
     code_parser: CodeParser,
-    config: Config,                    // Store config for lazy storage initialization
+    config: ApplicationConfig, // Store unified config for lazy storage initialization
     repository: Option<RepositoryRef>, // Optional database repository
 }
 
 impl Default for Indexer {
     fn default() -> Self {
-        let config = Config::default();
+        let config = ApplicationConfig::with_profile(Profile::Development);
         Self::with_config(&config)
     }
 }
@@ -287,29 +288,24 @@ impl Indexer {
     /// # Examples
     ///
     /// ```no_run
-    /// use codetriever_indexing::config::Config;
+    /// use codetriever_config::{ApplicationConfig, Profile};
     /// use codetriever_indexing::indexing::Indexer;
     ///
-    /// let config = Config::default();
+    /// let config = ApplicationConfig::with_profile(Profile::Development);
     /// let indexer = Indexer::with_config(&config);
     /// ```
-    pub fn with_config(config: &Config) -> Self {
-        let embedding_config = EmbeddingConfig {
-            model_id: config.embedding_model.clone(),
-            max_tokens: config.max_embedding_tokens,
-            batch_size: 32,
-            use_gpu: false,
-            cache_dir: None,
-        };
+    pub fn with_config(config: &ApplicationConfig) -> Self {
+        // Use the embedding config directly from unified configuration
+        let embedding_config = config.embedding.clone();
 
         Self {
             embedding_service: Arc::new(DefaultEmbeddingService::new(embedding_config)),
             storage: None,
             code_parser: CodeParser::new(
                 None, // Will be set after tokenizer loads
-                config.split_large_semantic_units,
-                config.max_embedding_tokens,
-                config.chunk_overlap_tokens,
+                config.indexing.split_large_units,
+                config.embedding.model.max_tokens,
+                config.indexing.chunk_overlap_tokens,
             ),
             config: config.clone(),
             repository: None,
@@ -327,7 +323,7 @@ impl Indexer {
     /// use codetriever_vector_data::QdrantStorage;
     /// use std::sync::Arc;
     ///
-    /// let config = Config::default();
+    /// let config = ApplicationConfig::with_profile(Profile::Development);
     /// let storage = QdrantStorage::new(
     ///     "http://localhost:6334".to_string(),
     ///     "my_collection".to_string()
@@ -336,23 +332,21 @@ impl Indexer {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_config_and_storage(config: &Config, storage: Arc<dyn VectorStorage>) -> Self {
-        let embedding_config = EmbeddingConfig {
-            model_id: config.embedding_model.clone(),
-            max_tokens: config.max_embedding_tokens,
-            batch_size: 32,
-            use_gpu: false,
-            cache_dir: None,
-        };
+    pub fn with_config_and_storage(
+        config: &ApplicationConfig,
+        storage: Arc<dyn VectorStorage>,
+    ) -> Self {
+        // Use the embedding config directly from unified configuration
+        let embedding_config = config.embedding.clone();
 
         Self {
             embedding_service: Arc::new(DefaultEmbeddingService::new(embedding_config)),
             storage: Some(storage),
             code_parser: CodeParser::new(
                 None, // Will be set after tokenizer loads
-                config.split_large_semantic_units,
-                config.max_embedding_tokens,
-                config.chunk_overlap_tokens,
+                config.indexing.split_large_units,
+                config.embedding.model.max_tokens,
+                config.indexing.chunk_overlap_tokens,
             ),
             config: config.clone(),
             repository: None,
@@ -360,23 +354,18 @@ impl Indexer {
     }
 
     pub fn new_with_repository(repository: RepositoryRef) -> Self {
-        let config = Config::default();
-        let embedding_config = EmbeddingConfig {
-            model_id: config.embedding_model.clone(),
-            max_tokens: config.max_embedding_tokens,
-            batch_size: 32,
-            use_gpu: false,
-            cache_dir: None,
-        };
+        let config = ApplicationConfig::with_profile(Profile::Development);
+        // Use the embedding config directly from unified configuration
+        let embedding_config = config.embedding.clone();
 
         Self {
             embedding_service: Arc::new(DefaultEmbeddingService::new(embedding_config)),
             storage: None,
             code_parser: CodeParser::new(
                 None, // Will be set after tokenizer loads
-                config.split_large_semantic_units,
-                config.max_embedding_tokens,
-                config.chunk_overlap_tokens,
+                config.indexing.split_large_units,
+                config.embedding.model.max_tokens,
+                config.indexing.chunk_overlap_tokens,
             ),
             config: config.clone(),
             repository: Some(repository),
@@ -463,7 +452,7 @@ impl Indexer {
         println!("All files processed. Total chunks: {}", all_chunks.len());
 
         // Generate embeddings for all chunks in batches to avoid memory explosion
-        let batch_size = self.config.embedding_batch_size;
+        let batch_size = self.config.indexing.embedding_batch_size;
 
         if !all_chunks.is_empty() {
             println!(
@@ -961,7 +950,7 @@ mod tests {
             embedding_service: mock_embedding_service,
             storage: None,
             code_parser: CodeParser::default(),
-            config: Config::default(),
+            config: ApplicationConfig::with_profile(Profile::Test),
             repository: Some(mock_repo.clone()),
         };
 
@@ -1023,7 +1012,7 @@ fn main() {
             embedding_service: mock_embedding_service,
             storage: None,
             code_parser: CodeParser::default(),
-            config: Config::default(),
+            config: ApplicationConfig::with_profile(Profile::Test),
             repository: Some(mock_repo.clone()),
         };
 
@@ -1060,7 +1049,7 @@ fn main() {
             embedding_service: mock_embedding_service,
             storage: None,
             code_parser: CodeParser::default(),
-            config: Config::default(),
+            config: ApplicationConfig::with_profile(Profile::Test),
             repository: Some(mock_repo.clone()),
         };
 

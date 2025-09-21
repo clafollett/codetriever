@@ -34,36 +34,8 @@ pub trait EmbeddingProvider: Send + Sync {
     async fn ensure_ready(&self) -> EmbeddingResult<()>;
 }
 
-/// Configuration for embedding providers
-#[derive(Debug, Clone)]
-pub struct EmbeddingConfig {
-    /// Model identifier (e.g., "jinaai/jina-embeddings-v2-small-en")
-    pub model_id: String,
-
-    /// Maximum tokens the model can process
-    pub max_tokens: usize,
-
-    /// Batch size for processing
-    pub batch_size: usize,
-
-    /// Whether to use GPU acceleration if available
-    pub use_gpu: bool,
-
-    /// Cache directory for downloaded models
-    pub cache_dir: Option<String>,
-}
-
-impl Default for EmbeddingConfig {
-    fn default() -> Self {
-        Self {
-            model_id: "jinaai/jina-embeddings-v2-small-en".to_string(),
-            max_tokens: 8192,
-            batch_size: 32,
-            use_gpu: false,
-            cache_dir: None,
-        }
-    }
-}
+// EmbeddingConfig removed - now using codetriever_config::EmbeddingConfig
+// This eliminates configuration duplication as specified by architect
 
 /// Service for managing embedding generation
 ///
