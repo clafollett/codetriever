@@ -27,6 +27,9 @@ once_cell = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
+# Database (for PostgreSQL-specific functionality)
+sqlx = { workspace = true }
+
 # Internal dependencies
 codetriever-common = { path = "../codetriever-common" }
 

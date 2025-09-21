@@ -3,8 +3,8 @@
 //! This module provides separated connection pools for different operation types,
 //! improving database performance and preventing resource contention.
 
-use crate::config::DatabaseConfig;
 use anyhow::{Context, Result};
+use codetriever_config::DatabaseConfig;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
@@ -143,7 +143,8 @@ impl PoolManager {
     /// - Database URL from environment is malformed
     /// - Pool creation fails (see `new` method errors)
     pub async fn from_env() -> Result<Self> {
-        let db_config = DatabaseConfig::from_env();
+        // Use unified configuration system with development profile as default
+        let db_config = DatabaseConfig::for_profile(codetriever_config::Profile::Development);
         Self::new(&db_config, PoolConfig::default()).await
     }
 

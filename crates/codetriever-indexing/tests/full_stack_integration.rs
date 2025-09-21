@@ -3,9 +3,9 @@
 //! Run with: cargo test --test full_stack_integration -- --test-threads=1
 
 use codetriever_common::CorrelationId;
+use codetriever_config::{DatabaseConfig, Profile};
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
 use codetriever_meta_data::{
-    config::DatabaseConfig,
     generate_chunk_id,
     models::{IndexedFile, ProjectBranch},
     pool_manager::{PoolConfig, PoolManager},
@@ -22,7 +22,7 @@ async fn get_connection_pool() -> anyhow::Result<PgPool> {
     codetriever_common::initialize_environment();
 
     // Use DatabaseConfig to get connection details from environment
-    let config = DatabaseConfig::from_env();
+    let config = DatabaseConfig::for_profile(Profile::Test);
 
     // Just connect to the existing database that was set up by 'just init'
     // No need for a separate test database
@@ -49,7 +49,7 @@ async fn test_full_stack_indexing_with_postgres_and_qdrant() {
         .expect("Failed to setup test database");
     // Create pool manager from the test pool
     let pool_config = PoolConfig::default();
-    let db_config = DatabaseConfig::from_env();
+    let db_config = DatabaseConfig::for_profile(Profile::Test);
     let pools = PoolManager::new(&db_config, pool_config)
         .await
         .expect("Failed to create pool manager");
@@ -325,7 +325,7 @@ async fn test_uuid_based_chunk_deletion() {
         .expect("Failed to setup test database");
     // Create pool manager from the test pool
     let pool_config = PoolConfig::default();
-    let db_config = DatabaseConfig::from_env();
+    let db_config = DatabaseConfig::for_profile(Profile::Test);
     let pools = PoolManager::new(&db_config, pool_config)
         .await
         .expect("Failed to create pool manager");

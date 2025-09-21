@@ -40,6 +40,9 @@ chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true }
 tracing = { workspace = true }
 
+# Internal dependencies
+codetriever-config = { path = "../codetriever-config" }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }

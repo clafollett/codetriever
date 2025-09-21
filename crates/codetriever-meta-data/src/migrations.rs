@@ -30,7 +30,7 @@ pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
 /// - Insufficient privileges to create database or run migrations
 /// - Database creation fails for reasons other than "already exists"
 /// - Connection pool creation fails
-pub async fn setup_database(config: &crate::config::DatabaseConfig) -> anyhow::Result<PgPool> {
+pub async fn setup_database(config: &codetriever_config::DatabaseConfig) -> anyhow::Result<PgPool> {
     // We need a URL for the Postgres::database_exists and create_database functions
     // This is a limitation of sqlx's database creation API
     let database_url = format!(
@@ -90,7 +90,9 @@ pub async fn setup_database(config: &crate::config::DatabaseConfig) -> anyhow::R
 /// - Database remains unreachable after maximum retry attempts
 /// - All retry attempts fail due to persistent database issues
 /// - Final setup attempt fails after successful connection attempts
-pub async fn wait_for_migrations(config: &crate::config::DatabaseConfig) -> anyhow::Result<PgPool> {
+pub async fn wait_for_migrations(
+    config: &codetriever_config::DatabaseConfig,
+) -> anyhow::Result<PgPool> {
     use std::time::Duration;
     use tokio::time::sleep;
 

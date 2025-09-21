@@ -3,7 +3,7 @@
 // Module declarations
 pub mod chunk_id;
 pub mod client;
-pub mod config;
+// config module removed - now using codetriever-config
 pub mod error;
 pub mod git;
 pub mod migrations;
@@ -19,7 +19,8 @@ pub mod mock;
 // Public exports
 pub use chunk_id::{generate_chunk_id, hash_content};
 pub use client::DataClient;
-pub use config::DatabaseConfig;
+// Use unified DatabaseConfig from codetriever-config
+pub use codetriever_config::DatabaseConfig;
 pub use error::{
     ConnectionPoolType, DatabaseError, DatabaseErrorExt, DatabaseOperation, DatabaseResult,
     MetaDataError, MetaDataErrorExt, MetaDataResult,

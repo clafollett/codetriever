@@ -2,13 +2,14 @@
 //!
 //! Usage: cargo run --example `run_migrations`
 
-use codetriever_meta_data::config::DatabaseConfig;
+use codetriever_config::{DatabaseConfig, Profile};
 use codetriever_meta_data::pool::initialize_database;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Get database configuration from environment variables
-    let config = DatabaseConfig::from_env();
+    // Use unified configuration system with development profile
+    let config = DatabaseConfig::for_profile(Profile::Development);
 
     // Log connection info WITHOUT password
     println!(

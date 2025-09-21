@@ -3,7 +3,7 @@
 //! HTTP API server for semantic code search with vector embeddings.
 
 use codetriever_api::routes;
-use codetriever_indexing::config::Config;
+use codetriever_config::{ApplicationConfig, Profile};
 use std::net::SocketAddr;
 use tracing::info;
 
@@ -21,9 +21,13 @@ async fn main() -> MainResult {
 
     info!("Starting Codetriever API server...");
 
-    // Load configuration
-    let config = Config::default();
-    info!("Configuration loaded: {:?}", config);
+    // Load unified configuration with environment overrides
+    let config = ApplicationConfig::with_profile(Profile::Development);
+    info!(
+        "Configuration loaded - API port: {}, Database: {}",
+        config.api.port,
+        config.database.safe_connection_string()
+    );
 
     // Create router
     let app = routes::create_router();

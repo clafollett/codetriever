@@ -318,7 +318,7 @@ impl Indexer {
     ///
     /// ```no_run
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// use codetriever_indexing::config::Config;
+    /// use codetriever_config::{ApplicationConfig, Profile};
     /// use codetriever_indexing::indexing::Indexer;
     /// use codetriever_vector_data::QdrantStorage;
     /// use std::sync::Arc;

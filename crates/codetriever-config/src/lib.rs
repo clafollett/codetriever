@@ -12,6 +12,13 @@ pub mod validation;
 pub use error::{ConfigError, ConfigResult};
 pub use profile::Profile;
 
+// Database imports for PostgreSQL functionality
+use sqlx::{
+    PgPool,
+    postgres::{PgConnectOptions, PgPoolOptions, PgSslMode},
+};
+use std::time::Duration;
+
 /// Core configuration for the entire codetriever application
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ApplicationConfig {
@@ -530,8 +537,8 @@ pub struct DatabaseConfig {
     /// Password for authentication (use environment variables for security)
     pub password: String,
 
-    /// SSL mode for connections
-    pub ssl_mode: String, // "disable", "prefer", "require"
+    /// SSL mode for connections ("disable", "prefer", "require")
+    pub ssl_mode: String,
 
     /// Maximum number of connections in pool
     pub max_connections: u32,
@@ -666,6 +673,52 @@ impl validation::Validate for DatabaseConfig {
         validation::validate_range(u64::from(self.max_connections), 1, 1000, "max_connections")?;
         validation::validate_range(self.timeout_seconds, 1, 3600, "timeout_seconds")?;
         Ok(())
+    }
+}
+
+impl DatabaseConfig {
+    /// Convert string SSL mode to `PgSslMode`
+    fn parse_ssl_mode(&self) -> PgSslMode {
+        match self.ssl_mode.as_str() {
+            "disable" => PgSslMode::Disable,
+            "require" => PgSslMode::Require,
+            _ => PgSslMode::Prefer, // Safe default for "prefer" and unknown values
+        }
+    }
+
+    /// Build `PostgreSQL` connection options (no URL with password exposed!)
+    /// This method creates type-safe connection options for `PostgreSQL`
+    pub fn connect_options(&self) -> PgConnectOptions {
+        PgConnectOptions::new()
+            .host(&self.host)
+            .port(self.port)
+            .database(&self.database)
+            .username(&self.username)
+            .password(&self.password)
+            .ssl_mode(self.parse_ssl_mode())
+    }
+
+    /// Create a `PostgreSQL` connection pool with proper configuration
+    ///
+    /// # Errors
+    /// Returns an error if connection to database fails
+    pub async fn create_pool(&self) -> Result<PgPool, sqlx::Error> {
+        PgPoolOptions::new()
+            .max_connections(self.max_connections)
+            .min_connections(self.min_connections)
+            .acquire_timeout(Duration::from_secs(self.timeout_seconds))
+            .idle_timeout(Duration::from_secs(self.idle_timeout_seconds))
+            .connect_with(self.connect_options())
+            .await
+    }
+
+    /// Get connection info for logging (NO PASSWORD!)
+    /// This method provides safe connection information for logging and debugging
+    pub fn safe_connection_string(&self) -> String {
+        format!(
+            "{}@{}:{}/{} (ssl: {:?})",
+            self.username, self.host, self.port, self.database, self.ssl_mode
+        )
     }
 }
 

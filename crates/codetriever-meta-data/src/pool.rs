@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use sqlx::PgPool;
 
-use crate::config::DatabaseConfig;
 use crate::migrations::run_migrations;
+use codetriever_config::DatabaseConfig;
 
 /// Create database connection pool
 ///

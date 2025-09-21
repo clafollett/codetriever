@@ -2,9 +2,9 @@
 
 use anyhow::Result;
 
-use crate::config::DatabaseConfig;
 use crate::pool_manager::{PoolConfig, PoolManager};
 use crate::repository::DbFileRepository;
+use codetriever_config::DatabaseConfig;
 
 /// Database client combining pool manager and repository
 pub struct DataClient {
