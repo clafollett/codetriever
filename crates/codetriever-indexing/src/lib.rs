@@ -14,7 +14,7 @@ pub use error::{IndexerError, IndexerResult};
 
 // Re-export main orchestration types
 pub use factory::{ServiceConfig, ServiceFactory};
-pub use indexing::{ApiIndexerService, IndexResult, Indexer, IndexerService};
+pub use indexing::{IndexResult, Indexer, IndexerService};
 
 // Re-export external crate types for convenience
 pub use codetriever_embeddings::{EmbeddingError, EmbeddingResult};

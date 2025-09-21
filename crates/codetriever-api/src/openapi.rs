@@ -54,10 +54,10 @@ pub struct ApiDoc;
 
 /// Returns configured Swagger UI service
 pub fn swagger_ui() -> SwaggerUi {
-    SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", ApiDoc::openapi())
+    SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi())
 }
 
 /// Returns `OpenAPI` JSON as a response
-pub async fn openapi_json() -> impl IntoResponse {
+pub fn openapi_json() -> impl IntoResponse {
     Json(ApiDoc::openapi())
 }

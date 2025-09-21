@@ -6,7 +6,13 @@ use axum::{
     response::IntoResponse,
     routing::post,
 };
-use codetriever_indexing::{ApiIndexerService, IndexerService};
+use codetriever_config::{ApplicationConfig, Profile};
+use codetriever_indexing::{Indexer, IndexerService};
+use codetriever_meta_data::{
+    DbFileRepository,
+    pool_manager::{PoolConfig, PoolManager},
+};
+use codetriever_vector_data::QdrantStorage;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -16,9 +22,50 @@ use utoipa::ToSchema;
 type IndexerServiceHandle = Arc<Mutex<dyn IndexerService>>;
 
 pub fn routes() -> Router {
-    // Create the default indexer service
-    let indexer_service = Arc::new(Mutex::new(ApiIndexerService::new()));
-    routes_with_indexer(indexer_service)
+    // Create a lazy-initialized indexer wrapper
+    // Storage will be initialized on first use, not at startup
+    let indexer_wrapper = Arc::new(Mutex::new(LazyIndexer::new()));
+    routes_with_indexer(indexer_wrapper)
+}
+
+/// Create a properly configured indexer with storage and repository
+async fn create_configured_indexer() -> Indexer {
+    // Load configuration
+    let config = ApplicationConfig::with_profile(Profile::Development);
+
+    // Set up database repository
+    let pools = match PoolManager::new(&config.database, PoolConfig::default()).await {
+        Ok(pools) => pools,
+        Err(e) => {
+            tracing::error!("Failed to create pool manager: {e}");
+            // Return indexer without repository - will work for in-memory operations
+            return Indexer::new();
+        }
+    };
+    let repository = Arc::new(DbFileRepository::new(pools));
+
+    // Create indexer with repository
+    let mut indexer = Indexer::new_with_repository(repository);
+
+    // Set up vector storage (Qdrant)
+    // Try to connect, but if it fails, log and continue without storage
+    match QdrantStorage::new(
+        config.vector_storage.url.clone(),
+        config.vector_storage.collection_name.clone(),
+    )
+    .await
+    {
+        Ok(storage) => {
+            tracing::info!("Connected to Qdrant storage successfully");
+            indexer.set_storage(storage);
+        }
+        Err(e) => {
+            tracing::warn!("Could not connect to Qdrant: {e}");
+            tracing::warn!("Indexing will work but vectors won't be stored!");
+        }
+    }
+
+    indexer
 }
 
 /// Create routes with a specific indexer service (useful for testing)
@@ -26,6 +73,54 @@ pub fn routes_with_indexer(indexer: IndexerServiceHandle) -> Router {
     Router::new()
         .route("/index", post(index_handler))
         .with_state(indexer)
+}
+
+/// Lazy-initialized indexer that creates storage connection on first use
+struct LazyIndexer {
+    indexer: Option<Indexer>,
+}
+
+impl LazyIndexer {
+    const fn new() -> Self {
+        Self { indexer: None }
+    }
+
+    #[allow(clippy::expect_used)] // Safe: we guarantee initialization
+    async fn get_or_init(&mut self) -> &mut Indexer {
+        if self.indexer.is_none() {
+            tracing::info!("Initializing indexer with storage on first use");
+            self.indexer = Some(create_configured_indexer().await);
+        }
+        self.indexer
+            .as_mut()
+            .expect("indexer should be initialized")
+    }
+}
+
+#[async_trait::async_trait]
+impl IndexerService for LazyIndexer {
+    async fn index_directory(
+        &mut self,
+        path: &std::path::Path,
+        recursive: bool,
+    ) -> codetriever_indexing::IndexerResult<codetriever_indexing::IndexResult> {
+        let indexer = self.get_or_init().await;
+        indexer.index_directory(path, recursive).await
+    }
+
+    async fn index_file_content(
+        &mut self,
+        project_id: &str,
+        files: Vec<codetriever_indexing::indexing::service::FileContent>,
+    ) -> codetriever_indexing::IndexerResult<codetriever_indexing::IndexResult> {
+        let indexer = self.get_or_init().await;
+        indexer.index_file_content(project_id, files).await
+    }
+
+    async fn drop_collection(&mut self) -> codetriever_indexing::IndexerResult<bool> {
+        let indexer = self.get_or_init().await;
+        indexer.drop_collection().await
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -224,7 +319,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_endpoint_handles_empty_files() -> TestResult {
-        let app = routes();
+        // Use mock indexer that returns predictable results
+        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(0, 0)));
+        let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
             "project_id": "test-project",
@@ -253,7 +350,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_endpoint_handles_no_content() -> TestResult {
-        let app = routes();
+        // Use mock indexer that returns predictable results
+        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(0, 0)));
+        let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
             "project_id": "test-project",

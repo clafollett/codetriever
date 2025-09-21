@@ -215,6 +215,90 @@ pub struct CommitInfo {
 /// ```
 /// Type for search service handle
 type SearchServiceHandle = Arc<dyn SearchProvider>;
+type LazySearchHandle = Arc<tokio::sync::Mutex<LazySearchService>>;
+
+// Type alias to simplify complex type
+type SearchProviderHandle = Option<Arc<dyn SearchProvider>>;
+
+/// Lazy-initialized search service that creates real storage connection on first use
+pub struct LazySearchService {
+    service: SearchProviderHandle,
+}
+
+impl LazySearchService {
+    const fn new() -> Self {
+        Self { service: None }
+    }
+
+    #[allow(clippy::expect_used)] // Safe: we guarantee initialization
+    async fn get_or_init(&mut self) -> Arc<dyn SearchProvider> {
+        if self.service.is_none() {
+            tracing::info!("Initializing search service with Qdrant storage on first use");
+            self.service = Some(create_configured_search_service().await);
+        }
+        Arc::clone(
+            self.service
+                .as_ref()
+                .expect("service should be initialized"),
+        )
+    }
+}
+
+/// Create a properly configured search service with real Qdrant storage
+async fn create_configured_search_service() -> Arc<dyn SearchProvider> {
+    use codetriever_config::{ApplicationConfig, Profile};
+    use codetriever_meta_data::{PoolConfig, PoolManager};
+    use codetriever_vector_data::QdrantStorage;
+
+    // Load configuration
+    let config = ApplicationConfig::with_profile(Profile::Development);
+
+    // Set up embedding service first
+    let embedding_service = Arc::new(codetriever_embeddings::DefaultEmbeddingService::new(
+        config.embedding.clone(),
+    )) as Arc<dyn codetriever_embeddings::EmbeddingService>;
+
+    // Set up vector storage (Qdrant) - same as indexing service
+    let vector_storage = match QdrantStorage::new(
+        config.vector_storage.url.clone(),
+        config.vector_storage.collection_name.clone(),
+    )
+    .await
+    {
+        Ok(storage) => {
+            tracing::info!("Connected to Qdrant storage successfully for search");
+            Arc::new(storage) as Arc<dyn codetriever_vector_data::VectorStorage>
+        }
+        Err(e) => {
+            tracing::warn!("Could not connect to Qdrant for search: {e}");
+            tracing::warn!("Search will not work without vector storage!");
+            // Fall back to mock storage (searches will return empty)
+            Arc::new(codetriever_vector_data::MockStorage::new())
+                as Arc<dyn codetriever_vector_data::VectorStorage>
+        }
+    };
+
+    // Set up database client
+    let pools = match PoolManager::new(&config.database, PoolConfig::default()).await {
+        Ok(pools) => pools,
+        Err(e) => {
+            tracing::error!("Failed to create pool manager for search: {e}");
+            // Return service without database - will work but without metadata enrichment
+            return Arc::new(SearchService::without_database(
+                embedding_service,
+                vector_storage,
+            ));
+        }
+    };
+    let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
+
+    // Create search service with all dependencies
+    Arc::new(SearchService::with_dependencies(
+        embedding_service,
+        vector_storage,
+        db_client,
+    ))
+}
 
 /// Service factory for proper dependency injection
 pub struct ServiceFactory {
@@ -247,17 +331,27 @@ impl ServiceFactory {
     }
 }
 
-/// Create routes with default configuration
+/// Create routes with lazy-initialized search service that properly connects to Qdrant
 pub fn routes() -> Router {
-    // Simple like index::routes - just create the service directly
-    let search_service = Arc::new(SearchService::new());
-    routes_with_search_service(search_service)
+    // Create a lazy-initialized search wrapper
+    // Storage will be initialized on first use with proper Qdrant configuration
+    let search_wrapper = Arc::new(tokio::sync::Mutex::new(LazySearchService::new()));
+    routes_with_lazy_search(search_wrapper)
 }
 
 /// Create routes with injected search service (proper dependency injection)
 pub fn routes_with_search_service(search_service: Arc<dyn SearchProvider>) -> Router {
     Router::new()
         .route("/search", post(search_handler))
+        .with_state(search_service)
+}
+
+/// Create routes with lazy search service wrapper
+pub fn routes_with_lazy_search(
+    search_service: Arc<tokio::sync::Mutex<LazySearchService>>,
+) -> Router {
+    Router::new()
+        .route("/search", post(lazy_search_handler))
         .with_state(search_service)
 }
 
@@ -332,6 +426,28 @@ fn highlight_search_terms(content: &str, query: &str) -> Vec<Range> {
     highlights
 }
 
+/// Handler for lazy-initialized search service
+///
+/// # Errors
+///
+/// Returns `ApiError` if:
+/// - Query is empty or invalid
+/// - Search service is unavailable
+/// - Database timeout occurs
+pub async fn lazy_search_handler(
+    State(search_service): State<LazySearchHandle>,
+    context: Option<Extension<RequestContext>>,
+    Json(req): Json<SearchRequest>,
+) -> ApiResult<Json<SearchResponse>> {
+    // Get or initialize the search service
+    let mut service_guard = search_service.lock().await;
+    let service = service_guard.get_or_init().await;
+    drop(service_guard); // Release lock before doing the actual search
+
+    // Delegate to the regular search handler logic
+    search_handler_impl(service, context, req).await
+}
+
 /// Search for code in the indexed repository.
 ///
 /// Performs semantic search using embeddings to find the most relevant code chunks
@@ -376,6 +492,15 @@ pub async fn search_handler(
     State(search_service): State<SearchServiceHandle>,
     context: Option<Extension<RequestContext>>,
     Json(req): Json<SearchRequest>,
+) -> ApiResult<Json<SearchResponse>> {
+    search_handler_impl(search_service, context, req).await
+}
+
+/// Common search handler implementation
+async fn search_handler_impl(
+    search_service: Arc<dyn SearchProvider>,
+    context: Option<Extension<RequestContext>>,
+    req: SearchRequest,
 ) -> ApiResult<Json<SearchResponse>> {
     let start = std::time::Instant::now();
     // Use correlation ID from middleware if available, otherwise generate one

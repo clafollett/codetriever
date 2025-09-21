@@ -26,10 +26,10 @@ WHERE status IN ('pending', 'running');
 CREATE INDEX IF NOT EXISTS idx_project_branches_lookup 
 ON project_branches(repository_id, branch);
 
--- Partial index for recently indexed files (last 7 days)
-CREATE INDEX IF NOT EXISTS idx_recently_indexed 
-ON indexed_files(repository_id, branch, indexed_at) 
-WHERE indexed_at > NOW() - INTERVAL '7 days';
+-- Index for time-based queries on indexed files
+-- Note: Cannot use NOW() in partial index as it's not IMMUTABLE
+CREATE INDEX IF NOT EXISTS idx_recently_indexed
+ON indexed_files(repository_id, branch, indexed_at);
 
 -- Index for commit-based queries
 CREATE INDEX IF NOT EXISTS idx_files_by_commit 

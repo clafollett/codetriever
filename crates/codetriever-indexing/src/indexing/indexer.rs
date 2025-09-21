@@ -418,10 +418,10 @@ impl Indexer {
         path: &Path,
         recursive: bool,
     ) -> IndexerResult<IndexResult> {
-        println!("Starting index_directory for {path:?}");
+        tracing::debug!("Starting index_directory for {path:?}");
 
         // Ensure embedding provider is ready
-        println!("Loading embedding model...");
+        tracing::debug!("Loading embedding model...");
         self.embedding_service.provider().ensure_ready().await?;
 
         let mut files_indexed = 0;
@@ -438,24 +438,24 @@ impl Indexer {
 
         // Process each file sequentially (concurrent processing adds complexity here)
         // The major perf wins come from the string allocation fixes, not concurrency
-        println!("Processing {} files...", files.len());
+        tracing::debug!("Processing {} files...", files.len());
         for file_path in files {
-            println!("Processing file: {file_path:?}");
+            tracing::debug!("Processing file: {file_path:?}");
             if let Ok(chunks) = self.index_file_path(&file_path).await {
-                println!("  Got {} chunks", chunks.len());
+                tracing::debug!("  Got {} chunks", chunks.len());
                 files_indexed += 1;
                 all_chunks.extend(chunks.into_iter().map(convert_chunk));
             } else {
-                println!("  Failed to index file");
+                tracing::debug!("  Failed to index file");
             }
         }
-        println!("All files processed. Total chunks: {}", all_chunks.len());
+        tracing::debug!("All files processed. Total chunks: {}", all_chunks.len());
 
         // Generate embeddings for all chunks in batches to avoid memory explosion
         let batch_size = self.config.indexing.embedding_batch_size;
 
         if !all_chunks.is_empty() {
-            println!(
+            tracing::debug!(
                 "Generating embeddings for {} chunks in batches of {}",
                 all_chunks.len(),
                 batch_size
@@ -472,7 +472,7 @@ impl Indexer {
 
             for wave_start in (0..total_batches).step_by(max_concurrent_batches) {
                 let wave_end = (wave_start + max_concurrent_batches).min(total_batches);
-                println!(
+                tracing::debug!(
                     "Processing batches {}-{}/{} concurrently",
                     wave_start + 1,
                     wave_end,
@@ -502,7 +502,7 @@ impl Indexer {
                 let mut chunk_offset = wave_start * batch_size;
                 for (wave_idx, result) in batch_results.into_iter().enumerate() {
                     let embeddings = result?;
-                    println!(
+                    tracing::debug!(
                         "Completed batch {}/{}",
                         wave_start + wave_idx + 1,
                         total_batches
@@ -517,7 +517,7 @@ impl Indexer {
                     chunk_offset += batch_size;
                 }
             }
-            println!(
+            tracing::debug!(
                 "🎉 Generated embeddings for all {} chunks using concurrent processing",
                 all_chunks.len()
             );
@@ -550,9 +550,11 @@ impl Indexer {
             chunks_stored,
         };
 
-        println!(
+        tracing::debug!(
             "\n📊 Indexing complete: {} files → {} chunks → {} stored",
-            result.files_indexed, result.chunks_created, result.chunks_stored
+            result.files_indexed,
+            result.chunks_created,
+            result.chunks_stored
         );
 
         Ok(result)
@@ -565,7 +567,7 @@ impl Indexer {
         project_id: &str,
         files: Vec<FileContent>,
     ) -> IndexerResult<IndexResult> {
-        println!("Starting index_file_content for project: {project_id}");
+        tracing::debug!("Starting index_file_content for project: {project_id}");
 
         // Parse project_id to extract repository_id and branch if using database
         let (repository_id, branch) = if project_id.contains(':') {
@@ -579,7 +581,7 @@ impl Indexer {
         };
 
         // Ensure embedding provider is ready
-        println!("Loading embedding model...");
+        tracing::debug!("Loading embedding model...");
         self.embedding_service.provider().ensure_ready().await?;
 
         let mut all_chunks = Vec::new();
@@ -609,7 +611,7 @@ impl Indexer {
         }
 
         for file in &files {
-            println!("Processing file: {}", file.path);
+            tracing::debug!("Processing file: {}", file.path);
 
             let mut current_generation = 1i64;
 
@@ -622,7 +624,7 @@ impl Indexer {
 
                 match state {
                     codetriever_meta_data::models::FileState::Unchanged => {
-                        println!("  Skipping unchanged file");
+                        tracing::debug!("  Skipping unchanged file");
                         continue; // Skip unchanged files
                     }
                     codetriever_meta_data::models::FileState::New { generation }
@@ -659,12 +661,18 @@ impl Indexer {
                                     generation,
                                 )
                                 .await?;
-                            println!("  Deleted {} old chunks from database", deleted_ids.len());
+                            tracing::debug!(
+                                "  Deleted {} old chunks from database",
+                                deleted_ids.len()
+                            );
 
                             // Also delete from Qdrant if storage is available
                             if let Some(ref storage) = self.storage {
                                 storage.delete_chunks(&deleted_ids).await?;
-                                println!("  Deleted {} old chunks from Qdrant", deleted_ids.len());
+                                tracing::debug!(
+                                    "  Deleted {} old chunks from Qdrant",
+                                    deleted_ids.len()
+                                );
                             }
                         }
                     }
@@ -682,7 +690,7 @@ impl Indexer {
 
             if !chunks.is_empty() {
                 files_indexed += 1;
-                println!("  Got {} chunks", chunks.len());
+                tracing::debug!("  Got {} chunks", chunks.len());
 
                 // Track file metadata for this file
                 file_metadata_map.push(FileMetadata {
@@ -695,11 +703,11 @@ impl Indexer {
         }
 
         let chunks_created = all_chunks.len();
-        println!("Total: {files_indexed} files indexed, {chunks_created} chunks created");
+        tracing::debug!("Total: {files_indexed} files indexed, {chunks_created} chunks created");
 
         // Generate embeddings and store if we have chunks
         if !all_chunks.is_empty() {
-            println!("Generating embeddings for {} chunks...", all_chunks.len());
+            tracing::debug!("Generating embeddings for {} chunks...", all_chunks.len());
 
             // Generate embeddings using zero-copy string references
             let texts: Vec<&str> = all_chunks.iter().map(|c| c.content.as_str()).collect();
@@ -712,7 +720,7 @@ impl Indexer {
 
             // Store chunks with embeddings if storage is configured
             if let Some(ref storage) = self.storage {
-                println!("Storing {} chunks in vector database...", all_chunks.len());
+                tracing::debug!("Storing {} chunks in vector database...", all_chunks.len());
 
                 // If we have repository info, use deterministic IDs
                 if self.repository.is_some() {
@@ -785,7 +793,7 @@ impl Indexer {
                         .await?;
                 }
 
-                println!("Successfully stored chunks");
+                tracing::debug!("Successfully stored chunks");
             }
         }
 
@@ -876,6 +884,33 @@ fn collect_files(dir: &Path, recursive: bool) -> IndexerResult<Vec<std::path::Pa
                 }
             },
         )
+}
+
+// Implement IndexerService trait for Indexer to allow it to be used directly in API
+use super::service::{FileContent as ServiceFileContent, IndexerService};
+use async_trait::async_trait;
+
+#[async_trait]
+impl IndexerService for Indexer {
+    async fn index_directory(
+        &mut self,
+        path: &std::path::Path,
+        recursive: bool,
+    ) -> crate::IndexerResult<IndexResult> {
+        self.index_directory(path, recursive).await
+    }
+
+    async fn index_file_content(
+        &mut self,
+        project_id: &str,
+        files: Vec<ServiceFileContent>,
+    ) -> crate::IndexerResult<IndexResult> {
+        self.index_file_content(project_id, files).await
+    }
+
+    async fn drop_collection(&mut self) -> crate::IndexerResult<bool> {
+        self.drop_collection().await
+    }
 }
 
 #[cfg(test)]

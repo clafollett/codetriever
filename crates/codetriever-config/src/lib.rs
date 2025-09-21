@@ -466,9 +466,9 @@ impl VectorStorageConfig {
         // Environment variables override profile defaults
         let url =
             std::env::var("CODETRIEVER_VECTOR_STORAGE_URL").unwrap_or_else(|_| match profile {
-                Profile::Development | Profile::Test => "http://localhost:6333".to_string(),
-                Profile::Staging => "http://qdrant-staging:6333".to_string(),
-                Profile::Production => "http://qdrant:6333".to_string(),
+                Profile::Development | Profile::Test => "http://localhost:6334".to_string(),
+                Profile::Staging => "http://qdrant-staging:6334".to_string(),
+                Profile::Production => "http://qdrant:6334".to_string(),
             });
 
         let collection_name = std::env::var("CODETRIEVER_VECTOR_STORAGE_COLLECTION_NAME")

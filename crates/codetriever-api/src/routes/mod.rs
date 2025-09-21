@@ -13,10 +13,6 @@ pub fn create_router() -> Router {
         .merge(index::routes())
         .merge(search::routes())
         .merge(crate::openapi::swagger_ui())
-        .route(
-            "/api-docs/openapi.json",
-            axum::routing::get(crate::openapi::openapi_json),
-        )
         // Add correlation ID middleware to all routes
         .layer(middleware::from_fn(
             crate::middleware::correlation_id_middleware,

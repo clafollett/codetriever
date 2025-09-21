@@ -32,56 +32,6 @@ pub struct FileContent {
     pub hash: String,
 }
 
-/// Real implementation of IndexerService using the actual Indexer
-pub struct ApiIndexerService {
-    indexer: super::Indexer,
-}
-
-impl Default for ApiIndexerService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ApiIndexerService {
-    /// Create a new IndexerServiceImpl with default configuration
-    pub fn new() -> Self {
-        Self {
-            indexer: super::Indexer::new(),
-        }
-    }
-
-    /// Create a new IndexerServiceImpl with specific configuration
-    pub fn with_config(config: &crate::config::ApplicationConfig) -> Self {
-        Self {
-            indexer: super::Indexer::with_config(config),
-        }
-    }
-}
-
-#[async_trait]
-impl IndexerService for ApiIndexerService {
-    async fn index_directory(
-        &mut self,
-        path: &std::path::Path,
-        recursive: bool,
-    ) -> crate::IndexerResult<IndexResult> {
-        self.indexer.index_directory(path, recursive).await
-    }
-
-    async fn index_file_content(
-        &mut self,
-        project_id: &str,
-        files: Vec<FileContent>,
-    ) -> crate::IndexerResult<IndexResult> {
-        self.indexer.index_file_content(project_id, files).await
-    }
-
-    async fn drop_collection(&mut self) -> crate::IndexerResult<bool> {
-        self.indexer.drop_collection().await
-    }
-}
-
 /// Test utilities for mocking IndexerService
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
