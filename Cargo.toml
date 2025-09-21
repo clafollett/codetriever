@@ -3,6 +3,7 @@ members = [
     "crates/codetriever",
     "crates/codetriever-api",
     "crates/codetriever-common",
+    "crates/codetriever-config",
     "crates/codetriever-meta-data",
     "crates/codetriever-embeddings",
     "crates/codetriever-vector-data",

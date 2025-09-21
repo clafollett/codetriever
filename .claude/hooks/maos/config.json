@@ -7,7 +7,7 @@
     "voices": {
       "macos": {
         "voice": "Lee (Premium)",
-        "rate": 195,
+        "rate": 200,
         "quality": 127
       },
       "pyttsx3": {
