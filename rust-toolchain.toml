@@ -2,13 +2,9 @@
 # Ensures identical toolchain versions across all environments
 
 [toolchain]
-channel = "1.89.0"
+channel = "1.90.0"
 profile = "default"
 components = ["rustfmt", "clippy", "rust-src"]
 
 # Targets for cross-compilation support
-targets = [
-    "x86_64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin"
-]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]

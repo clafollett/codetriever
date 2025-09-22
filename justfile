@@ -161,10 +161,10 @@ fmt:
     @echo "🎨 Formatting code..."
     cargo fmt --all
 
-# Run clippy lints
+# Run clippy lints (matches CI environment)
 lint:
     @echo "🔍 Running clippy..."
-    cargo clippy --all-targets -- -D warnings -W clippy::uninlined_format_args
+    RUSTFLAGS="-D warnings" cargo clippy --all-targets -- -W clippy::uninlined_format_args
 
 # Fix all auto-fixable issues
 fix: fmt clippy-fix

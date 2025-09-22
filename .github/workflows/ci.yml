@@ -24,6 +24,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
+          toolchain: 1.90.0
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -58,7 +59,7 @@ jobs:
 
     strategy:
       matrix:
-        rust: [stable, beta]
+        rust: [1.90.0, stable, beta]
 
     steps:
       - name: Checkout code
