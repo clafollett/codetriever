@@ -1,12 +1,12 @@
-# 🔍 Codetriever
+# 🔍 Codetriever - 🐕‍🦺🐾
 
 **Semantic code search for every AI coding agent. Built in Rust. MCP-native.**
 
-> Give your AI perfect memory of your entire codebase - built in 2 weeks during dog walks 🐕
+> Give your AI perfect memory of your entire codebase
 
 ## 🚀 What's This?
 
-Codetriever is a semantic code search engine with (untested) MCP support. Built in Rust in 2 weeks as an experiment. The goal is to give AI agents memory of codebases through the [Model Context Protocol](https://modelcontextprotocol.io).
+Codetriever is a semantic code search engine with MCP support. The goal is to give AI agents memory of codebases through the [Model Context Protocol](https://modelcontextprotocol.io).
 
 ```bash
 # These commands exist but may not work:
@@ -28,7 +28,7 @@ codetriever search "database connection pooling logic"
 
 Every AI coding tool needs semantic search. We're building the **open protocol** that powers them all through MCP. Not locked to Claude, Copilot, or Cursor - works with everything.
 
-## 📊 Current Status - Week 3 of Development
+## 📊 Current Status
 
 ### ✅ What Actually Works
 - **Indexing pipeline** - Parse, chunk, embed, store your codebase
@@ -73,15 +73,15 @@ File Tracking ←─────────────────────
 ## 💻 System Requirements
 
 ### Minimum
-- **RAM**: 8GB (4GB available for embeddings)
+- **RAM**: 16GB (4GB available for embeddings)
 - **CPU**: Any x64 or ARM64 processor
 - **Disk**: 2GB for models + space for index
 - **OS**: macOS, Linux, Windows (WSL2)
 
 ### Recommended
-- **RAM**: 16GB+
+- **RAM**: 32GB+
 - **CPU**: Apple Silicon (M1/M2/M3) or modern x64 with AVX
-- **GPU**: NVIDIA with CUDA (optional but 10x faster)
+- **GPU**: NVIDIA with CUDA or Mac with Metal 
 - **Disk**: SSD with 10GB+ free
 
 ### Prerequisites
