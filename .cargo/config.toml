@@ -1,0 +1,15 @@
+# Local development configuration for GPU acceleration
+# The aliases make it easy to build with GPU support
+
+[alias]
+# GPU-accelerated builds for macOS (Metal)
+build-metal = "build --features codetriever-embeddings/metal"
+run-metal = "run --features codetriever-embeddings/metal"
+test-metal = "test --features codetriever-embeddings/metal"
+api-metal = "run --features codetriever-embeddings/metal --bin codetriever-api"
+
+# GPU-accelerated builds for macOS (Metal)
+build-cuda = "build --features codetriever-embeddings/cuda"
+run-cuda = "run --features codetriever-embeddings/cuda"
+test-cuda = "test --features codetriever-embeddings/cuda"
+api-cuda = "run --features codetriever-embeddings/cuda --bin codetriever-api"

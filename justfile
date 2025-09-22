@@ -140,12 +140,21 @@ test-integration:
     @echo "🔧 Running integration tests..."
     cargo test --workspace --tests
 
+# Run tests with GPU acceleration
+test-metal:
+    @echo "🍎 Running tests with Metal GPU support..."
+    cargo test-metal --workspace
+
+test-cuda:
+    @echo "🐧 Running tests with CUDA GPU support..."
+    cargo test-cuda --workspace
+
 # Format code
 
 # Fix clippy warnings
 clippy-fix:
     @echo "🔧 Fixing clippy issues..."
-    cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings -W clippy::uninlined_format_args
+    cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings -W clippy::uninlined_format_args
     @echo "✅ Applied clippy fixes"
 
 fmt:
@@ -155,7 +164,7 @@ fmt:
 # Run clippy lints
 lint:
     @echo "🔍 Running clippy..."
-    cargo clippy --all-targets --all-features -- -D warnings -W clippy::uninlined_format_args
+    cargo clippy --all-targets -- -D warnings -W clippy::uninlined_format_args
 
 # Fix all auto-fixable issues
 fix: fmt clippy-fix
@@ -174,10 +183,19 @@ watch:
 # Building & Running
 # ========================
 
-# Build debug version
+# Build debug version (CPU-only by default)
 build:
-    @echo "🔨 Building debug..."
+    @echo "🔨 Building..."
     cargo build --workspace --all-targets
+
+# Build with GPU acceleration
+build-metal:
+    @echo "🍎 Building with Metal GPU support..."
+    cargo build-metal --workspace --all-targets
+
+build-cuda:
+    @echo "🚀 Building with CUDA GPU support..."
+    cargo build-cuda --workspace --all-targets
 
 # Build release version
 build-release:
@@ -188,9 +206,19 @@ build-release:
 run *args:
     cargo run --bin codetriever -- {{args}}
 
-# Run API server
+# Run API server (CPU-only by default)
 api:
+    @echo "🚀 Starting API server..."
     cargo run --bin codetriever-api
+
+# Run API with GPU acceleration
+api-metal:
+    @echo "🍎 Starting API with Metal GPU acceleration..."
+    cargo api-metal
+
+api-cuda:
+    @echo "🐧 Starting API with CUDA GPU acceleration..."
+    cargo api-cuda
 
 # Clean build artifacts
 clean:

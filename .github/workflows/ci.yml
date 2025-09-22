@@ -35,7 +35,7 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Format check
-        run: just fmt --check
+        run: cargo fmt --all -- --check
 
       - name: Lint check
         run: just lint
@@ -45,10 +45,10 @@ jobs:
         continue-on-error: true  # Don't block on advisories for alpha
 
       - name: Run unit tests
-        run: just test-unit
+        run: cargo test --workspace --lib
 
       - name: Build check
-        run: just build
+        run: cargo build --workspace
 
   # Optional compatibility check
   compatibility:
