@@ -21,9 +21,6 @@ use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-// Type alias for main result
-type MainResult = Result<(), Box<dyn std::error::Error>>;
-
 /// codetriever MCP Server
 ///
 /// Supports both STDIO and SSE (Server-Sent Events) transports for MCP protocol
@@ -55,11 +52,11 @@ struct Args {
     config_file: Option<String>,
 }
 
-#[tokio::main]
-async fn main() -> MainResult {
-    // Initialize environment (load .env, etc.)
-    codetriever_common::initialize_environment();
+// Type alias to simplify return type
+type BoxError = Box<dyn std::error::Error>;
 
+#[tokio::main]
+async fn main() -> Result<(), BoxError> {
     debug!("[codetriever MCP] main() reached ===");
 
     // Parse command line arguments

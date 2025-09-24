@@ -13,10 +13,20 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/index` endpoint.
+/// Auto-generated unified parameters struct for `/index` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct IndexParams {}
+pub struct IndexParams {
+    #[schemars(description = r#"Request body property"#)]
+    pub mode: Option<String>,
+    #[schemars(description = r#"Specific paths to index (request body)"#)]
+    pub paths: Option<Vec<String>>,
+    #[schemars(description = r#"Return immediately (MCP) or wait (CLI) (request body)"#)]
+    pub is_async: Option<bool>,
+    #[schemars(description = r#"Max wait time for async operations (request body)"#)]
+    pub timeout_ms: Option<i32>,
+}
 
 // Implement Endpoint for generic handler
 impl Endpoint for IndexParams {
@@ -29,19 +39,27 @@ impl Endpoint for IndexParams {
     }
 }
 
-/// Auto-generated properties struct for `/index` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct IndexProperties {
-    #[schemars(description = r#" - "#)]
+impl IndexParams {
+    /// Extract request body properties for REST API calls
+    pub fn to_request_body(&self) -> IndexRequestBody {
+        IndexRequestBody {
+            mode: self.mode.clone(),
+            paths: self.paths.clone(),
+            is_async: self.is_async,
+            timeout_ms: self.timeout_ms,
+        }
+    }
+}
+
+/// Request body structure for REST API calls
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IndexRequestBody {
     pub mode: Option<String>,
-    #[schemars(description = r#" - Return immediately (MCP) or wait (CLI)"#)]
-    pub async_: Option<bool>,
-    #[schemars(description = r#" - Specific paths to index"#)]
     pub paths: Option<Vec<String>>,
-    #[schemars(description = r#" - Max wait time for async operations"#)]
+    pub is_async: Option<bool>,
     pub timeout_ms: Option<i32>,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct IndexResponse(pub serde_json::Value);
 
@@ -76,7 +94,7 @@ pub async fn index_handler(
         target = "handler",
         event = "incoming_request",
         endpoint = "index",
-        method = "GET",
+        method = "POST",
         path = "/index",
         params = serde_json::to_string(params).unwrap_or_else(|e| {
             warn!("Failed to serialize request params: {e}");
@@ -88,7 +106,9 @@ pub async fn index_handler(
         event = "before_api_call",
         endpoint = "index"
     );
-    let resp = get_endpoint_response::<_, IndexResponse>(config, params).await;
+    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let resp =
+        get_endpoint_response::<_, IndexResponse>(config, params, "POST", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -114,18 +134,12 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = IndexParams {};
-        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = IndexProperties {
+        let params = IndexParams {
             mode: None,
-            async_: None,
             paths: None,
+            is_async: None,
             timeout_ms: None,
         };
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
+        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 }

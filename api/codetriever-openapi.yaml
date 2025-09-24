@@ -331,7 +331,7 @@ components:
       properties:
         symbol:
           type: string
-        type:
+        usage_type:
           type: string
           enum: ["all", "definitions", "references"]
           default: "all"
@@ -348,7 +348,7 @@ components:
                 type: string
               line:
                 type: integer
-              type:
+              usage_type:
                 type: string
                 enum: ["definition", "reference"]
               content:
@@ -361,7 +361,7 @@ components:
           type: string
           enum: ["full", "incremental"]
           default: "incremental"
-        async:
+        is_async:
           type: boolean
           default: true
           description: Return immediately (MCP) or wait (CLI)

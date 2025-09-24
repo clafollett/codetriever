@@ -8,14 +8,14 @@
         "name": "symbol"
       },
       {
-        "name": "type_"
+        "name": "usage_type"
       }
     ],
     "schema": {
       "symbol": {
         "type": "string"
       },
-      "type": {
+      "usage_type": {
         "default": "all",
         "enum": [
           "all",
@@ -41,7 +41,7 @@
               "line": {
                 "type": "integer"
               },
-              "type": {
+              "usage_type": {
                 "enum": [
                   "definition",
                   "reference"

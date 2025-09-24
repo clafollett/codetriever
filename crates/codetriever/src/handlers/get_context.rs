@@ -13,10 +13,18 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/get_context` endpoint.
+/// Auto-generated unified parameters struct for `/get_context` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct GetContextParams {}
+pub struct GetContextParams {
+    #[schemars(description = r#"Request body property"#)]
+    pub file: Option<String>,
+    #[schemars(description = r#"Request body property"#)]
+    pub line: Option<i32>,
+    #[schemars(description = r#"Lines before and after (request body)"#)]
+    pub radius: Option<i32>,
+}
 
 // Implement Endpoint for generic handler
 impl Endpoint for GetContextParams {
@@ -29,27 +37,35 @@ impl Endpoint for GetContextParams {
     }
 }
 
-/// Auto-generated properties struct for `/get_context` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct GetContextProperties {
-    #[schemars(description = r#" - "#)]
+impl GetContextParams {
+    /// Extract request body properties for REST API calls
+    pub fn to_request_body(&self) -> GetContextRequestBody {
+        GetContextRequestBody {
+            file: self.file.clone(),
+            line: self.line,
+            radius: self.radius,
+        }
+    }
+}
+
+/// Request body structure for REST API calls
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GetContextRequestBody {
     pub file: Option<String>,
-    #[schemars(description = r#" - "#)]
     pub line: Option<i32>,
-    #[schemars(description = r#" - Lines before and after"#)]
     pub radius: Option<i32>,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct GetContextResponse {
     #[schemars(description = r#" - "#)]
-    pub file: Option<String>,
-    #[schemars(description = r#" - "#)]
-    pub content: Option<String>,
+    pub line_start: Option<i32>,
     #[schemars(description = r#" - "#)]
     pub line_end: Option<i32>,
     #[schemars(description = r#" - "#)]
-    pub line_start: Option<i32>,
+    pub content: Option<String>,
+    #[schemars(description = r#" - "#)]
+    pub file: Option<String>,
     #[schemars(description = r#" - "#)]
     pub symbols: Option<Vec<String>>,
 }
@@ -85,7 +101,7 @@ pub async fn get_context_handler(
         target = "handler",
         event = "incoming_request",
         endpoint = "get_context",
-        method = "GET",
+        method = "POST",
         path = "/context",
         params = serde_json::to_string(params).unwrap_or_else(|e| {
             warn!("Failed to serialize request params: {e}");
@@ -97,7 +113,9 @@ pub async fn get_context_handler(
         event = "before_api_call",
         endpoint = "get_context"
     );
-    let resp = get_endpoint_response::<_, GetContextResponse>(config, params).await;
+    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let resp =
+        get_endpoint_response::<_, GetContextResponse>(config, params, "POST", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -123,17 +141,11 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = GetContextParams {};
-        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = GetContextProperties {
+        let params = GetContextParams {
             file: None,
             line: None,
             radius: None,
         };
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
+        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 }

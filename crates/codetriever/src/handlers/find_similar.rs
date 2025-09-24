@@ -13,10 +13,18 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/find_similar` endpoint.
+/// Auto-generated unified parameters struct for `/find_similar` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct FindSimilarParams {}
+pub struct FindSimilarParams {
+    #[schemars(description = r#"Code snippet to find similar to (request body)"#)]
+    pub code: Option<String>,
+    #[schemars(description = r#"File to exclude from results (request body)"#)]
+    pub exclude_file: Option<String>,
+    #[schemars(description = r#"Request body property"#)]
+    pub limit: Option<i32>,
+}
 
 // Implement Endpoint for generic handler
 impl Endpoint for FindSimilarParams {
@@ -29,17 +37,25 @@ impl Endpoint for FindSimilarParams {
     }
 }
 
-/// Auto-generated properties struct for `/find_similar` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct FindSimilarProperties {
-    #[schemars(description = r#" - File to exclude from results"#)]
-    pub exclude_file: Option<String>,
-    #[schemars(description = r#" - "#)]
-    pub limit: Option<i32>,
-    #[schemars(description = r#" - Code snippet to find similar to"#)]
-    pub code: Option<String>,
+impl FindSimilarParams {
+    /// Extract request body properties for REST API calls
+    pub fn to_request_body(&self) -> FindSimilarRequestBody {
+        FindSimilarRequestBody {
+            code: self.code.clone(),
+            exclude_file: self.exclude_file.clone(),
+            limit: self.limit,
+        }
+    }
 }
+
+/// Request body structure for REST API calls
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FindSimilarRequestBody {
+    pub code: Option<String>,
+    pub exclude_file: Option<String>,
+    pub limit: Option<i32>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct FindSimilarResponse {
     #[schemars(description = r#" - "#)]
@@ -79,7 +95,7 @@ pub async fn find_similar_handler(
         target = "handler",
         event = "incoming_request",
         endpoint = "find_similar",
-        method = "GET",
+        method = "POST",
         path = "/similar",
         params = serde_json::to_string(params).unwrap_or_else(|e| {
             warn!("Failed to serialize request params: {e}");
@@ -91,7 +107,9 @@ pub async fn find_similar_handler(
         event = "before_api_call",
         endpoint = "find_similar"
     );
-    let resp = get_endpoint_response::<_, FindSimilarResponse>(config, params).await;
+    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let resp =
+        get_endpoint_response::<_, FindSimilarResponse>(config, params, "POST", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -117,17 +135,11 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = FindSimilarParams {};
-        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = FindSimilarProperties {
+        let params = FindSimilarParams {
+            code: None,
             exclude_file: None,
             limit: None,
-            code: None,
         };
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
+        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 }

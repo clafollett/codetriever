@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/compact` endpoint.
+/// Auto-generated unified parameters struct for `/compact` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct CompactParams {}
@@ -29,18 +30,16 @@ impl Endpoint for CompactParams {
     }
 }
 
-/// Auto-generated properties struct for `/compact` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct CompactProperties {}
+impl CompactParams {}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct CompactResponse {
+    #[schemars(description = r#" - "#)]
+    pub duration_ms: Option<i32>,
     #[schemars(description = r#" - "#)]
     pub after_size_mb: Option<f64>,
     #[schemars(description = r#" - "#)]
     pub before_size_mb: Option<f64>,
-    #[schemars(description = r#" - "#)]
-    pub duration_ms: Option<i32>,
 }
 
 impl IntoContents for CompactResponse {
@@ -74,7 +73,7 @@ pub async fn compact_handler(
         target = "handler",
         event = "incoming_request",
         endpoint = "compact",
-        method = "GET",
+        method = "POST",
         path = "/compact",
         params = serde_json::to_string(params).unwrap_or_else(|e| {
             warn!("Failed to serialize request params: {e}");
@@ -86,7 +85,9 @@ pub async fn compact_handler(
         event = "before_api_call",
         endpoint = "compact"
     );
-    let resp = get_endpoint_response::<_, CompactResponse>(config, params).await;
+    let request_body = None;
+    let resp =
+        get_endpoint_response::<_, CompactResponse>(config, params, "POST", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -114,11 +115,5 @@ mod tests {
     fn test_parameters_struct_serialization() {
         let params = CompactParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = CompactProperties {};
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

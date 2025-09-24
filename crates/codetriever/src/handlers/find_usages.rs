@@ -13,10 +13,16 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/find_usages` endpoint.
+/// Auto-generated unified parameters struct for `/find_usages` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct FindUsagesParams {}
+pub struct FindUsagesParams {
+    #[schemars(description = r#"Request body property"#)]
+    pub symbol: Option<String>,
+    #[schemars(description = r#"Request body property"#)]
+    pub usage_type: Option<String>,
+}
 
 // Implement Endpoint for generic handler
 impl Endpoint for FindUsagesParams {
@@ -29,15 +35,23 @@ impl Endpoint for FindUsagesParams {
     }
 }
 
-/// Auto-generated properties struct for `/find_usages` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct FindUsagesProperties {
-    #[schemars(description = r#" - "#)]
-    pub symbol: Option<String>,
-    #[schemars(description = r#" - "#)]
-    pub type_: Option<String>,
+impl FindUsagesParams {
+    /// Extract request body properties for REST API calls
+    pub fn to_request_body(&self) -> FindUsagesRequestBody {
+        FindUsagesRequestBody {
+            symbol: self.symbol.clone(),
+            usage_type: self.usage_type.clone(),
+        }
+    }
 }
+
+/// Request body structure for REST API calls
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FindUsagesRequestBody {
+    pub symbol: Option<String>,
+    pub usage_type: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct FindUsagesResponse {
     #[schemars(description = r#" - "#)]
@@ -75,7 +89,7 @@ pub async fn find_usages_handler(
         target = "handler",
         event = "incoming_request",
         endpoint = "find_usages",
-        method = "GET",
+        method = "POST",
         path = "/usages",
         params = serde_json::to_string(params).unwrap_or_else(|e| {
             warn!("Failed to serialize request params: {e}");
@@ -87,7 +101,9 @@ pub async fn find_usages_handler(
         event = "before_api_call",
         endpoint = "find_usages"
     );
-    let resp = get_endpoint_response::<_, FindUsagesResponse>(config, params).await;
+    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let resp =
+        get_endpoint_response::<_, FindUsagesResponse>(config, params, "POST", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -113,16 +129,10 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = FindUsagesParams {};
-        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = FindUsagesProperties {
+        let params = FindUsagesParams {
             symbol: None,
-            type_: None,
+            usage_type: None,
         };
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
+        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 }

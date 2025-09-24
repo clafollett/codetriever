@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/get_stats` endpoint.
+/// Auto-generated unified parameters struct for `/get_stats` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct GetStatsParams {}
@@ -29,10 +30,8 @@ impl Endpoint for GetStatsParams {
     }
 }
 
-/// Auto-generated properties struct for `/get_stats` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct GetStatsProperties {}
+impl GetStatsParams {}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct GetStatsResponse {
     #[schemars(description = r#" - "#)]
@@ -40,11 +39,11 @@ pub struct GetStatsResponse {
     #[schemars(description = r#" - "#)]
     pub db_size_mb: Option<f64>,
     #[schemars(description = r#" - "#)]
-    pub files: Option<i32>,
+    pub last_indexed: Option<String>,
     #[schemars(description = r#" - "#)]
     pub vectors: Option<i32>,
     #[schemars(description = r#" - "#)]
-    pub last_indexed: Option<String>,
+    pub files: Option<i32>,
 }
 
 impl IntoContents for GetStatsResponse {
@@ -90,7 +89,9 @@ pub async fn get_stats_handler(
         event = "before_api_call",
         endpoint = "get_stats"
     );
-    let resp = get_endpoint_response::<_, GetStatsResponse>(config, params).await;
+    let request_body = None;
+    let resp =
+        get_endpoint_response::<_, GetStatsResponse>(config, params, "GET", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -118,11 +119,5 @@ mod tests {
     fn test_parameters_struct_serialization() {
         let params = GetStatsParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = GetStatsProperties {};
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

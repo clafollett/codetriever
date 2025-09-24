@@ -13,10 +13,16 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/clean` endpoint.
+/// Auto-generated unified parameters struct for `/clean` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct CleanParams {}
+pub struct CleanParams {
+    #[schemars(description = r#"Duration string (e.g., \"7d\", \"1h\") (request body)"#)]
+    pub older_than: Option<String>,
+    #[schemars(description = r#"Request body property"#)]
+    pub missing_files: Option<bool>,
+}
 
 // Implement Endpoint for generic handler
 impl Endpoint for CleanParams {
@@ -29,21 +35,29 @@ impl Endpoint for CleanParams {
     }
 }
 
-/// Auto-generated properties struct for `/clean` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct CleanProperties {
-    #[schemars(description = r#" - Duration string (e.g., \"7d\", \"1h\")"#)]
+impl CleanParams {
+    /// Extract request body properties for REST API calls
+    pub fn to_request_body(&self) -> CleanRequestBody {
+        CleanRequestBody {
+            older_than: self.older_than.clone(),
+            missing_files: self.missing_files,
+        }
+    }
+}
+
+/// Request body structure for REST API calls
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CleanRequestBody {
     pub older_than: Option<String>,
-    #[schemars(description = r#" - "#)]
     pub missing_files: Option<bool>,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct CleanResponse {
     #[schemars(description = r#" - "#)]
-    pub removed_chunks: Option<i32>,
-    #[schemars(description = r#" - "#)]
     pub freed_space_mb: Option<f64>,
+    #[schemars(description = r#" - "#)]
+    pub removed_chunks: Option<i32>,
 }
 
 impl IntoContents for CleanResponse {
@@ -77,7 +91,7 @@ pub async fn clean_handler(
         target = "handler",
         event = "incoming_request",
         endpoint = "clean",
-        method = "GET",
+        method = "POST",
         path = "/clean",
         params = serde_json::to_string(params).unwrap_or_else(|e| {
             warn!("Failed to serialize request params: {e}");
@@ -89,7 +103,9 @@ pub async fn clean_handler(
         event = "before_api_call",
         endpoint = "clean"
     );
-    let resp = get_endpoint_response::<_, CleanResponse>(config, params).await;
+    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let resp =
+        get_endpoint_response::<_, CleanResponse>(config, params, "POST", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -115,16 +131,10 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = CleanParams {};
-        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = CleanProperties {
+        let params = CleanParams {
             older_than: None,
             missing_files: None,
         };
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
+        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 }

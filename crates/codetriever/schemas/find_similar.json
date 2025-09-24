@@ -5,15 +5,15 @@
   "requestBody": {
     "properties": [
       {
+        "description": "Code snippet to find similar to",
+        "name": "code"
+      },
+      {
         "description": "File to exclude from results",
         "name": "exclude_file"
       },
       {
         "name": "limit"
-      },
-      {
-        "description": "Code snippet to find similar to",
-        "name": "code"
       }
     ],
     "schema": {

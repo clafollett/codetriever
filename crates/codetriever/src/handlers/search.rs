@@ -13,10 +13,18 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/search` endpoint.
+/// Auto-generated unified parameters struct for `/search` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct SearchParams {}
+pub struct SearchParams {
+    #[schemars(description = r#"Natural language search query (request body)"#)]
+    pub query: Option<String>,
+    #[schemars(description = r#"Request body property"#)]
+    pub limit: Option<i32>,
+    #[schemars(description = r#"Request body property"#)]
+    pub threshold: Option<f64>,
+}
 
 // Implement Endpoint for generic handler
 impl Endpoint for SearchParams {
@@ -29,23 +37,31 @@ impl Endpoint for SearchParams {
     }
 }
 
-/// Auto-generated properties struct for `/search` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct SearchProperties {
-    #[schemars(description = r#" - "#)]
-    pub threshold: Option<f64>,
-    #[schemars(description = r#" - Natural language search query"#)]
-    pub query: Option<String>,
-    #[schemars(description = r#" - "#)]
-    pub limit: Option<i32>,
+impl SearchParams {
+    /// Extract request body properties for REST API calls
+    pub fn to_request_body(&self) -> SearchRequestBody {
+        SearchRequestBody {
+            query: self.query.clone(),
+            limit: self.limit,
+            threshold: self.threshold,
+        }
+    }
 }
+
+/// Request body structure for REST API calls
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SearchRequestBody {
+    pub query: Option<String>,
+    pub limit: Option<i32>,
+    pub threshold: Option<f64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct SearchResponse {
     #[schemars(description = r#" - "#)]
-    pub chunks: Option<Vec<serde_json::Value>>,
-    #[schemars(description = r#" - "#)]
     pub query_time_ms: Option<i32>,
+    #[schemars(description = r#" - "#)]
+    pub chunks: Option<Vec<serde_json::Value>>,
 }
 
 impl IntoContents for SearchResponse {
@@ -79,7 +95,7 @@ pub async fn search_handler(
         target = "handler",
         event = "incoming_request",
         endpoint = "search",
-        method = "GET",
+        method = "POST",
         path = "/search",
         params = serde_json::to_string(params).unwrap_or_else(|e| {
             warn!("Failed to serialize request params: {e}");
@@ -91,7 +107,9 @@ pub async fn search_handler(
         event = "before_api_call",
         endpoint = "search"
     );
-    let resp = get_endpoint_response::<_, SearchResponse>(config, params).await;
+    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let resp =
+        get_endpoint_response::<_, SearchResponse>(config, params, "POST", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -117,17 +135,11 @@ mod tests {
     use serde_json;
     #[test]
     fn test_parameters_struct_serialization() {
-        let params = SearchParams {};
-        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = SearchProperties {
-            threshold: None,
+        let params = SearchParams {
             query: None,
             limit: None,
+            threshold: None,
         };
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
+        let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
 }

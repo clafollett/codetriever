@@ -8,12 +8,12 @@
         "name": "mode"
       },
       {
-        "description": "Return immediately (MCP) or wait (CLI)",
-        "name": "async_"
-      },
-      {
         "description": "Specific paths to index",
         "name": "paths"
+      },
+      {
+        "description": "Return immediately (MCP) or wait (CLI)",
+        "name": "is_async"
       },
       {
         "description": "Max wait time for async operations",
@@ -21,7 +21,7 @@
       }
     ],
     "schema": {
-      "async": {
+      "is_async": {
         "default": true,
         "description": "Return immediately (MCP) or wait (CLI)",
         "type": "boolean"

@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated parameters struct for `/get_status` endpoint.
+/// Auto-generated unified parameters struct for `/get_status` endpoint.
+/// Combines query parameters and request body properties into a single MCP interface.
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct GetStatusParams {}
@@ -29,20 +30,18 @@ impl Endpoint for GetStatusParams {
     }
 }
 
-/// Auto-generated properties struct for `/get_status` endpoint.
-/// Spec:
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
-pub struct GetStatusProperties {}
+impl GetStatusParams {}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct GetStatusResponse {
     #[schemars(description = r#" - "#)]
-    pub watcher: Option<serde_json::Value>,
+    pub server: Option<serde_json::Value>,
     #[schemars(description = r#" - "#)]
     pub performance: Option<serde_json::Value>,
     #[schemars(description = r#" - "#)]
-    pub index: Option<serde_json::Value>,
+    pub watcher: Option<serde_json::Value>,
     #[schemars(description = r#" - "#)]
-    pub server: Option<serde_json::Value>,
+    pub index: Option<serde_json::Value>,
 }
 
 impl IntoContents for GetStatusResponse {
@@ -88,7 +87,9 @@ pub async fn get_status_handler(
         event = "before_api_call",
         endpoint = "get_status"
     );
-    let resp = get_endpoint_response::<_, GetStatusResponse>(config, params).await;
+    let request_body = None;
+    let resp =
+        get_endpoint_response::<_, GetStatusResponse>(config, params, "GET", request_body).await;
 
     match &resp {
         Ok(r) => {
@@ -116,11 +117,5 @@ mod tests {
     fn test_parameters_struct_serialization() {
         let params = GetStatusParams {};
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
-    }
-
-    #[test]
-    fn test_properties_struct_serialization() {
-        let props = GetStatusProperties {};
-        let _ = serde_json::to_string(&props).expect("Serializing test properties should not fail");
     }
 }

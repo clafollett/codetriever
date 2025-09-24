@@ -8,7 +8,7 @@ use tokio::sync::{Mutex, Notify};
 use tracing::info;
 
 // Type alias to simplify complex type
-pub type SignalEventArc = Arc<Mutex<Option<SignalEvent>>>;
+type SharedSignalEvent = Arc<Mutex<Option<SignalEvent>>>;
 
 /// Represents a signal event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ pub enum SignalEvent {
 /// # Arguments
 /// * `notify`: An `Arc<Notify>` used to trigger reload/shutdown logic elsewhere in your app.
 /// * `event`: A `tokio::sync::Mutex<Option<SignalEvent>>` to communicate the event type.
-pub async fn spawn_signal_listener(notify: Arc<Notify>, event: SignalEventArc) {
+pub async fn spawn_signal_listener(notify: Arc<Notify>, event: SharedSignalEvent) {
     // Create Unix signal streams for SIGHUP, SIGTERM, and SIGINT
     let mut sighup = signal(SignalKind::hangup()).expect("Failed to register SIGHUP");
     let mut sigterm = signal(SignalKind::terminate()).expect("Failed to register SIGTERM");
