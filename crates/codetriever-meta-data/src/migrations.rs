@@ -62,9 +62,7 @@ pub async fn setup_database(config: &codetriever_config::DatabaseConfig) -> anyh
                 {
                     // This is a real error, not just "database exists"
                     return Err(anyhow::anyhow!(
-                        "Failed to create database: {}. Original check error: {}",
-                        create_err,
-                        e
+                        "Failed to create database: {create_err}. Original check error: {e}"
                     ));
                 }
                 // Database exists, continue to connect

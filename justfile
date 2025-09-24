@@ -170,6 +170,17 @@ lint:
 fix: fmt clippy-fix
     @echo "✅ All auto-fixes applied!"
 
+# Run CI checks locally before pushing
+ci-check:
+    @echo "🔍 Running CI checks locally..."
+    @echo "1️⃣ Formatting check..."
+    @cargo fmt --all -- --check || (echo "❌ Format check failed. Run 'just fmt' to fix." && exit 1)
+    @echo "2️⃣ Clippy check..."
+    @RUSTFLAGS="-D warnings" cargo clippy --all-targets -- -W clippy::uninlined_format_args || (echo "❌ Clippy check failed. Run 'just fix' to auto-fix." && exit 1)
+    @echo "3️⃣ Build check..."
+    @cargo build --workspace || (echo "❌ Build failed." && exit 1)
+    @echo "✅ All CI checks passed!"
+
 # Run all quality checks
 check: fmt lint test-unit
     @echo "✅ All checks passed!"
