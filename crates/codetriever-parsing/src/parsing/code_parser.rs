@@ -475,7 +475,7 @@ impl CodeParser {
 
         // PERFORMANCE: Use cached queries to avoid expensive recompilation 🚀
         let query = get_cached_query(tree_sitter_language, query_str)
-            .map_err(|e| anyhow::anyhow!("Failed to get cached query: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to get cached query: {e}"))?;
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&query, root, code.as_bytes());
