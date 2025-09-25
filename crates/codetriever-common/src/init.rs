@@ -15,7 +15,7 @@ pub fn initialize_environment() {
     INIT.call_once(|| {
         // Load .env file if it exists
         // This loads from current directory or searches up the tree
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
 
         // Could add other initialization here in the future:
         // - Logging setup
@@ -31,8 +31,8 @@ pub fn initialize_environment() {
 pub fn initialize_test_environment() {
     INIT.call_once(|| {
         // Try to load .env.test first, then .env
-        dotenv::from_filename(".env.test")
-            .or_else(|_| dotenv::dotenv())
+        dotenvy::from_filename(".env.test")
+            .or_else(|_| dotenvy::dotenv())
             .ok();
     });
 }

@@ -41,7 +41,7 @@ tracing-subscriber = { workspace = true }
 urlencoding = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
-dotenv = { workspace = true }
+dotenvy = { workspace = true }
 
 
 [dev-dependencies]

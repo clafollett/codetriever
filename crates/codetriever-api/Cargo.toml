@@ -55,7 +55,7 @@ lazy_static = { workspace = true }
 bytes = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-dotenv = { workspace = true }
+dotenvy = { workspace = true }
 
 # Cryptography
 sha2 = { workspace = true }
