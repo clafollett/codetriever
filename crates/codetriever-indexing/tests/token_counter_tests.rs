@@ -19,7 +19,7 @@ async fn test_registry_has_all_models() {
 
     let tokenizer = Arc::new(
         tokenizers::Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))
             .unwrap(),
     );
 
@@ -59,7 +59,7 @@ async fn test_registry_fallback_to_heuristic() {
 
     let tokenizer = Arc::new(
         tokenizers::Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))
             .unwrap(),
     );
 

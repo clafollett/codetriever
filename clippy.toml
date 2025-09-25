@@ -17,6 +17,7 @@ check-private-items = false # Don't require docs for private items
 type-complexity-threshold = 60
 
 # Misc settings
-msrv = "1.88.0" # Minimum Supported Rust Version (matches current stable)
+msrv = "1.90.0" # Minimum Supported Rust Version (matches our toolchain)
 
 # Modern Rust standards - enable inline format arg checking
+warn-on-all-wildcard-imports = true
