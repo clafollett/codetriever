@@ -35,13 +35,13 @@ impl GetStatusParams {}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct GetStatusResponse {
     #[schemars(description = r#" - "#)]
-    pub server: Option<serde_json::Value>,
+    pub index: Option<serde_json::Value>,
     #[schemars(description = r#" - "#)]
     pub performance: Option<serde_json::Value>,
     #[schemars(description = r#" - "#)]
-    pub watcher: Option<serde_json::Value>,
+    pub server: Option<serde_json::Value>,
     #[schemars(description = r#" - "#)]
-    pub index: Option<serde_json::Value>,
+    pub watcher: Option<serde_json::Value>,
 }
 
 impl IntoContents for GetStatusResponse {

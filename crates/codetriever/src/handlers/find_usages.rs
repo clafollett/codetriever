@@ -101,7 +101,25 @@ pub async fn find_usages_handler(
         event = "before_api_call",
         endpoint = "find_usages"
     );
-    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let request_body = match serde_json::to_value(params.to_request_body()) {
+        Ok(val) => Some(val),
+        Err(e) => {
+            error!(
+                target = "handler",
+                event = "serialization_error",
+                endpoint = "find_usages",
+                error = ?e,
+                "Failed to serialize request body"
+            );
+            return Err(agenterra_rmcp::Error::from(
+                agenterra_rmcp::model::ErrorData::new(
+                    agenterra_rmcp::model::ErrorCode::INVALID_PARAMS,
+                    format!("Failed to serialize request body: {e}"),
+                    None,
+                ),
+            ));
+        }
+    };
     let resp =
         get_endpoint_response::<_, FindUsagesResponse>(config, params, "POST", request_body).await;
 

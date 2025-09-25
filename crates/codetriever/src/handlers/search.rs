@@ -18,10 +18,10 @@ use utoipa::ToSchema;
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct SearchParams {
-    #[schemars(description = r#"Natural language search query (request body)"#)]
-    pub query: Option<String>,
     #[schemars(description = r#"Request body property"#)]
     pub limit: Option<i32>,
+    #[schemars(description = r#"Natural language search query (request body)"#)]
+    pub query: Option<String>,
     #[schemars(description = r#"Request body property"#)]
     pub threshold: Option<f64>,
 }
@@ -41,8 +41,8 @@ impl SearchParams {
     /// Extract request body properties for REST API calls
     pub fn to_request_body(&self) -> SearchRequestBody {
         SearchRequestBody {
-            query: self.query.clone(),
             limit: self.limit,
+            query: self.query.clone(),
             threshold: self.threshold,
         }
     }
@@ -51,17 +51,17 @@ impl SearchParams {
 /// Request body structure for REST API calls
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchRequestBody {
-    pub query: Option<String>,
     pub limit: Option<i32>,
+    pub query: Option<String>,
     pub threshold: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct SearchResponse {
     #[schemars(description = r#" - "#)]
-    pub query_time_ms: Option<i32>,
-    #[schemars(description = r#" - "#)]
     pub chunks: Option<Vec<serde_json::Value>>,
+    #[schemars(description = r#" - "#)]
+    pub query_time_ms: Option<i32>,
 }
 
 impl IntoContents for SearchResponse {
@@ -107,7 +107,25 @@ pub async fn search_handler(
         event = "before_api_call",
         endpoint = "search"
     );
-    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let request_body = match serde_json::to_value(params.to_request_body()) {
+        Ok(val) => Some(val),
+        Err(e) => {
+            error!(
+                target = "handler",
+                event = "serialization_error",
+                endpoint = "search",
+                error = ?e,
+                "Failed to serialize request body"
+            );
+            return Err(agenterra_rmcp::Error::from(
+                agenterra_rmcp::model::ErrorData::new(
+                    agenterra_rmcp::model::ErrorCode::INVALID_PARAMS,
+                    format!("Failed to serialize request body: {e}"),
+                    None,
+                ),
+            ));
+        }
+    };
     let resp =
         get_endpoint_response::<_, SearchResponse>(config, params, "POST", request_body).await;
 
@@ -136,8 +154,8 @@ mod tests {
     #[test]
     fn test_parameters_struct_serialization() {
         let params = SearchParams {
-            query: None,
             limit: None,
+            query: None,
             threshold: None,
         };
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");

@@ -5,11 +5,11 @@
   "requestBody": {
     "properties": [
       {
-        "description": "Duration string (e.g., \\\"7d\\\", \\\"1h\\\")",
-        "name": "older_than"
+        "name": "missing_files"
       },
       {
-        "name": "missing_files"
+        "description": "Duration string (e.g., \\\"7d\\\", \\\"1h\\\")",
+        "name": "older_than"
       }
     ],
     "schema": {

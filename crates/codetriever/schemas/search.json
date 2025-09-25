@@ -5,12 +5,12 @@
   "requestBody": {
     "properties": [
       {
+        "name": "limit"
+      },
+      {
         "description": "Natural language search query",
         "example": "authentication logic",
         "name": "query"
-      },
-      {
-        "name": "limit"
       },
       {
         "name": "threshold"

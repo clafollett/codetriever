@@ -18,12 +18,12 @@ use utoipa::ToSchema;
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct IndexParams {
+    #[schemars(description = r#"Return immediately (MCP) or wait (CLI) (request body)"#)]
+    pub is_async: Option<bool>,
     #[schemars(description = r#"Request body property"#)]
     pub mode: Option<String>,
     #[schemars(description = r#"Specific paths to index (request body)"#)]
     pub paths: Option<Vec<String>>,
-    #[schemars(description = r#"Return immediately (MCP) or wait (CLI) (request body)"#)]
-    pub is_async: Option<bool>,
     #[schemars(description = r#"Max wait time for async operations (request body)"#)]
     pub timeout_ms: Option<i32>,
 }
@@ -43,9 +43,9 @@ impl IndexParams {
     /// Extract request body properties for REST API calls
     pub fn to_request_body(&self) -> IndexRequestBody {
         IndexRequestBody {
+            is_async: self.is_async,
             mode: self.mode.clone(),
             paths: self.paths.clone(),
-            is_async: self.is_async,
             timeout_ms: self.timeout_ms,
         }
     }
@@ -54,9 +54,9 @@ impl IndexParams {
 /// Request body structure for REST API calls
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndexRequestBody {
+    pub is_async: Option<bool>,
     pub mode: Option<String>,
     pub paths: Option<Vec<String>>,
-    pub is_async: Option<bool>,
     pub timeout_ms: Option<i32>,
 }
 
@@ -106,7 +106,25 @@ pub async fn index_handler(
         event = "before_api_call",
         endpoint = "index"
     );
-    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let request_body = match serde_json::to_value(params.to_request_body()) {
+        Ok(val) => Some(val),
+        Err(e) => {
+            error!(
+                target = "handler",
+                event = "serialization_error",
+                endpoint = "index",
+                error = ?e,
+                "Failed to serialize request body"
+            );
+            return Err(agenterra_rmcp::Error::from(
+                agenterra_rmcp::model::ErrorData::new(
+                    agenterra_rmcp::model::ErrorCode::INVALID_PARAMS,
+                    format!("Failed to serialize request body: {e}"),
+                    None,
+                ),
+            ));
+        }
+    };
     let resp =
         get_endpoint_response::<_, IndexResponse>(config, params, "POST", request_body).await;
 
@@ -135,9 +153,9 @@ mod tests {
     #[test]
     fn test_parameters_struct_serialization() {
         let params = IndexParams {
+            is_async: None,
             mode: None,
             paths: None,
-            is_async: None,
             timeout_ms: None,
         };
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");

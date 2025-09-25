@@ -5,15 +5,15 @@
   "requestBody": {
     "properties": [
       {
+        "description": "Return immediately (MCP) or wait (CLI)",
+        "name": "is_async"
+      },
+      {
         "name": "mode"
       },
       {
         "description": "Specific paths to index",
         "name": "paths"
-      },
-      {
-        "description": "Return immediately (MCP) or wait (CLI)",
-        "name": "is_async"
       },
       {
         "description": "Max wait time for async operations",

@@ -39,11 +39,11 @@ pub struct GetStatsResponse {
     #[schemars(description = r#" - "#)]
     pub db_size_mb: Option<f64>,
     #[schemars(description = r#" - "#)]
+    pub files: Option<i32>,
+    #[schemars(description = r#" - "#)]
     pub last_indexed: Option<String>,
     #[schemars(description = r#" - "#)]
     pub vectors: Option<i32>,
-    #[schemars(description = r#" - "#)]
-    pub files: Option<i32>,
 }
 
 impl IntoContents for GetStatsResponse {

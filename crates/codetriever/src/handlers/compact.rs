@@ -35,11 +35,11 @@ impl CompactParams {}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct CompactResponse {
     #[schemars(description = r#" - "#)]
-    pub duration_ms: Option<i32>,
-    #[schemars(description = r#" - "#)]
     pub after_size_mb: Option<f64>,
     #[schemars(description = r#" - "#)]
     pub before_size_mb: Option<f64>,
+    #[schemars(description = r#" - "#)]
+    pub duration_ms: Option<i32>,
 }
 
 impl IntoContents for CompactResponse {

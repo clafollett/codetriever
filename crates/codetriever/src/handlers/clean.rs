@@ -18,10 +18,10 @@ use utoipa::ToSchema;
 /// Spec:
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct CleanParams {
-    #[schemars(description = r#"Duration string (e.g., \"7d\", \"1h\") (request body)"#)]
-    pub older_than: Option<String>,
     #[schemars(description = r#"Request body property"#)]
     pub missing_files: Option<bool>,
+    #[schemars(description = r#"Duration string (e.g., \"7d\", \"1h\") (request body)"#)]
+    pub older_than: Option<String>,
 }
 
 // Implement Endpoint for generic handler
@@ -39,8 +39,8 @@ impl CleanParams {
     /// Extract request body properties for REST API calls
     pub fn to_request_body(&self) -> CleanRequestBody {
         CleanRequestBody {
-            older_than: self.older_than.clone(),
             missing_files: self.missing_files,
+            older_than: self.older_than.clone(),
         }
     }
 }
@@ -48,8 +48,8 @@ impl CleanParams {
 /// Request body structure for REST API calls
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CleanRequestBody {
-    pub older_than: Option<String>,
     pub missing_files: Option<bool>,
+    pub older_than: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -103,7 +103,25 @@ pub async fn clean_handler(
         event = "before_api_call",
         endpoint = "clean"
     );
-    let request_body = serde_json::to_value(params.to_request_body()).ok();
+    let request_body = match serde_json::to_value(params.to_request_body()) {
+        Ok(val) => Some(val),
+        Err(e) => {
+            error!(
+                target = "handler",
+                event = "serialization_error",
+                endpoint = "clean",
+                error = ?e,
+                "Failed to serialize request body"
+            );
+            return Err(agenterra_rmcp::Error::from(
+                agenterra_rmcp::model::ErrorData::new(
+                    agenterra_rmcp::model::ErrorCode::INVALID_PARAMS,
+                    format!("Failed to serialize request body: {e}"),
+                    None,
+                ),
+            ));
+        }
+    };
     let resp =
         get_endpoint_response::<_, CleanResponse>(config, params, "POST", request_body).await;
 
@@ -132,8 +150,8 @@ mod tests {
     #[test]
     fn test_parameters_struct_serialization() {
         let params = CleanParams {
-            older_than: None,
             missing_files: None,
+            older_than: None,
         };
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }
