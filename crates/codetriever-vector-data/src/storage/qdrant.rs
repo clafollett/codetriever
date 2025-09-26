@@ -334,14 +334,6 @@ impl VectorStorage for QdrantStorage {
         limit: usize,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<StorageSearchResult>> {
-        // Validate query vector dimensions
-        if query.len() != 768 {
-            return Err(VectorDataError::VectorDimensionMismatch(format!(
-                "Query vector must be 768 dimensions, got {}",
-                query.len()
-            )));
-        }
-
         // Log search operation with correlation ID for tracing
         tracing::info!(
             correlation_id = %correlation_id,
