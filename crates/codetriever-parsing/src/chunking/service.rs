@@ -184,9 +184,12 @@ impl ChunkingService {
         let mut current_start_line = span.start_line;
         let mut current_byte_offset = span.byte_start;
 
+        let mut line_buffer = String::with_capacity(256);
         for (i, line) in lines.iter().enumerate() {
-            let line_with_newline = format!("{line}\n");
-            let line_tokens = self.counter.count(&line_with_newline);
+            line_buffer.clear();
+            line_buffer.push_str(line);
+            line_buffer.push('\n');
+            let line_tokens = self.counter.count(&line_buffer);
 
             if current_tokens + line_tokens > self.budget.soft && !current_lines.is_empty() {
                 // Create chunk

@@ -152,7 +152,7 @@ impl EmbeddingModel {
         let num_texts = texts.len();
 
         // Encode texts - convert to Vec for tokenizer compatibility
-        // This is still more efficient than the original approach
+        // Encode texts - tokenizer API requires Vec<&str>
         let text_vec: Vec<&str> = texts.to_vec();
         let encodings = tokenizer
             .encode_batch(text_vec, true)
