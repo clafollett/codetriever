@@ -1,0 +1,8 @@
+[advisories]
+# RSA timing sidechannel vulnerability in sqlx-mysql dependency
+# We don't use RSA keys, so this is not exploitable in our codebase
+# TODO: Remove this allowlist when sqlx fixes the issue or we migrate away
+ignore = [
+    "RUSTSEC-2023-0071",  # RSA Marvin Attack timing sidechannel
+    "RUSTSEC-2024-0436"   # Unmaintained paste crate (proc-macro only, low risk)
+]

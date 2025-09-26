@@ -366,6 +366,7 @@ update:
 # Security audit
 audit:
     @echo "🔒 Running security audit..."
+    # Configuration in .cargo/audit.toml (includes allowlisted advisories)
     cargo audit || echo "⚠️ Run 'cargo install cargo-audit' if not installed"
 
 # Check Qdrant status
