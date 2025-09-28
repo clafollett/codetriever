@@ -1,6 +1,6 @@
 //! `OpenAPI` documentation generation and Swagger UI setup
 
-use axum::{Json, response::IntoResponse};
+use axum::{Json, Router, response::IntoResponse, routing::get};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -58,6 +58,11 @@ pub fn swagger_ui() -> SwaggerUi {
 }
 
 /// Returns `OpenAPI` JSON as a response
-pub fn openapi_json() -> impl IntoResponse {
+pub async fn openapi_json() -> impl IntoResponse {
     Json(ApiDoc::openapi())
+}
+
+/// Returns `OpenAPI` documentation routes
+pub fn routes() -> Router {
+    Router::new().route("/openapi.json", get(openapi_json)) // Standard OpenAPI endpoint
 }

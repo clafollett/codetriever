@@ -12,7 +12,8 @@ pub fn create_router() -> Router {
         .merge(health::routes())
         .merge(index::routes())
         .merge(search::routes())
-        .merge(crate::openapi::swagger_ui())
+        .merge(crate::openapi::routes()) // OpenAPI JSON endpoints
+        .merge(crate::openapi::swagger_ui()) // Swagger UI
         // Add correlation ID middleware to all routes
         .layer(middleware::from_fn(
             crate::middleware::correlation_id_middleware,
