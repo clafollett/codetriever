@@ -236,11 +236,8 @@ impl LazySearchService {
             tracing::info!("Initializing search service with Qdrant storage on first use");
             self.service = Some(create_configured_search_service().await);
         }
-        Arc::clone(
-            self.service
-                .as_ref()
-                .expect("service should be initialized"),
-        )
+        // Safe: we just ensured initialization above
+        Arc::clone(self.service.as_ref().unwrap())
     }
 }
 
