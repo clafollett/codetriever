@@ -1,7 +1,9 @@
-//! OpenAPI schema validation tests
+//! `OpenAPI` schema validation tests
 //!
-//! Validates that API responses match the OpenAPI schema definition
+//! Validates that API responses match the `OpenAPI` schema definition
 //! This ensures API contract compliance and prevents schema drift
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use axum::{body::Body, http::Request};
 use codetriever_api::{openapi::ApiDoc, routes::create_router};
@@ -74,14 +76,16 @@ async fn test_search_response_matches_schema() {
     assert!(spec_json.is_object());
 
     // Check for required OpenAPI 3.x fields
-    let version = spec_json["openapi"].as_str().unwrap();
+    let version = spec_json
+        .get("openapi")
+        .and_then(|v| v.as_str())
+        .expect("OpenAPI version should exist");
     assert!(
         version.starts_with("3."),
-        "Should be OpenAPI 3.x, got: {}",
-        version
+        "Should be OpenAPI 3.x, got: {version}"
     );
-    assert!(spec_json["info"].is_object());
-    assert!(spec_json["paths"].is_object());
+    assert!(spec_json.get("info").is_some_and(Value::is_object));
+    assert!(spec_json.get("paths").is_some_and(Value::is_object));
 
     println!("✅ OpenAPI schema is well-formed and serializable");
 }
@@ -108,12 +112,13 @@ async fn test_schema_consistency_with_actual_endpoints() {
     let schema_json: Value = serde_json::from_slice(&body).unwrap();
 
     // Verify the live schema has expected structure
+    let paths = schema_json.get("paths").expect("Schema should have paths");
     assert!(
-        schema_json["paths"]["/search"].is_object(),
+        paths.get("/search").is_some_and(Value::is_object),
         "Search endpoint should be documented"
     );
     assert!(
-        schema_json["paths"]["/index"].is_object(),
+        paths.get("/index").is_some_and(Value::is_object),
         "Index endpoint should be documented"
     );
 

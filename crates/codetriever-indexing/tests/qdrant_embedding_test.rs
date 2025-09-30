@@ -62,11 +62,22 @@ async fn test_indexer_stores_chunks_in_qdrant() {
 
     // Verify we can search for the indexed content
     let query = "redis connection";
-    // Use SearchService instead of indexer.search() - proper separation of concerns
     let embedding_service = indexer.embedding_service();
     let vector_storage = indexer.vector_storage().expect("Storage configured");
+
+    // Create database client for search
+    let db_config =
+        codetriever_config::DatabaseConfig::for_profile(codetriever_config::Profile::Test);
+    let pools = codetriever_meta_data::PoolManager::new(
+        &db_config,
+        codetriever_meta_data::PoolConfig::default(),
+    )
+    .await
+    .expect("Failed to create pool manager");
+    let db_client = std::sync::Arc::new(codetriever_meta_data::DataClient::new(pools));
+
     let search_service =
-        codetriever_search::SearchService::without_database(embedding_service, vector_storage);
+        codetriever_search::SearchService::new(embedding_service, vector_storage, db_client);
     let correlation_id = codetriever_common::CorrelationId::new();
     let search_results = search_service
         .search(query, 5, &correlation_id)

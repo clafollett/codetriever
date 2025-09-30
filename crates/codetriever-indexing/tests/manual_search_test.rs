@@ -51,11 +51,22 @@ async fn test_manual_searches() {
     ];
 
     // Try a search to see if already indexed
-    // Use SearchService instead of indexer.search() for proper separation
     let embedding_service = indexer.embedding_service();
     let vector_storage = indexer.vector_storage().expect("Storage configured");
+
+    // Create database client for search
+    let db_config =
+        codetriever_config::DatabaseConfig::for_profile(codetriever_config::Profile::Test);
+    let pools = codetriever_meta_data::PoolManager::new(
+        &db_config,
+        codetriever_meta_data::PoolConfig::default(),
+    )
+    .await
+    .expect("Failed to create pool manager");
+    let db_client = std::sync::Arc::new(codetriever_meta_data::DataClient::new(pools));
+
     let search_service =
-        codetriever_search::SearchService::without_database(embedding_service, vector_storage);
+        codetriever_search::SearchService::new(embedding_service, vector_storage, db_client);
     let correlation_id = codetriever_common::CorrelationId::new();
     let test_result = search_service
         .search(test_queries[0], 1, &correlation_id)

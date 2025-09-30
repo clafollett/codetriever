@@ -746,21 +746,23 @@ impl FileRepository for DbFileRepository {
             count: repo_branches.len(),
         };
 
-        // Build parameterized query for batch fetch
+        // Build parameterized query - manually construct to avoid sqlx separator issues
         let mut query_builder = sqlx::QueryBuilder::new(
             "SELECT repository_id, branch, repository_url, first_seen, last_indexed
-             FROM project_branches WHERE ",
+             FROM project_branches
+             WHERE (repository_id, branch) IN (",
         );
 
-        query_builder.push("(repository_id, branch) IN (");
-        let mut separated = query_builder.separated(", ");
-        for (repo_id, branch) in repo_branches {
-            separated
-                .push("(")
-                .push_bind(repo_id)
-                .push(", ")
-                .push_bind(branch)
-                .push(")");
+        // Manually build tuple list with proper separation
+        for (idx, (repo_id, branch)) in repo_branches.iter().enumerate() {
+            if idx > 0 {
+                query_builder.push(", ");
+            }
+            query_builder.push("(");
+            query_builder.push_bind(repo_id);
+            query_builder.push(", ");
+            query_builder.push_bind(branch);
+            query_builder.push(")");
         }
         query_builder.push(")");
 

@@ -15,13 +15,12 @@ type RepoBranchPairs = Vec<(String, String)>;
 type ProjectBranchMap = std::collections::HashMap<(String, String), ProjectBranch>;
 type SearchCache = Arc<std::sync::Mutex<lru::LruCache<String, Vec<SearchMatch>>>>;
 
-/// Search service that provides semantic code search with optional repository metadata
-/// This is the unified search service that works with or without database integration
-/// Includes built-in resilience with retry logic and graceful degradation
+/// Search service that provides semantic code search with repository metadata.
+/// Includes built-in resilience with retry logic.
 pub struct SearchService {
     embedding_service: Arc<dyn EmbeddingService>,
     vector_storage: Arc<dyn VectorStorage>,
-    db_client: Option<Arc<DataClient>>,
+    db_client: Arc<DataClient>,
     max_retries: usize,
     retry_delay: Duration,
     search_timeout: Duration,
@@ -29,41 +28,9 @@ pub struct SearchService {
     cache: SearchCache,
 }
 
-impl Default for SearchService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SearchService {
-    /// Create a new search service with default configuration (like ApiIndexerService::new)
-    pub fn new() -> Self {
-        // Construct dependencies with defaults - no injection needed for simple usage
-        // Use unified configuration system with test profile for mock service
-        let config =
-            codetriever_config::ApplicationConfig::with_profile(codetriever_config::Profile::Test);
-        let embedding_service = Arc::new(codetriever_embeddings::DefaultEmbeddingService::new(
-            config.embedding,
-        )) as Arc<dyn EmbeddingService>;
-
-        let vector_storage =
-            Arc::new(codetriever_vector_data::MockStorage::new()) as Arc<dyn VectorStorage>;
-
-        Self {
-            embedding_service,
-            vector_storage,
-            db_client: None,
-            max_retries: 3,
-            retry_delay: Duration::from_millis(100),
-            search_timeout: Duration::from_secs(30),
-            cache: Arc::new(std::sync::Mutex::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(100).unwrap(),
-            ))),
-        }
-    }
-
-    /// Create a search service with full dependency injection and database integration
-    pub fn with_dependencies(
+    /// Create a search service with full dependency injection and database integration.
+    pub fn new(
         embedding_service: Arc<dyn EmbeddingService>,
         vector_storage: Arc<dyn VectorStorage>,
         db_client: Arc<DataClient>,
@@ -71,25 +38,7 @@ impl SearchService {
         Self {
             embedding_service,
             vector_storage,
-            db_client: Some(db_client),
-            max_retries: 3,
-            retry_delay: Duration::from_millis(100),
-            search_timeout: Duration::from_secs(30),
-            cache: Arc::new(std::sync::Mutex::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(100).unwrap(),
-            ))),
-        }
-    }
-
-    /// Create a search service without database integration (for dev/testing)
-    pub fn without_database(
-        embedding_service: Arc<dyn EmbeddingService>,
-        vector_storage: Arc<dyn VectorStorage>,
-    ) -> Self {
-        Self {
-            embedding_service,
-            vector_storage,
-            db_client: None,
+            db_client,
             max_retries: 3,
             retry_delay: Duration::from_millis(100),
             search_timeout: Duration::from_secs(30),
@@ -103,7 +52,7 @@ impl SearchService {
     pub fn with_retry_config(
         embedding_service: Arc<dyn EmbeddingService>,
         vector_storage: Arc<dyn VectorStorage>,
-        db_client: Option<Arc<DataClient>>,
+        db_client: Arc<DataClient>,
         max_retries: usize,
         retry_delay: Duration,
         search_timeout: Duration,
@@ -130,11 +79,7 @@ impl SearchService {
     ) -> SearchResult<Vec<SearchMatch>> {
         tracing::Span::current().record("correlation_id", correlation_id.to_string());
 
-        // If no database client, return results without metadata enrichment
-        let db_client = match &self.db_client {
-            Some(client) => client,
-            None => return Ok(results),
-        };
+        let db_client = &self.db_client;
 
         // Extract unique file paths from results
         let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();

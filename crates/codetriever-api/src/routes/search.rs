@@ -237,7 +237,7 @@ impl LazySearchService {
             self.service = Some(create_configured_search_service().await);
         }
         // Safe: we just ensured initialization above
-        Arc::clone(self.service.as_ref().unwrap())
+        Arc::clone(self.service.as_ref().expect("Service must be initialized"))
     }
 }
 
@@ -275,22 +275,13 @@ async fn create_configured_search_service() -> Arc<dyn SearchProvider> {
         }
     };
 
-    // Set up database client
-    let pools = match PoolManager::new(&config.database, PoolConfig::default()).await {
-        Ok(pools) => pools,
-        Err(e) => {
-            tracing::error!("Failed to create pool manager for search: {e}");
-            // Return service without database - will work but without metadata enrichment
-            return Arc::new(SearchService::without_database(
-                embedding_service,
-                vector_storage,
-            ));
-        }
-    };
+    // Set up database client with retries (DB might not be ready yet)
+    let pools = PoolManager::new(&config.database, PoolConfig::default())
+        .await
+        .expect("Database connection required for SearchService - ensure PostgreSQL is running");
     let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
 
-    // Create search service with all dependencies
-    Arc::new(SearchService::with_dependencies(
+    Arc::new(SearchService::new(
         embedding_service,
         vector_storage,
         db_client,
@@ -320,7 +311,7 @@ impl ServiceFactory {
 
     /// Create the search service with all dependencies
     pub fn create_search_service(&self) -> Arc<dyn SearchProvider> {
-        Arc::new(SearchService::with_dependencies(
+        Arc::new(SearchService::new(
             Arc::clone(&self.embedding_service),
             Arc::clone(&self.vector_storage),
             Arc::clone(&self.db_client),

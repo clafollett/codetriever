@@ -85,13 +85,14 @@ impl LazyIndexer {
         Self { indexer: None }
     }
 
+    #[allow(clippy::expect_used)] // Safe: we guarantee initialization above
     async fn get_or_init(&mut self) -> &mut Indexer {
         if self.indexer.is_none() {
             tracing::info!("Initializing indexer with storage on first use");
             self.indexer = Some(create_configured_indexer().await);
         }
         // Safe: we just ensured initialization above
-        self.indexer.as_mut().unwrap()
+        self.indexer.as_mut().expect("Indexer must be initialized")
     }
 }
 
