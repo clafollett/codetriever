@@ -93,56 +93,139 @@ def fire_completion_tts():
         return False
 
 
+def find_active_transcript(cwd):
+    """Find the most recently modified transcript file for this session.
+
+    Workaround for Claude Code bug where transcript_path points to old file.
+    """
+    from pathlib import Path
+
+    # Build project path from cwd
+    project_name = cwd.replace('/', '-')
+    projects_dir = Path.home() / '.claude' / 'projects' / project_name
+
+    if not projects_dir.exists():
+        return None
+
+    # Find all .jsonl files in the project directory
+    jsonl_files = list(projects_dir.glob('*.jsonl'))
+
+    if not jsonl_files:
+        return None
+
+    # Sort by modification time, newest first
+    jsonl_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+
+    # Return the most recently modified file
+    return str(jsonl_files[0])
+
 def fire_response_tts(input_data):
     """Fire response TTS if enabled."""
     try:
         if not is_response_tts_enabled():
+            print("🔇 DEBUG: Response TTS disabled in config", file=sys.stderr)
             return False
-            
-        transcript_path = input_data.get('transcript_path')
+
+        # WORKAROUND: Claude Code provides wrong transcript_path after updates
+        # Find the actual active transcript by looking for most recent file
+        cwd = input_data.get('cwd')
+
+        if not cwd:
+            print("🔇 DEBUG: Missing cwd", file=sys.stderr)
+            return False
+
+        transcript_path = find_active_transcript(cwd)
+
         if not transcript_path or not os.path.exists(transcript_path):
+            print(f"🔇 DEBUG: Could not find active transcript", file=sys.stderr)
             return False
+
+        print(f"✅ DEBUG: Using transcript {transcript_path}", file=sys.stderr)
         
-        # Get the latest assistant response from transcript
+        # Get the latest assistant response from transcript (read backwards for efficiency)
         latest_response = None
         try:
-            with open(transcript_path, 'r') as f:
-                for line in f:
-                    if line.strip():
+            # Read file in reverse to find most recent assistant message quickly
+            with open(transcript_path, 'rb') as f:
+                # Seek to end and read backwards
+                f.seek(0, os.SEEK_END)
+                position = f.tell()
+                lines = []
+                buffer = b''
+
+                # Read backwards until we find an assistant message or hit start of file
+                while position > 0 and latest_response is None:
+                    # Read chunk backwards (up to 8KB at a time)
+                    chunk_size = min(8192, position)
+                    position -= chunk_size
+                    f.seek(position)
+                    chunk = f.read(chunk_size)
+                    buffer = chunk + buffer
+
+                    # Split into lines and process from end
+                    lines = buffer.split(b'\n')
+                    buffer = lines[0]  # Keep incomplete line for next iteration
+
+                    # Process complete lines in reverse
+                    for line in reversed(lines[1:]):
+                        if not line.strip():
+                            continue
                         try:
                             data = json.loads(line.strip())
-                            # Handle nested message structure
                             msg = data.get('message', {})
                             if msg.get('role') == 'assistant' and msg.get('content'):
                                 content = msg['content']
                                 # Handle both string content and array of content blocks
                                 if isinstance(content, str):
                                     latest_response = content
+                                    break
                                 elif isinstance(content, list) and content:
                                     # Extract text from content blocks
                                     for block in content:
                                         if isinstance(block, dict) and block.get('type') == 'text':
                                             latest_response = block.get('text', '')
                                             break
-                        except json.JSONDecodeError:
+                                    if latest_response:
+                                        break
+                        except (json.JSONDecodeError, UnicodeDecodeError):
                             continue
+
+                    if position == 0 and buffer and not latest_response:
+                        # Handle first line if we reached start of file
+                        try:
+                            data = json.loads(buffer.strip())
+                            msg = data.get('message', {})
+                            if msg.get('role') == 'assistant' and msg.get('content'):
+                                content = msg['content']
+                                if isinstance(content, str):
+                                    latest_response = content
+                                elif isinstance(content, list) and content:
+                                    for block in content:
+                                        if isinstance(block, dict) and block.get('type') == 'text':
+                                            latest_response = block.get('text', '')
+                                            break
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            pass
         except Exception:
             return False
         
         if not latest_response:
             return False
-        
+
+        # DEBUG: Log what we're about to speak
+        print(f"🔊 DEBUG TTS: Speaking first 100 chars: {latest_response[:100]!r}", file=sys.stderr)
+
         # Get response TTS script using TTS_DIR constant
         tts_script = TTS_DIR / "response.py"
-        
+
         if not tts_script.exists():
             return False
-        
+
         # Fire TTS in background - don't wait
         subprocess.Popen([
             "uv", "run", str(tts_script), latest_response
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
+
         return True
         
     except Exception:
