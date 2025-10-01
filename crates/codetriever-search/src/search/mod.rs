@@ -21,6 +21,9 @@ pub enum SearchError {
     #[error("Database timeout during search (correlation: {correlation_id})")]
     DatabaseTimeout { correlation_id: CorrelationId },
 
+    #[error("Database connection failed during initialization: {message}")]
+    DatabaseConnectionFailed { message: String },
+
     #[error(
         "Search timeout after {timeout_ms}ms for query '{query}' (correlation: {correlation_id})"
     )]

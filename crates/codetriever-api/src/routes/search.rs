@@ -39,7 +39,7 @@ use axum::{
     routing::post,
 };
 use codetriever_common::CorrelationId;
-use codetriever_search::{SearchProvider, SearchService};
+use codetriever_search::{SearchError, SearchProvider, SearchService};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -230,19 +230,21 @@ impl LazySearchService {
         Self { service: None }
     }
 
-    #[allow(clippy::expect_used)] // Safe: we guarantee initialization
-    async fn get_or_init(&mut self) -> Arc<dyn SearchProvider> {
+    #[allow(clippy::expect_used)] // Safe: we guarantee initialization above
+    async fn get_or_init(&mut self) -> Result<Arc<dyn SearchProvider>, SearchError> {
         if self.service.is_none() {
             tracing::info!("Initializing search service with Qdrant storage on first use");
-            self.service = Some(create_configured_search_service().await);
+            self.service = Some(create_configured_search_service().await?);
         }
         // Safe: we just ensured initialization above
-        Arc::clone(self.service.as_ref().expect("Service must be initialized"))
+        Ok(Arc::clone(
+            self.service.as_ref().expect("Service must be initialized"),
+        ))
     }
 }
 
 /// Create a properly configured search service with real Qdrant storage
-async fn create_configured_search_service() -> Arc<dyn SearchProvider> {
+async fn create_configured_search_service() -> Result<Arc<dyn SearchProvider>, SearchError> {
     use codetriever_config::{ApplicationConfig, Profile};
     use codetriever_meta_data::{PoolConfig, PoolManager};
     use codetriever_vector_data::QdrantStorage;
@@ -275,17 +277,19 @@ async fn create_configured_search_service() -> Arc<dyn SearchProvider> {
         }
     };
 
-    // Set up database client with retries (DB might not be ready yet)
+    // Set up database client - REQUIRED for SearchService to function
     let pools = PoolManager::new(&config.database, PoolConfig::default())
         .await
-        .expect("Database connection required for SearchService - ensure PostgreSQL is running");
+        .map_err(|e| SearchError::DatabaseConnectionFailed {
+            message: format!("Failed to connect to database: {e}"),
+        })?;
     let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
 
-    Arc::new(SearchService::new(
+    Ok(Arc::new(SearchService::new(
         embedding_service,
         vector_storage,
         db_client,
-    ))
+    )))
 }
 
 /// Service factory for proper dependency injection
@@ -428,8 +432,19 @@ pub async fn lazy_search_handler(
     Json(req): Json<SearchRequest>,
 ) -> ApiResult<Json<SearchResponse>> {
     // Get or initialize the search service
+    let correlation_id = context
+        .as_ref()
+        .map_or_else(CorrelationId::new, |ctx| ctx.correlation_id.clone());
+
     let mut service_guard = search_service.lock().await;
-    let service = service_guard.get_or_init().await;
+    let service = service_guard.get_or_init().await.map_err(|e| {
+        // Database connection failure during initialization is a service unavailability issue
+        tracing::error!(correlation_id = %correlation_id, error = %e, "Failed to initialize search service");
+        ApiError::SearchServiceUnavailable {
+            correlation_id: correlation_id.clone(),
+            timeout_duration: Duration::from_secs(30),
+        }
+    })?;
     drop(service_guard); // Release lock before doing the actual search
 
     // Delegate to the regular search handler logic
