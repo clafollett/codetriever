@@ -18,10 +18,18 @@
 ## GitHub Issue Workflow (Stay Focused & Organized)
 
 ### Starting New Work
-1. **Pick an issue** from GitHub (prioritized by labels)
-2. **Create feature branch**: `git checkout -b feature/issue-N-short-name`
+1. **Pick an issue**: `just issues` (shows high-priority)
+2. **Start work**: `just start-issue N` (auto-creates branch from issue title)
 3. **Update TodoWrite**: Track the issue as active task
-4. **Reference in commits**: Always include `Ref #N` in commit messages
+4. **Reference in commits**: Template auto-includes `Ref #N`
+
+Example:
+```bash
+just issues              # Show high-priority issues
+just start-issue 28      # Creates: feature/issue-28-status-endpoint
+# Code, test, commit (small commits with Ref #28)
+just finish-issue 28     # Squash merge to main, runs checks first
+```
 
 ### Branch Naming Convention
 ```bash

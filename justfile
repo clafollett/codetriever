@@ -406,3 +406,83 @@ clean-test-data:
         python3 -c "import sys, json; data = json.load(sys.stdin); [print(c['name']) for c in data.get('result', {}).get('collections', []) if c['name'].startswith('test_')]" | \
         xargs -I {} curl -X DELETE -H "api-key: ${QDRANT_API_KEY}" "http://localhost:6334/collections/{}" 2>/dev/null || true
     @echo "✅ Test data cleaned"
+# ========================
+# GitHub Issue Workflow
+# ========================
+
+# Start work on a GitHub issue (creates feature branch + updates todo)
+start-issue ISSUE_NUMBER DESCRIPTION="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BRANCH="feature/issue-{{ISSUE_NUMBER}}-{{DESCRIPTION}}"
+    if [ -z "{{DESCRIPTION}}" ]; then
+        # Fetch issue title from GitHub and slugify it
+        TITLE=$(gh issue view {{ISSUE_NUMBER}} --json title -q .title | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-40)
+        BRANCH="feature/issue-{{ISSUE_NUMBER}}-${TITLE}"
+    fi
+    echo "🚀 Starting issue #{{ISSUE_NUMBER}}: $(gh issue view {{ISSUE_NUMBER}} --json title -q .title)"
+    git checkout -b "$BRANCH"
+    echo "✅ Branch: $BRANCH"
+    echo "💡 Commit with: 'Ref #{{ISSUE_NUMBER}}' | Finish: just finish-issue {{ISSUE_NUMBER}}"
+
+# Finish work on an issue (squash merge to main)
+finish-issue ISSUE_NUMBER:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CURRENT_BRANCH=$(git branch --show-current)
+    if [[ ! "$CURRENT_BRANCH" =~ issue-{{ISSUE_NUMBER}} ]]; then
+        echo "⚠️  Warning: Current branch doesn't match issue #{{ISSUE_NUMBER}}"
+        echo "   Current: $CURRENT_BRANCH"
+        read -p "Continue anyway? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+    echo "🔍 Running final checks..."
+    just check
+    echo "🎯 Squash merging to main..."
+    git checkout main
+    git pull --rebase
+    git merge --squash "$CURRENT_BRANCH"
+    echo ""
+    echo "✅ Changes staged for commit. Commit message will reference #{{ISSUE_NUMBER}}"
+    echo ""
+    echo "💡 Next: Review staged changes, then commit and push"
+
+# Show current issue (from branch name)
+current-issue:
+    #!/usr/bin/env bash
+    BRANCH=$(git branch --show-current)
+    if [[ "$BRANCH" =~ issue-([0-9]+) ]]; then
+        ISSUE="${BASH_REMATCH[1]}"
+        echo "📋 Currently working on issue #$ISSUE"
+        echo ""
+        gh issue view "$ISSUE"
+    else
+        echo "ℹ️  Not on an issue branch (current: $BRANCH)"
+    fi
+
+# List issues by label (defaults to all open)
+issues LABEL="":
+    #!/usr/bin/env bash
+    if [ -z "{{LABEL}}" ]; then
+        echo "📋 All Open Issues:"
+        gh issue list --limit 30
+    else
+        echo "🎯 Issues labeled '{{LABEL}}':"
+        gh issue list --label "{{LABEL}}" --limit 20
+    fi
+
+# List all open issues by priority
+issues-all:
+    @echo "📊 All Open Issues by Priority:"
+    @echo ""
+    @echo "🔥 HIGH PRIORITY:"
+    @gh issue list --label "high-priority" --limit 20
+    @echo ""
+    @echo "📌 MEDIUM PRIORITY:"
+    @gh issue list --label "medium-priority" --limit 20
+    @echo ""
+    @echo "💭 DISCUSSION/FUTURE:"
+    @gh issue list --label "discussion" --limit 20
