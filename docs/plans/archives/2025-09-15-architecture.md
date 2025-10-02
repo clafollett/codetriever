@@ -28,8 +28,8 @@ FunctionDef {
 ```
 FILE CHANGE → PARSE → CHUNK → EMBED → STORE → SEARCH
      ↓          ↓        ↓       ↓       ↓        ↓
-  fsnotify  Tree-sitter  Smart  Vector  SQLite  Cosine
-             parsing    splits  embed    -vec   similarity
+  fsnotify  Tree-sitter  Smart  Jina   PostgreSQL  Cosine
+             parsing    splits  BERT   + Qdrant   similarity
 ```
 
 ### 3. Embeddings = Semantic Fingerprints
@@ -148,8 +148,10 @@ on_file_change(path) {
 - Configurable chunk size (50-200 tokens typical)
 
 ### Embedder
-- Local: Candle with CodeBERT
-- Remote: OpenAI text-embedding-ada-002
+- **Jina BERT v2:** jina-embeddings-v2-base-code model
+- **Candle Framework:** Automatic Metal (Mac) or CPU device selection
+- **Metal Acceleration:** ~2000 embeddings/sec on Mac with GPU
+- **CPU Fallback:** ~1000 embeddings/sec in Docker (no Metal access)
 - Caches embeddings for unchanged code
 
 ### Vector Store (Qdrant)

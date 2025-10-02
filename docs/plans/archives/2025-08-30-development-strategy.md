@@ -1,3 +1,10 @@
+<!-- IMPLEMENTATION STATUS: ✅ IMPLEMENTED via Candle device detection
+- Metal acceleration: Working via candle-core automatic device selection
+- Dual-mode approach: Implicit (Candle auto-detects Metal on Mac, falls back to CPU in Docker)
+- Current limitation: Docker on Mac cannot access Metal GPU (Linux VM barrier)
+- Reality: Simplified from plan—no separate configs, Candle handles it automatically
+-->
+
 # Codetriever Development Strategy
 
 **Native Mac development for speed, Docker deployment for portability**
