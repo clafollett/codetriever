@@ -536,3 +536,66 @@ mod tests {
         assert_eq!(remaining.len(), 0);
     }
 }
+
+/// Mock `DataClient` for API testing
+#[derive(Clone)]
+pub struct MockDataClient {
+    repository: MockFileRepository,
+}
+
+impl MockDataClient {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            repository: MockFileRepository::new(),
+        }
+    }
+
+    /// Count project branches in mock data
+    ///
+    /// # Errors
+    ///
+    /// Never returns error for mock implementation
+    ///
+    /// # Panics
+    ///
+    /// Panics if mutex is poisoned (test code only)
+    pub fn count_project_branches(&self) -> DatabaseResult<i64> {
+        #[allow(clippy::cast_possible_wrap)]
+        Ok(self.repository.project_branches.lock().unwrap().len() as i64)
+    }
+
+    /// Count indexed files in mock data
+    ///
+    /// # Errors
+    ///
+    /// Never returns error for mock implementation
+    ///
+    /// # Panics
+    ///
+    /// Panics if mutex is poisoned (test code only)
+    pub fn count_indexed_files(&self) -> DatabaseResult<i64> {
+        #[allow(clippy::cast_possible_wrap)]
+        Ok(self.repository.indexed_files.lock().unwrap().len() as i64)
+    }
+
+    /// Count chunks in mock data
+    ///
+    /// # Errors
+    ///
+    /// Never returns error for mock implementation
+    ///
+    /// # Panics
+    ///
+    /// Panics if mutex is poisoned (test code only)
+    pub fn count_chunks(&self) -> DatabaseResult<i64> {
+        #[allow(clippy::cast_possible_wrap)]
+        Ok(self.repository.chunks.lock().unwrap().len() as i64)
+    }
+}
+
+impl Default for MockDataClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}

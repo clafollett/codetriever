@@ -15,6 +15,7 @@ pub mod repository;
 pub mod traits;
 
 pub mod mock;
+pub use mock::MockDataClient;
 
 // Public exports
 pub use chunk_id::{generate_chunk_id, hash_content};

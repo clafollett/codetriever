@@ -2,6 +2,7 @@ pub mod health;
 pub mod index;
 pub mod response;
 pub mod search;
+pub mod status;
 
 pub use response::{HasStatus, ResponseStatus};
 
@@ -12,6 +13,7 @@ pub fn create_router() -> Router {
         .merge(health::routes())
         .merge(index::routes())
         .merge(search::routes())
+        .merge(status::routes())
         .merge(crate::openapi::routes()) // OpenAPI JSON endpoints
         .merge(crate::openapi::swagger_ui()) // Swagger UI
         // Add correlation ID middleware to all routes

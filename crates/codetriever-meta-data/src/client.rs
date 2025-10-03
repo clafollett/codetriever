@@ -42,4 +42,31 @@ impl DataClient {
     pub const fn pools(&self) -> &PoolManager {
         &self.pools
     }
+
+    /// Count total project branches
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn count_project_branches(&self) -> Result<i64, crate::DatabaseError> {
+        self.repository.count_project_branches().await
+    }
+
+    /// Count total indexed files
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn count_indexed_files(&self) -> Result<i64, crate::DatabaseError> {
+        self.repository.count_indexed_files().await
+    }
+
+    /// Count total chunks
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn count_chunks(&self) -> Result<i64, crate::DatabaseError> {
+        self.repository.count_chunks().await
+    }
 }

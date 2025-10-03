@@ -10,6 +10,8 @@ use utoipa_swagger_ui::SwaggerUi;
     paths(
         crate::routes::search::search_handler,
         crate::routes::index::index_handler,
+        // Note: status endpoint path excluded from OpenAPI due to impl Trait limitation
+        // Schemas are still documented for manual API documentation
     ),
     components(
         schemas(
@@ -28,6 +30,12 @@ use utoipa_swagger_ui::SwaggerUi;
             crate::routes::index::IndexResponse,
             crate::routes::index::FileContent,
 
+            // Status schemas
+            crate::routes::status::StatusResponse,
+            crate::routes::status::ServerInfo,
+            crate::routes::status::ServiceHealth,
+            crate::routes::status::IndexInfo,
+
             // Common schemas
             crate::routes::response::ResponseStatus,
         )
@@ -35,6 +43,7 @@ use utoipa_swagger_ui::SwaggerUi;
     tags(
         (name = "search", description = "Code search operations"),
         (name = "index", description = "Code indexing operations"),
+        (name = "status", description = "System health and monitoring"),
     ),
     info(
         title = "Codetriever API",

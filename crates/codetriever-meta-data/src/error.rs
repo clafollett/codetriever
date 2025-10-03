@@ -111,6 +111,11 @@ pub enum DatabaseOperation {
         branch: String,
     },
 
+    /// Statistics operations
+    CountProjectBranches,
+    CountIndexedFiles,
+    CountChunks,
+
     /// Generic operations
     Query {
         description: String,
@@ -223,6 +228,10 @@ impl fmt::Display for DatabaseOperation {
                 f,
                 "check_running_jobs(repo={repository_id}, branch={branch})"
             ),
+
+            Self::CountProjectBranches => write!(f, "count_project_branches()"),
+            Self::CountIndexedFiles => write!(f, "count_indexed_files()"),
+            Self::CountChunks => write!(f, "count_chunks()"),
 
             Self::Query { description } => write!(f, "query({description})"),
             Self::Transaction { description } => write!(f, "transaction({description})"),

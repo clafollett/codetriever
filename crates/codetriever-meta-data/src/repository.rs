@@ -38,6 +38,63 @@ impl DbFileRepository {
         let pools = PoolManager::from_env().await?;
         Ok(Self::new(pools))
     }
+
+    /// Count total project branches across all repositories
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn count_project_branches(&self) -> DatabaseResult<i64> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::CountProjectBranches;
+
+        let row = sqlx::query("SELECT COUNT(*) as count FROM project_branches")
+            .fetch_one(pool)
+            .await
+            .map_db_err(operation, correlation_id)?;
+
+        Ok(row.get("count"))
+    }
+
+    /// Count total indexed files across all repositories and branches
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn count_indexed_files(&self) -> DatabaseResult<i64> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::CountIndexedFiles;
+
+        let row = sqlx::query("SELECT COUNT(*) as count FROM indexed_files")
+            .fetch_one(pool)
+            .await
+            .map_db_err(operation, correlation_id)?;
+
+        Ok(row.get("count"))
+    }
+
+    /// Count total chunks across all repositories and branches
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn count_chunks(&self) -> DatabaseResult<i64> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::CountChunks;
+
+        let row = sqlx::query("SELECT COUNT(*) as count FROM chunk_metadata")
+            .fetch_one(pool)
+            .await
+            .map_db_err(operation, correlation_id)?;
+
+        Ok(row.get("count"))
+    }
 }
 
 #[async_trait]
