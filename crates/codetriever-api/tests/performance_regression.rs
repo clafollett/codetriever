@@ -5,6 +5,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod test_utils;
+
 use axum::{body::Body, http::Request};
 use codetriever_api::routes::create_router;
 use serde_json::json;
@@ -24,8 +26,8 @@ struct PerformanceThresholds {
 }
 
 #[tokio::test]
-async fn test_search_performance_baseline() {
-    let app = create_router();
+async fn test_search_performance_baseline() -> test_utils::TestResult {
+    let app = create_router(test_utils::app_state().await?.clone());
 
     // Index some test content first
     let index_request = json!({
@@ -62,7 +64,7 @@ async fn test_search_performance_baseline() {
     );
 
     // Now test search performance
-    let app = create_router();
+    let app = create_router(test_utils::app_state().await?.clone());
     let search_request = json!({
         "query": "authentication logic",
         "limit": 10
@@ -92,11 +94,12 @@ async fn test_search_performance_baseline() {
         index_duration.as_millis(),
         search_duration.as_millis()
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_small_search_performance() {
-    let app = create_router();
+async fn test_small_search_performance() -> test_utils::TestResult {
+    let app = create_router(test_utils::app_state().await?.clone());
 
     // Test with small, targeted search that should be very fast
     let search_request = json!({
@@ -125,11 +128,12 @@ async fn test_small_search_performance() {
         duration.as_millis(),
         PERFORMANCE_THRESHOLDS.small_search
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_repeated_search_caching_performance() {
-    let app = create_router();
+async fn test_repeated_search_caching_performance() -> test_utils::TestResult {
+    let app = create_router(test_utils::app_state().await?.clone());
 
     let search_request = json!({
         "query": "function definition",
@@ -151,7 +155,7 @@ async fn test_repeated_search_caching_performance() {
     assert!(response.status().is_success());
 
     // Second search (should potentially be faster due to caching)
-    let app = create_router();
+    let app = create_router(test_utils::app_state().await?.clone());
     let request = Request::builder()
         .method("POST")
         .uri("/search")
@@ -172,11 +176,12 @@ async fn test_repeated_search_caching_performance() {
     );
 
     // Note: Due to fresh router instances, this test mainly validates consistent performance
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_index_large_batch_performance() {
-    let app = create_router();
+async fn test_index_large_batch_performance() -> test_utils::TestResult {
+    let app = create_router(test_utils::app_state().await?.clone());
 
     // Create a batch of multiple files to test indexing performance
     let mut files = Vec::new();
@@ -232,4 +237,5 @@ async fn test_index_large_batch_performance() {
         "✅ Batch indexing performance: {}ms for 20 files",
         duration.as_millis()
     );
+    Ok(())
 }

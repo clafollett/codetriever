@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use axum::Json;
+use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use std::time::SystemTime;
@@ -7,6 +7,8 @@ use utoipa::ToSchema;
 
 use codetriever_meta_data::{DataClient, DatabaseResult};
 use codetriever_vector_data::VectorStorage;
+
+use crate::state::AppState;
 
 /// Server start time (initialized once on first access)
 static SERVER_START_TIME: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
@@ -150,7 +152,7 @@ where
     }
 }
 
-async fn check_postgres_health<C: DatabaseClient>(client: &C) -> String {
+async fn check_postgres_health<C: DatabaseClient + ?Sized>(client: &C) -> String {
     // Simple health check - try to count project branches
     match client.count_project_branches().await {
         Ok(_) => "connected".to_string(),
@@ -158,7 +160,7 @@ async fn check_postgres_health<C: DatabaseClient>(client: &C) -> String {
     }
 }
 
-async fn check_qdrant_health<T: VectorStorage>(storage: &T) -> String {
+async fn check_qdrant_health<T: VectorStorage + ?Sized>(storage: &T) -> String {
     // Check if collection exists
     match storage.collection_exists().await {
         Ok(true) => "connected".to_string(),
@@ -167,7 +169,7 @@ async fn check_qdrant_health<T: VectorStorage>(storage: &T) -> String {
     }
 }
 
-async fn get_index_stats<C: DatabaseClient>(client: &C) -> (i64, i64) {
+async fn get_index_stats<C: DatabaseClient + ?Sized>(client: &C) -> (i64, i64) {
     let files = client.count_indexed_files().await.unwrap_or(0);
     let chunks = client.count_chunks().await.unwrap_or(0);
     (files, chunks)
@@ -175,46 +177,14 @@ async fn get_index_stats<C: DatabaseClient>(client: &C) -> (i64, i64) {
 
 /// Axum handler for GET /status endpoint
 ///
-/// Creates clients on-demand and returns status
-pub async fn status_handler() -> Json<StatusResponse> {
-    use codetriever_config::{ApplicationConfig, Profile};
-    use codetriever_meta_data::{DataClient, PoolConfig, PoolManager};
-    use codetriever_vector_data::QdrantStorage;
+/// Uses shared application state to avoid creating pools on every request
+pub async fn status_handler(State(state): State<AppState>) -> Json<StatusResponse> {
+    // Check PostgreSQL health and get stats
+    let postgres_status = check_postgres_health(state.db_client.as_ref()).await;
+    let (total_files, total_chunks) = get_index_stats(state.db_client.as_ref()).await;
 
-    // Get config
-    let config = ApplicationConfig::with_profile(Profile::Development);
-
-    // Create PostgreSQL client
-    let pools = PoolManager::new(&config.database, PoolConfig::default())
-        .await
-        .ok();
-    let db_client = pools.map(DataClient::new);
-
-    // Collect PostgreSQL stats early and drop client
-    let (postgres_status, total_files, total_chunks) = if let Some(ref db) = db_client {
-        let health = check_postgres_health(db).await;
-        let (files, chunks) = get_index_stats(db).await;
-        (health, files, chunks)
-    } else {
-        ("disconnected".to_string(), 0, 0)
-    };
-    drop(db_client); // Early drop to reduce resource contention
-
-    // Create Qdrant client
-    let vector_storage = QdrantStorage::new(
-        config.vector_storage.url.clone(),
-        config.vector_storage.collection_name.clone(),
-    )
-    .await
-    .ok();
-
-    // Check Qdrant health and drop immediately
-    let qdrant_status = if let Some(ref qdrant) = vector_storage {
-        check_qdrant_health(qdrant).await
-    } else {
-        "disconnected".to_string()
-    };
-    drop(vector_storage); // Early drop
+    // Check Qdrant health
+    let qdrant_status = check_qdrant_health(state.vector_storage.as_ref()).await;
 
     // Calculate server uptime
     let uptime = SERVER_START_TIME
@@ -238,10 +208,18 @@ pub async fn status_handler() -> Json<StatusResponse> {
     })
 }
 
-/// Create status routes
-pub fn routes() -> axum::Router {
+/// Create status routes with application state
+///
+/// # Arguments
+/// * `state` - Shared application state with database and vector storage clients
+///
+/// # Returns
+/// A stateless router with state baked in (ready to merge with other routers)
+pub fn routes(state: AppState) -> axum::Router {
     use axum::routing::get;
-    axum::Router::new().route("/api/status", get(status_handler))
+    axum::Router::new()
+        .route("/api/status", get(status_handler))
+        .with_state(state)
 }
 
 #[cfg(test)]
@@ -306,5 +284,22 @@ mod tests {
 
         assert!(response.server.uptime_seconds >= 5);
         assert!(response.server.uptime_seconds < 10); // Should be close to 5
+    }
+
+    #[tokio::test]
+    async fn test_status_handler_with_app_state() {
+        use axum::extract::State;
+
+        // Use the test helper to create mock state
+        let state = crate::test_utils::mock_app_state();
+
+        // Call handler with state
+        let Json(response) = status_handler(State(state)).await;
+
+        // Verify response structure
+        assert_eq!(response.server.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(response.services.postgres, "connected");
+        assert_eq!(response.index.total_files, 0);
+        assert_eq!(response.index.total_chunks, 0);
     }
 }

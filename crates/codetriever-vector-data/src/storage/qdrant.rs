@@ -192,10 +192,19 @@ impl VectorStorage for QdrantStorage {
 
         match self.client.create_collection(request).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(VectorDataError::Storage(format!(
-                "Failed to create collection '{}': {e}",
-                self.collection_name
-            ))),
+            Err(e) => {
+                // Handle race condition: collection created by another process/thread
+                let err_msg = e.to_string();
+                if err_msg.contains("already exists") {
+                    // Collection exists - this is fine (idempotent operation)
+                    Ok(())
+                } else {
+                    Err(VectorDataError::Storage(format!(
+                        "Failed to create collection '{}': {e}",
+                        self.collection_name
+                    )))
+                }
+            }
         }
     }
 

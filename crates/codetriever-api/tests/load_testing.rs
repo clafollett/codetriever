@@ -7,6 +7,8 @@
 // cast_precision_loss: Test metrics (25-50 requests) will never exceed f64 precision
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::cast_precision_loss)]
 
+mod test_utils;
+
 use axum::{body::Body, http::Request};
 use codetriever_api::routes::create_router;
 use serde_json::json;
@@ -15,9 +17,9 @@ use tokio::time::sleep;
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn test_concurrent_search_load() {
+async fn test_concurrent_search_load() -> test_utils::TestResult {
     // Create SINGLE router with ONE embedding model (proper load testing)
-    let app = create_router();
+    let app = create_router(test_utils::app_state().await?.clone());
 
     // Index some test data first
     let index_request = json!({
@@ -144,12 +146,14 @@ async fn test_concurrent_search_load() {
     println!("   Average response: {}ms", avg_duration.as_millis());
     println!("   Min response: {}ms", min_duration.as_millis());
     println!("   Max response: {}ms", max_duration.as_millis());
+
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_sustained_load_over_time() {
+async fn test_sustained_load_over_time() -> test_utils::TestResult {
     // Create SINGLE router for entire test
-    let app = create_router();
+    let app = create_router(test_utils::app_state().await?.clone());
 
     // Index test data
     let index_request = json!({
@@ -243,12 +247,14 @@ async fn test_sustained_load_over_time() {
     );
     println!("   Average response time: {}ms", avg_duration.as_millis());
     println!("   Max response time: {}ms", max_duration.as_millis());
+
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_memory_usage_under_load() {
+async fn test_memory_usage_under_load() -> test_utils::TestResult {
     // Create SINGLE router - test that service doesn't leak memory under load
-    let app = create_router();
+    let app = create_router(test_utils::app_state().await?.clone());
 
     // This test monitors that memory usage doesn't grow unbounded under load
     // Perform many operations to check for memory leaks
@@ -291,4 +297,6 @@ async fn test_memory_usage_under_load() {
 
     // If we reach here without OOM, memory usage is reasonable
     println!("✅ Memory usage test completed - no unbounded growth detected");
+
+    Ok(())
 }

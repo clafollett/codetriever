@@ -5,6 +5,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod test_utils;
+
 use axum::{body::Body, http::Request};
 use codetriever_api::{openapi::ApiDoc, routes::create_router};
 use serde_json::Value;
@@ -12,8 +14,8 @@ use tower::ServiceExt;
 use utoipa::OpenApi;
 
 #[tokio::test]
-async fn test_openapi_json_endpoint_accessible() {
-    let app = create_router();
+async fn test_openapi_json_endpoint_accessible() -> test_utils::TestResult {
+    let app = create_router(test_utils::app_state().await?.clone());
 
     // Test /openapi.json endpoint
     let request = Request::builder()
@@ -25,7 +27,7 @@ async fn test_openapi_json_endpoint_accessible() {
     assert_eq!(response.status(), 200);
 
     // Test /api-docs/openapi.json endpoint
-    let app = create_router();
+    let app = create_router(test_utils::app_state().await?.clone());
     let request = Request::builder()
         .uri("/api-docs/openapi.json")
         .body(Body::empty())
@@ -33,10 +35,11 @@ async fn test_openapi_json_endpoint_accessible() {
 
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), 200);
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_openapi_schema_structure() {
+async fn test_openapi_schema_structure() -> test_utils::TestResult {
     // Get the generated OpenAPI spec
     let openapi_spec = ApiDoc::openapi();
 
@@ -62,10 +65,11 @@ async fn test_openapi_schema_structure() {
         schemas.contains_key("SearchResponse"),
         "Should have SearchResponse schema"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_search_response_matches_schema() {
+async fn test_search_response_matches_schema() -> test_utils::TestResult {
     // This is a framework for future schema validation
     // For now, just verify that we can generate and parse the schema
 
@@ -88,14 +92,15 @@ async fn test_search_response_matches_schema() {
     assert!(spec_json.get("paths").is_some_and(Value::is_object));
 
     println!("✅ OpenAPI schema is well-formed and serializable");
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_schema_consistency_with_actual_endpoints() {
+async fn test_schema_consistency_with_actual_endpoints() -> test_utils::TestResult {
     // Test that our live schema matches what we expect
     // This is where future validation against actual responses would go
 
-    let app = create_router();
+    let app = create_router(test_utils::app_state().await?.clone());
 
     // Test that we can get the schema from the live endpoint
     let request = Request::builder()
@@ -123,6 +128,7 @@ async fn test_schema_consistency_with_actual_endpoints() {
     );
 
     println!("✅ Live OpenAPI endpoint serves valid schema");
+    Ok(())
 }
 
 // TODO: Add actual response validation tests once APIs are stable
