@@ -26,8 +26,10 @@ struct PerformanceThresholds {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_search_performance_baseline() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Index some test content first
     let index_request = json!({
@@ -64,7 +66,8 @@ async fn test_search_performance_baseline() -> test_utils::TestResult {
     );
 
     // Now test search performance
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
     let search_request = json!({
         "query": "authentication logic",
         "limit": 10
@@ -98,8 +101,10 @@ async fn test_search_performance_baseline() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_small_search_performance() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test with small, targeted search that should be very fast
     let search_request = json!({
@@ -132,8 +137,10 @@ async fn test_small_search_performance() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_repeated_search_caching_performance() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     let search_request = json!({
         "query": "function definition",
@@ -155,7 +162,8 @@ async fn test_repeated_search_caching_performance() -> test_utils::TestResult {
     assert!(response.status().is_success());
 
     // Second search (should potentially be faster due to caching)
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
     let request = Request::builder()
         .method("POST")
         .uri("/search")
@@ -180,8 +188,10 @@ async fn test_repeated_search_caching_performance() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_index_large_batch_performance() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Create a batch of multiple files to test indexing performance
     let mut files = Vec::new();

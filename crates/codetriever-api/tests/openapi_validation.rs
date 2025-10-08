@@ -14,8 +14,10 @@ use tower::ServiceExt;
 use utoipa::OpenApi;
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_openapi_json_endpoint_accessible() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test /openapi.json endpoint
     let request = Request::builder()
@@ -27,7 +29,8 @@ async fn test_openapi_json_endpoint_accessible() -> test_utils::TestResult {
     assert_eq!(response.status(), 200);
 
     // Test /api-docs/openapi.json endpoint
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
     let request = Request::builder()
         .uri("/api-docs/openapi.json")
         .body(Body::empty())
@@ -39,6 +42,7 @@ async fn test_openapi_json_endpoint_accessible() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_openapi_schema_structure() -> test_utils::TestResult {
     // Get the generated OpenAPI spec
     let openapi_spec = ApiDoc::openapi();
@@ -69,6 +73,7 @@ async fn test_openapi_schema_structure() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_search_response_matches_schema() -> test_utils::TestResult {
     // This is a framework for future schema validation
     // For now, just verify that we can generate and parse the schema
@@ -96,11 +101,13 @@ async fn test_search_response_matches_schema() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_schema_consistency_with_actual_endpoints() -> test_utils::TestResult {
     // Test that our live schema matches what we expect
     // This is where future validation against actual responses would go
 
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test that we can get the schema from the live endpoint
     let request = Request::builder()

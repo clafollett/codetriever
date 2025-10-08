@@ -589,6 +589,12 @@ async fn search_handler_impl(
                     timeout_duration: Duration::from_secs(30),
                 });
             }
+            error!(
+                correlation_id = %correlation_id,
+                error = %search_error,
+                query = %query,
+                "Search failed with unexpected error"
+            );
             return Err(ApiError::InternalServerError { correlation_id });
         }
         Err(_timeout) => {

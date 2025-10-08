@@ -17,9 +17,11 @@ use tokio::time::sleep;
 use tower::ServiceExt;
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_concurrent_search_load() -> test_utils::TestResult {
     // Create SINGLE router with ONE embedding model (proper load testing)
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Index some test data first
     let index_request = json!({
@@ -151,9 +153,11 @@ async fn test_concurrent_search_load() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_sustained_load_over_time() -> test_utils::TestResult {
     // Create SINGLE router for entire test
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Index test data
     let index_request = json!({
@@ -252,9 +256,11 @@ async fn test_sustained_load_over_time() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_memory_usage_under_load() -> test_utils::TestResult {
     // Create SINGLE router - test that service doesn't leak memory under load
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // This test monitors that memory usage doesn't grow unbounded under load
     // Perform many operations to check for memory leaks

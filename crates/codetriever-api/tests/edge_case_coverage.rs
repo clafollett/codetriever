@@ -12,8 +12,10 @@ use serde_json::json;
 use tower::ServiceExt;
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_search_with_unicode_characters() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test Unicode in search query
     let unicode_query = json!({
@@ -31,18 +33,20 @@ async fn test_search_with_unicode_characters() -> test_utils::TestResult {
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
 
-    // Should handle Unicode gracefully (not crash)
-    // Accept any non-5xx response (edge case tests share state, so 503 possible)
+    // Should handle Unicode gracefully - accept success or client errors
     assert!(
-        !status.is_server_error() || status == 503,
-        "Unicode search crashed with status {status}: should not crash"
+        status.is_success() || status.is_client_error() || status == 503,
+        "Unicode search returned unexpected status: {status}"
     );
+
     Ok(())
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_search_with_very_long_query() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test with very long query (boundary condition)
     let long_query = "a".repeat(10000);
@@ -66,8 +70,10 @@ async fn test_search_with_very_long_query() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_search_with_empty_query() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test edge case: empty query
     let request_body = json!({
@@ -90,8 +96,10 @@ async fn test_search_with_empty_query() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_search_with_extreme_limit_values() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test with limit = 0
     let zero_limit = json!({
@@ -115,7 +123,8 @@ async fn test_search_with_extreme_limit_values() -> test_utils::TestResult {
     );
 
     // Test with very large limit
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
     let large_limit = json!({
         "query": "test",
         "limit": 999_999
@@ -139,8 +148,10 @@ async fn test_search_with_extreme_limit_values() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_index_with_special_characters_in_path() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test with special characters in file paths
     let request_body = json!({
@@ -176,8 +187,10 @@ async fn test_index_with_special_characters_in_path() -> test_utils::TestResult 
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_index_with_very_large_file_content() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test with large file content (boundary condition)
     let large_content =
@@ -208,8 +221,10 @@ async fn test_index_with_very_large_file_content() -> test_utils::TestResult {
 }
 
 #[tokio::test]
+#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
 async fn test_malformed_json_requests() -> test_utils::TestResult {
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
 
     // Test malformed JSON
     let request = Request::builder()
@@ -223,7 +238,8 @@ async fn test_malformed_json_requests() -> test_utils::TestResult {
     assert_eq!(response.status(), 400); // Bad Request for malformed JSON
 
     // Test missing required fields
-    let app = create_router(test_utils::app_state().await?.clone());
+    let test_state = test_utils::app_state().await?;
+    let app = create_router(test_state.state().clone());
     let incomplete_json = json!({
         "limit": 10
         // Missing "query" field
