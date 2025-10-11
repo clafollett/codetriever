@@ -286,15 +286,19 @@ impl Indexer {
     /// use codetriever_embeddings::DefaultEmbeddingService;
     /// use codetriever_vector_data::QdrantStorage;
     /// use codetriever_meta_data::DbFileRepository;
+    /// use codetriever_parsing::CodeParser;
     /// use std::sync::Arc;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = ApplicationConfig::with_profile(Profile::Development);
     /// let embedding_service = Arc::new(DefaultEmbeddingService::new(config.embedding.clone()));
     /// let storage = Arc::new(QdrantStorage::new("http://localhost:6334".to_string(), "collection".to_string()).await?);
-    /// let repository = Arc::new(DbFileRepository::new(/* pools */));
+    /// // Note: DbFileRepository::new() requires a PoolManager - see production code for full setup
+    /// # let pools = unimplemented!(); // Example only
+    /// let repository = Arc::new(DbFileRepository::new(pools));
+    /// let code_parser = CodeParser::default(); // Or load tokenizer for accurate chunking
     ///
-    /// let indexer = Indexer::new(embedding_service, storage, repository, &config);
+    /// let indexer = Indexer::new(embedding_service, storage, repository, code_parser, &config);
     /// # Ok(())
     /// # }
     /// ```
@@ -325,10 +329,15 @@ impl Indexer {
     ///
     /// ```no_run
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// use codetriever_indexing::indexing::Indexer;
+    /// use codetriever_indexing::{ServiceFactory, ServiceConfig};
     /// use std::path::Path;
     ///
-    /// let mut indexer = Indexer::new();
+    /// // Use ServiceFactory to properly initialize with all dependencies
+    /// # let embedding_service = unimplemented!();
+    /// # let storage = unimplemented!();
+    /// # let repository = unimplemented!();
+    /// let factory = ServiceFactory::new(ServiceConfig::from_env()?);
+    /// let mut indexer = factory.indexer(embedding_service, storage, repository).await?;
     /// indexer.index_directory(Path::new("./src"), true).await?;
     /// println!("Indexing completed successfully");
     /// # Ok(())
@@ -346,10 +355,15 @@ impl Indexer {
     ///
     /// ```no_run
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// use codetriever_indexing::indexing::Indexer;
+    /// use codetriever_indexing::{ServiceFactory, ServiceConfig};
     /// use std::path::Path;
     ///
-    /// let mut indexer = Indexer::new();
+    /// // Use ServiceFactory for proper initialization
+    /// # let embedding_service = unimplemented!();
+    /// # let storage = unimplemented!();
+    /// # let repository = unimplemented!();
+    /// let factory = ServiceFactory::new(ServiceConfig::from_env()?);
+    /// let mut indexer = factory.indexer(embedding_service, storage, repository).await?;
     /// let result = indexer.index_directory(Path::new("./src"), true).await?;
     /// println!("Indexed {} files", result.files_indexed);
     /// # Ok(())
