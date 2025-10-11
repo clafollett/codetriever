@@ -13,12 +13,15 @@ use super::model::EmbeddingModel;
 use crate::{EmbeddingError, EmbeddingResult};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, OnceCell, mpsc, oneshot};
+
+/// Type alias for embedding response to reduce complexity
+type EmbeddingResponse = EmbeddingResult<Vec<Vec<f32>>>;
 
 /// Request for generating embeddings
 struct EmbeddingRequest {
     texts: Vec<String>,
-    response_tx: oneshot::Sender<EmbeddingResult<Vec<Vec<f32>>>>,
+    response_tx: oneshot::Sender<EmbeddingResponse>,
 }
 
 /// Pool of embedding models with request batching
@@ -28,7 +31,10 @@ struct EmbeddingRequest {
 pub struct EmbeddingModelPool {
     request_tx: mpsc::UnboundedSender<EmbeddingRequest>,
     pool_size: usize,
-    pool_id: String, // Unique ID for debugging
+    pool_id: String,                                 // Unique ID for debugging
+    tokenizer: OnceCell<Arc<tokenizers::Tokenizer>>, // Lazy-loaded tokenizer (thread-safe, no Mutex)
+    model_id: String,
+    max_tokens: usize,
 }
 
 // Global pool counter for debugging
@@ -112,7 +118,7 @@ impl EmbeddingModelPool {
                 }
                 Err(e) => {
                     eprintln!("💥 Dispatcher PANICKED for {pool_id_for_dispatcher}!");
-                    eprintln!("   Panic payload: {:?}", e);
+                    eprintln!("   Panic payload: {e:?}");
                 }
             }
         });
@@ -121,7 +127,30 @@ impl EmbeddingModelPool {
             request_tx,
             pool_size,
             pool_id,
+            tokenizer: OnceCell::new(), // Thread-safe lazy init, no Mutex needed!
+            model_id,
+            max_tokens,
         }
+    }
+
+    /// Get the tokenizer for token counting (loads on first call, cached)
+    ///
+    /// Tokenizers are thread-safe for encoding, so we can share via Arc without Mutex.
+    /// OnceCell ensures it's only loaded once across all threads.
+    pub async fn get_tokenizer(&self) -> EmbeddingResult<Option<Arc<tokenizers::Tokenizer>>> {
+        let tokenizer = self
+            .tokenizer
+            .get_or_try_init(|| async {
+                // Load tokenizer by creating a temporary model
+                let mut temp_model = EmbeddingModel::new(self.model_id.clone(), self.max_tokens);
+                temp_model.ensure_model_loaded().await?;
+                temp_model.get_tokenizer().ok_or_else(|| {
+                    EmbeddingError::Embedding("Failed to load tokenizer".to_string())
+                })
+            })
+            .await?;
+
+        Ok(Some(tokenizer.clone()))
     }
 
     /// Submit a request for embedding generation
@@ -133,7 +162,7 @@ impl EmbeddingModelPool {
 
         let request = EmbeddingRequest { texts, response_tx };
 
-        if let Err(_) = self.request_tx.send(request) {
+        if self.request_tx.send(request).is_err() {
             tracing::error!(
                 pool_id = %self.pool_id,
                 closed = self.request_tx.is_closed(),
@@ -280,7 +309,7 @@ async fn model_worker(
                 tracing::trace!("Worker {worker_id}: all responses sent");
             }
             Err(e) => {
-                eprintln!("❌ Worker {worker_id}: embedding failed: {}", e);
+                eprintln!("❌ Worker {worker_id}: embedding failed: {e}");
                 // Send error to all requesters in batch
                 let error_msg = e.to_string();
                 for request in batch {

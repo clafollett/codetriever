@@ -32,6 +32,13 @@ pub trait EmbeddingProvider: Send + Sync {
 
     /// Ensure the model is loaded and ready
     async fn ensure_ready(&self) -> EmbeddingResult<()>;
+
+    /// Get a tokenizer for token counting (if available)
+    ///
+    /// Returns a tokenizer that can be used by the CodeParser for accurate
+    /// token-based chunking. The tokenizer is configured for counting only
+    /// (no truncation applied during counting).
+    async fn get_tokenizer(&self) -> Option<std::sync::Arc<tokenizers::Tokenizer>>;
 }
 
 // EmbeddingConfig removed - now using codetriever_config::EmbeddingConfig

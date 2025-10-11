@@ -24,10 +24,12 @@ async fn test_indexer_stores_chunks_in_qdrant() {
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 

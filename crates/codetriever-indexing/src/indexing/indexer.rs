@@ -302,18 +302,14 @@ impl Indexer {
         embedding_service: Arc<dyn EmbeddingService>,
         vector_storage: Arc<dyn VectorStorage>,
         repository: Arc<dyn codetriever_meta_data::traits::FileRepository>,
+        code_parser: CodeParser,
         config: &ApplicationConfig,
     ) -> Self {
         Self {
             embedding_service,
             storage: vector_storage,
             repository,
-            code_parser: CodeParser::new(
-                None, // Will be set after tokenizer loads
-                config.indexing.split_large_units,
-                config.indexing.max_chunk_tokens, // Use configured chunk size, not model max!
-                config.indexing.chunk_overlap_tokens,
-            ),
+            code_parser,
             config: config.clone(),
         }
     }
@@ -883,6 +879,11 @@ mod tests {
             // No-op for mock - always ready
             Ok(())
         }
+
+        async fn get_tokenizer(&self) -> Option<std::sync::Arc<tokenizers::Tokenizer>> {
+            // Mock doesn't provide tokenizer
+            None
+        }
     }
 
     #[tokio::test]
@@ -892,12 +893,14 @@ mod tests {
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
         let config = ApplicationConfig::with_profile(Profile::Test);
+        let code_parser = CodeParser::default(); // No tokenizer for unit tests
 
         // Create indexer with all required dependencies
         let mut indexer = Indexer::new(
             mock_embedding_service,
             mock_storage,
             mock_repo.clone(),
+            code_parser,
             &config,
         );
 
@@ -937,6 +940,7 @@ fn main() {
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
         let config = ApplicationConfig::with_profile(Profile::Test);
+        let code_parser = CodeParser::default();
 
         // Pre-populate with existing file with the hash we will use
         let content = "test content";
@@ -961,6 +965,7 @@ fn main() {
             mock_embedding_service,
             mock_storage,
             mock_repo.clone() as Arc<dyn FileRepository>,
+            code_parser,
             &config,
         );
 
@@ -993,12 +998,14 @@ fn main() {
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
         let config = ApplicationConfig::with_profile(Profile::Test);
+        let code_parser = CodeParser::default();
 
         // Create indexer with all required dependencies
         let mut indexer = Indexer::new(
             mock_embedding_service,
             mock_storage,
             mock_repo.clone(),
+            code_parser,
             &config,
         );
 

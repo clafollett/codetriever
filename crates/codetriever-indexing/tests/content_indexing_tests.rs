@@ -38,10 +38,12 @@ async fn test_index_file_content_with_multiple_files() {
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 
@@ -184,10 +186,12 @@ async fn test_index_file_content_creates_searchable_chunks() {
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service.clone(),
         Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 
@@ -288,10 +292,12 @@ async fn test_index_file_content_handles_different_languages() {
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 
@@ -397,10 +403,12 @@ async fn test_index_file_content_handles_large_files() {
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 
@@ -468,10 +476,12 @@ async fn test_index_file_content_handles_empty_and_invalid_files() {
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 
@@ -556,10 +566,12 @@ async fn test_index_file_content_without_filesystem_access() {
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 

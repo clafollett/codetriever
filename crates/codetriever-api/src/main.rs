@@ -71,11 +71,13 @@ async fn main() -> MainResult {
 
     info!("Initializing indexer service...");
     let factory = ServiceFactory::new(ServiceConfig::from_env()?);
-    let indexer = factory.indexer(
-        Arc::clone(&embedding_service),
-        Arc::clone(&vector_storage),
-        Arc::clone(&file_repository),
-    )?;
+    let indexer = factory
+        .indexer(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&file_repository),
+        )
+        .await?;
     let indexer_service =
         Arc::new(Mutex::new(indexer)) as Arc<Mutex<dyn codetriever_indexing::IndexerService>>;
 

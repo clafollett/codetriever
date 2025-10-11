@@ -40,10 +40,12 @@ async fn test_manual_searches() {
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 

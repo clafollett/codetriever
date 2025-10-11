@@ -121,6 +121,11 @@ impl EmbeddingProvider for DefaultEmbeddingProvider {
         let _ = self.embed_batch(&["test"]).await?;
         Ok(())
     }
+
+    async fn get_tokenizer(&self) -> Option<std::sync::Arc<tokenizers::Tokenizer>> {
+        // Delegate to pool - this will load tokenizer lazily on first call
+        self.pool.get_tokenizer().await.ok().flatten()
+    }
 }
 
 // Global service counter for debugging
@@ -288,6 +293,11 @@ impl EmbeddingProvider for MockEmbeddingProvider {
 
     async fn ensure_ready(&self) -> EmbeddingResult<()> {
         Ok(())
+    }
+
+    async fn get_tokenizer(&self) -> Option<std::sync::Arc<tokenizers::Tokenizer>> {
+        // Mock doesn't have a real tokenizer
+        None
     }
 }
 

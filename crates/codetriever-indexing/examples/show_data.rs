@@ -47,10 +47,12 @@ async fn main() -> anyhow::Result<()> {
         as Arc<dyn codetriever_embeddings::EmbeddingService>;
 
     // Create indexer with all required dependencies
+    let code_parser = codetriever_parsing::CodeParser::default();
     let mut indexer = Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
         repository.clone() as Arc<dyn FileRepository>,
+        code_parser,
         &config,
     );
 

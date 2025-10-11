@@ -150,11 +150,13 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
 
     // Create indexer service
     let factory = ServiceFactory::new(ServiceConfig::from_env()?);
-    let indexer = factory.indexer(
-        Arc::clone(&shared.embedding_service),
-        Arc::clone(&vector_storage_trait),
-        Arc::clone(&shared.file_repository),
-    )?;
+    let indexer = factory
+        .indexer(
+            Arc::clone(&shared.embedding_service),
+            Arc::clone(&vector_storage_trait),
+            Arc::clone(&shared.file_repository),
+        )
+        .await?;
     let indexer_service =
         Arc::new(Mutex::new(indexer)) as Arc<Mutex<dyn codetriever_indexing::IndexerService>>;
 

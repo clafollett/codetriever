@@ -2,7 +2,12 @@
 //!
 //! Tests boundary conditions, Unicode handling, large result sets, and error scenarios
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 mod test_utils;
 
@@ -53,11 +58,8 @@ async fn test_search_with_unicode_characters() -> test_utils::TestResult {
     let status = response.status();
     let request_duration = request_start.elapsed();
 
-    eprintln!(
-        "🔍 [Unicode Test] Response received in {:?}",
-        request_duration
-    );
-    eprintln!("🔍 [Unicode Test] Status code: {}", status);
+    eprintln!("🔍 [Unicode Test] Response received in {request_duration:?}");
+    eprintln!("🔍 [Unicode Test] Status code: {status}");
 
     // ALWAYS capture response body for analysis
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -77,7 +79,7 @@ async fn test_search_with_unicode_characters() -> test_utils::TestResult {
             &body_str[..500]
         );
     } else {
-        eprintln!("🔍 [Unicode Test] Response body: {}", body_str);
+        eprintln!("🔍 [Unicode Test] Response body: {body_str}");
     }
 
     eprintln!(
@@ -89,7 +91,7 @@ async fn test_search_with_unicode_characters() -> test_utils::TestResult {
     if !status.is_success() && status != 400 && status != 503 {
         eprintln!("❌ [Unicode Test] FAILED - Unacceptable status code!");
         eprintln!("   Expected: 2xx, 400, or 503");
-        eprintln!("   Got: {}", status);
+        eprintln!("   Got: {status}");
         panic!("Unicode search returned {status} - see error details above");
     }
 
@@ -283,17 +285,53 @@ async fn test_index_with_very_large_file_content() -> test_utils::TestResult {
 
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
-    eprintln!("📦 [Large File Test] Response status: {}", status);
+    eprintln!("📦 [Large File Test] Response status: {status}");
 
     // Check response body
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     let body_str = String::from_utf8_lossy(&body_bytes);
-    eprintln!("📦 [Large File Test] Response: {}", body_str);
+    eprintln!("📦 [Large File Test] Response: {body_str}");
+
+    // Parse response to verify chunking worked
+    let response: serde_json::Value = serde_json::from_str(&body_str).unwrap();
 
     // Should handle large files appropriately
     assert!(status.is_success() || status == 413); // 413 = Request Entity Too Large
+
+    // CRITICAL: Verify file was properly chunked (not truncated!)
+    // This file: 5000 lines of "println!("test");" = ~30,000 tokens total
+    //
+    // Expected chunks by config:
+    // - max_chunk_tokens=512 (current): ~60 theoretical, ~22 actual (parser overhead)
+    // - max_chunk_tokens=1024: ~30 theoretical, ~11 actual
+    // - max_chunk_tokens=2048: ~15 theoretical, ~6 actual
+    //
+    // Key assertion: chunks > 1 (proves splitting works, not single truncated chunk)
+    if status.is_success() {
+        let chunks_created = response["chunks_created"].as_u64().unwrap();
+
+        // CRITICAL: File MUST be split (not kept as 1 truncated chunk)
+        assert!(
+            chunks_created > 1,
+            "Large file MUST be chunked, got {chunks_created} chunk. Tokenizer likely not loaded!"
+        );
+
+        // For 512-token chunks, expect 15-30 chunks (allows parser variation)
+        // This will catch regressions while being resilient to config changes
+        let expected_min = 15;
+        let expected_max = 60;
+        assert!(
+            chunks_created >= expected_min && chunks_created <= expected_max,
+            "Expected {expected_min}-{expected_max} chunks for ~30K token file, got {chunks_created}. Check max_chunk_tokens config!"
+        );
+
+        eprintln!(
+            "✅ [Large File Test] Properly chunked into {chunks_created} chunks (config: 512 tokens/chunk)"
+        );
+    }
+
     eprintln!("📦 [Large File Test] PASSED\n");
     Ok(())
 }

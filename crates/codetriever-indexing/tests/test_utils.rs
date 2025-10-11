@@ -103,11 +103,13 @@ pub async fn create_test_indexer(
     let storage = create_test_storage(test_name).await?;
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
+    let code_parser = codetriever_parsing::CodeParser::default();
 
     let indexer = codetriever_indexing::indexing::Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
         repository,
+        code_parser,
         &config,
     );
 
