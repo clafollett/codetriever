@@ -7,14 +7,17 @@ use codetriever_indexing::indexing::Indexer;
 use codetriever_search::SearchProvider;
 use codetriever_vector_data::VectorStorage;
 use std::{path::Path, sync::Arc};
-use test_utils::{cleanup_test_storage, create_test_storage, test_config};
+use test_utils::{
+    cleanup_test_storage, create_test_embedding_service, create_test_repository,
+    create_test_storage, test_config,
+};
 
 #[tokio::test]
 async fn test_manual_searches() {
     // Note: This test requires Qdrant to be running locally on port 6334
     // You can start it with: docker-compose -f docker/docker-compose.qdrant.yml up -d
 
-    // First, index the mini-redis repo
+    // Create all required dependencies
     let config = test_config();
     let storage = create_test_storage("search_exploration")
         .await
@@ -34,7 +37,15 @@ async fn test_manual_searches() {
         Err(e) => println!("Failed to create collection: {e}"),
     }
 
-    let mut indexer = Indexer::with_config_and_storage(&config, Arc::new(storage.clone()));
+    let embedding_service = create_test_embedding_service();
+    let repository = create_test_repository().await;
+
+    let mut indexer = Indexer::new(
+        embedding_service,
+        Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
+        repository,
+        &config,
+    );
 
     // Check if we need to index first
     let test_queries = vec![
@@ -52,7 +63,7 @@ async fn test_manual_searches() {
 
     // Try a search to see if already indexed
     let embedding_service = indexer.embedding_service();
-    let vector_storage = indexer.vector_storage().expect("Storage configured");
+    let vector_storage = indexer.vector_storage();
 
     // Create database client for search
     let db_config =

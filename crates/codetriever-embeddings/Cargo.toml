@@ -10,6 +10,7 @@ repository.workspace = true
 # Async runtime
 tokio = { workspace = true }
 async-trait = { workspace = true }
+futures-util = { workspace = true }
 
 # ML/AI dependencies - CPU by default
 candle-core = { workspace = true }

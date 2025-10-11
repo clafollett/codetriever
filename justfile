@@ -140,14 +140,14 @@ test-integration:
     @echo "🔧 Running integration tests..."
     cargo test --workspace --tests
 
-# Run tests with GPU acceleration
-test-metal:
+# Run tests with GPU acceleration (optionally specify test names)
+test-metal *TESTS:
     @echo "🍎 Running tests with Metal GPU support..."
-    cargo test-metal --workspace
+    cargo test-metal --workspace {{TESTS}}
 
-test-cuda:
+test-cuda *TESTS:
     @echo "🐧 Running tests with CUDA GPU support..."
-    cargo test-cuda --workspace
+    cargo test-cuda --workspace {{TESTS}}
 
 # Format code
 

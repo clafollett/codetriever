@@ -5,7 +5,9 @@
 //! its own dependencies, eliminating circular dependencies and architectural debt.
 
 use crate::{IndexerResult, indexing::Indexer};
+use codetriever_config::ApplicationConfig;
 use codetriever_embeddings::EmbeddingService;
+use codetriever_meta_data::traits::FileRepository;
 use codetriever_vector_data::VectorStorage;
 use std::sync::Arc;
 
@@ -55,15 +57,22 @@ impl ServiceFactory {
     }
 
     /// Create Indexer with injected dependencies
+    ///
+    /// All dependencies are required - no defaults, no fallbacks
     pub fn indexer(
         &self,
         embedding_service: Arc<dyn EmbeddingService>,
         vector_storage: Arc<dyn VectorStorage>,
+        repository: Arc<dyn FileRepository>,
     ) -> IndexerResult<Indexer> {
-        let mut indexer = Indexer::new();
-        indexer.set_embedding_service(embedding_service);
-        indexer.set_storage_arc(vector_storage);
-        Ok(indexer)
+        let config = ApplicationConfig::with_profile(codetriever_config::Profile::Development);
+
+        Ok(Indexer::new(
+            embedding_service,
+            vector_storage,
+            repository,
+            &config,
+        ))
     }
 
     /// Get configuration

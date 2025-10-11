@@ -25,6 +25,7 @@ repository = "https://github.com/clafollett/codetriever"
 tokio = { version = "1.47.1", features = ["full"] }
 tokio-util = "0.7.16"
 futures = "0.3.31"
+futures-util = "0.3.31"
 async-trait = "0.1.89"
 
 # Web framework

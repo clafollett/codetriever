@@ -3,13 +3,15 @@
 //! Run with: cargo test --test full_stack_integration -- --test-threads=1
 
 use codetriever_common::CorrelationId;
-use codetriever_config::{DatabaseConfig, Profile};
+use codetriever_config::{ApplicationConfig, DatabaseConfig, Profile};
+use codetriever_embeddings::DefaultEmbeddingService;
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
 use codetriever_meta_data::{
     generate_chunk_id,
     models::{IndexedFile, ProjectBranch},
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
+    traits::FileRepository,
 };
 use codetriever_parsing::CodeChunk;
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
@@ -61,9 +63,18 @@ async fn test_full_stack_indexing_with_postgres_and_qdrant() {
         .await
         .expect("Failed to create Qdrant storage");
 
-    // Create indexer with repository and storage
-    let mut indexer = Indexer::new_with_repository(repository.clone());
-    indexer.set_storage(storage.clone());
+    // Create all required dependencies
+    let config = ApplicationConfig::with_profile(Profile::Test);
+    let embedding_service = Arc::new(DefaultEmbeddingService::new(config.embedding.clone()))
+        as Arc<dyn codetriever_embeddings::EmbeddingService>;
+
+    // Create indexer with all required dependencies
+    let mut indexer = Indexer::new(
+        embedding_service,
+        Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
+        repository.clone() as Arc<dyn FileRepository>,
+        &config,
+    );
 
     let test_repo = "test_repo";
     let test_branch = "main";

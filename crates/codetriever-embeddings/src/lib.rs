@@ -10,6 +10,7 @@ pub mod error;
 // Re-export main types
 pub use embedding::{
     DefaultEmbeddingService, EmbeddingModel, EmbeddingProvider, EmbeddingService, EmbeddingStats,
+    pool::EmbeddingModelPool,
 };
 // EmbeddingConfig now comes from codetriever-config crate to eliminate duplication
 pub use codetriever_config::EmbeddingConfig;

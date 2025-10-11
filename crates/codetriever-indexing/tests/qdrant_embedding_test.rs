@@ -6,20 +6,30 @@ mod test_utils;
 use codetriever_indexing::indexing::Indexer;
 use codetriever_search::SearchProvider;
 use std::{path::Path, sync::Arc};
-use test_utils::{cleanup_test_storage, create_test_storage, test_config};
+use test_utils::{
+    cleanup_test_storage, create_test_embedding_service, create_test_repository,
+    create_test_storage, test_config,
+};
 
 #[tokio::test]
 async fn test_indexer_stores_chunks_in_qdrant() {
     // Note: This test requires Qdrant to be running locally on port 6334
     // You can start it with: docker-compose -f docker/docker-compose.qdrant.yml up -d
 
-    // Create indexer with Qdrant storage
+    // Create all required dependencies
     let config = test_config();
     let storage = create_test_storage("indexer_integration")
         .await
         .expect("Failed to create storage");
+    let embedding_service = create_test_embedding_service();
+    let repository = create_test_repository().await;
 
-    let mut indexer = Indexer::with_config_and_storage(&config, Arc::new(storage.clone()));
+    let mut indexer = Indexer::new(
+        embedding_service,
+        Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
+        repository,
+        &config,
+    );
 
     // Index a small test repo (mini-redis has ~30 Rust files)
     // Use CARGO_MANIFEST_DIR to find the workspace root reliably
@@ -63,7 +73,7 @@ async fn test_indexer_stores_chunks_in_qdrant() {
     // Verify we can search for the indexed content
     let query = "redis connection";
     let embedding_service = indexer.embedding_service();
-    let vector_storage = indexer.vector_storage().expect("Storage configured");
+    let vector_storage = indexer.vector_storage();
 
     // Create database client for search
     let db_config =
