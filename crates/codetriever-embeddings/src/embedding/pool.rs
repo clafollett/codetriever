@@ -104,7 +104,7 @@ impl EmbeddingModelPool {
         // Spawn dispatcher task to distribute requests round-robin
         let pool_id_for_dispatcher = pool_id.clone();
         tokio::spawn(async move {
-            eprintln!("🎯 Dispatcher starting for {pool_id_for_dispatcher}");
+            tracing::debug!("Dispatcher starting for {pool_id_for_dispatcher}");
 
             // Wrap in panic catcher
             let result = std::panic::AssertUnwindSafe(dispatcher_task(
@@ -114,11 +114,10 @@ impl EmbeddingModelPool {
 
             match futures_util::future::FutureExt::catch_unwind(result).await {
                 Ok(_) => {
-                    eprintln!("🛑 Dispatcher exited normally for {pool_id_for_dispatcher}");
+                    tracing::debug!("Dispatcher exited normally for {pool_id_for_dispatcher}");
                 }
                 Err(e) => {
-                    eprintln!("💥 Dispatcher PANICKED for {pool_id_for_dispatcher}!");
-                    eprintln!("   Panic payload: {e:?}");
+                    tracing::error!("Dispatcher PANICKED for {pool_id_for_dispatcher}: {e:?}");
                 }
             }
         });
@@ -200,8 +199,9 @@ async fn dispatcher_task<D>(
         // Dispatch takes ownership - if it fails, request is already moved
         tracing::trace!("Dispatcher: dispatching request #{request_count} to worker...");
         if !dispatcher.dispatch(request).await {
-            tracing::error!("Failed to dispatch request - all workers unavailable");
-            eprintln!("❌ Dispatcher: worker channel closed, request #{request_count} dropped!");
+            tracing::error!(
+                "Failed to dispatch request #{request_count} - all workers unavailable"
+            );
         } else {
             tracing::trace!("Dispatcher: request #{request_count} dispatched successfully");
         }
@@ -210,7 +210,7 @@ async fn dispatcher_task<D>(
             "Dispatcher: waiting for next request (total processed: {request_count})..."
         );
     }
-    eprintln!("🛑 Dispatcher shutting down after {request_count} requests (request_rx closed)");
+    tracing::debug!("Dispatcher shutting down after {request_count} requests (request_rx closed)");
 }
 
 impl Drop for EmbeddingModelPool {
@@ -269,8 +269,8 @@ async fn model_worker(
             .iter()
             .flat_map(|r| r.texts.iter().map(|s| s.as_str()))
             .collect();
-        eprintln!(
-            "🔨 Worker {worker_id}: collected {} texts total",
+        tracing::trace!(
+            "Worker {worker_id}: collected {} texts total",
             all_texts.len()
         );
 
@@ -289,8 +289,8 @@ async fn model_worker(
 
         match result {
             Ok(embeddings) => {
-                eprintln!(
-                    "✅ Worker {worker_id}: got {} embeddings, distributing...",
+                tracing::trace!(
+                    "Worker {worker_id}: got {} embeddings, distributing...",
                     embeddings.len()
                 );
                 let mut offset = 0;
@@ -301,15 +301,15 @@ async fn model_worker(
 
                     // Send result back (ignore if requester dropped)
                     if request.response_tx.send(Ok(request_embeddings)).is_err() {
-                        eprintln!(
-                            "⚠️  Worker {worker_id}: requester {idx} dropped response channel"
+                        tracing::warn!(
+                            "Worker {worker_id}: requester {idx} dropped response channel"
                         );
                     }
                 }
                 tracing::trace!("Worker {worker_id}: all responses sent");
             }
             Err(e) => {
-                eprintln!("❌ Worker {worker_id}: embedding failed: {e}");
+                tracing::error!("Worker {worker_id}: embedding failed: {e}");
                 // Send error to all requesters in batch
                 let error_msg = e.to_string();
                 for request in batch {

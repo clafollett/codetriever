@@ -117,7 +117,6 @@ pub async fn index_handler(
         }
         Err(e) => {
             let error_msg = e.to_string();
-            eprintln!("❌ [INDEX ERROR] Indexing failed: {error_msg}");
             tracing::error!(
                 "Indexing failed for project {}: {error_msg}",
                 request.project_id

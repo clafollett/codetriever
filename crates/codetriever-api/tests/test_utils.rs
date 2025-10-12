@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
 
 use codetriever_api::AppState;
-use codetriever_config::{ApplicationConfig, Profile};
+use codetriever_config::ApplicationConfig;
 use codetriever_embeddings::DefaultEmbeddingService;
 use codetriever_indexing::{ServiceConfig, ServiceFactory};
 use codetriever_meta_data::{
@@ -47,7 +47,7 @@ static SHARED_RESOURCES: OnceCell<SharedResources> = OnceCell::const_new();
 async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::Error>> {
     eprintln!("🔧 Initializing SharedResources (should only happen once!)");
     codetriever_common::initialize_environment();
-    let config = ApplicationConfig::with_profile(Profile::Development);
+    let config = ApplicationConfig::from_env();
 
     // Create shared database pool
     eprintln!("🔧 Creating database pools...");

@@ -143,8 +143,8 @@ impl PoolManager {
     /// - Database URL from environment is malformed
     /// - Pool creation fails (see `new` method errors)
     pub async fn from_env() -> Result<Self> {
-        // Use unified configuration system with development profile as default
-        let db_config = DatabaseConfig::for_profile(codetriever_config::Profile::Development);
+        // Use unified configuration system with safe defaults
+        let db_config = DatabaseConfig::from_env();
         Self::new(&db_config, PoolConfig::default()).await
     }
 

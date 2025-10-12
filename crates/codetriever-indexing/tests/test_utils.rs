@@ -3,7 +3,7 @@
 //! This module provides common testing utilities used across multiple test files.
 //! Functions are only compiled into test binaries that actually use them.
 
-use codetriever_config::{ApplicationConfig, DatabaseConfig, Profile};
+use codetriever_config::{ApplicationConfig, DatabaseConfig};
 use codetriever_embeddings::{DefaultEmbeddingService, EmbeddingService};
 use codetriever_meta_data::{
     pool_manager::{PoolConfig, PoolManager},
@@ -88,7 +88,7 @@ pub async fn create_test_storage(test_name: &str) -> Result<QdrantStorage, Strin
 /// Get default test configuration
 #[allow(unused)]
 pub fn test_config() -> ApplicationConfig {
-    ApplicationConfig::with_profile(Profile::Test)
+    ApplicationConfig::from_env()
 }
 
 /// Clean up test storage by dropping the collection
@@ -127,7 +127,7 @@ pub async fn create_code_parser_with_tokenizer(
         tokenizer,
         config.indexing.split_large_units,
         config.indexing.max_chunk_tokens,
-        config.indexing.chunk_overlap_tokens,
+        0, // No overlap - removed in Phase 2
     )
 }
 
@@ -138,7 +138,7 @@ pub async fn create_test_repository() -> Arc<dyn FileRepository> {
     codetriever_common::initialize_environment();
 
     // Create REAL database connection pool
-    let db_config = DatabaseConfig::for_profile(Profile::Test);
+    let db_config = DatabaseConfig::from_env();
     let pools = PoolManager::new(&db_config, PoolConfig::default())
         .await
         .expect("Failed to create pool manager for test repository");

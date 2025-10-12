@@ -3,7 +3,7 @@
 //! HTTP API server for semantic code search with vector embeddings.
 
 use codetriever_api::{AppState, routes};
-use codetriever_config::{ApplicationConfig, Profile};
+use codetriever_config::ApplicationConfig;
 use codetriever_embeddings::DefaultEmbeddingService;
 use codetriever_indexing::{ServiceConfig, ServiceFactory};
 use codetriever_meta_data::{DataClient, DbFileRepository, PoolConfig, PoolManager};
@@ -29,7 +29,7 @@ async fn main() -> MainResult {
     info!("Starting Codetriever API server...");
 
     // Load unified configuration with environment overrides
-    let config = ApplicationConfig::with_profile(Profile::Development);
+    let config = ApplicationConfig::from_env();
     info!(
         "Configuration loaded - API port: {}, Database: {}",
         config.api.port,

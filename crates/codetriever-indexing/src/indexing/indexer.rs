@@ -281,7 +281,7 @@ impl Indexer {
     /// # Examples
     ///
     /// ```no_run
-    /// use codetriever_config::{ApplicationConfig, Profile};
+    /// use codetriever_config::ApplicationConfig;
     /// use codetriever_indexing::indexing::Indexer;
     /// use codetriever_embeddings::DefaultEmbeddingService;
     /// use codetriever_vector_data::QdrantStorage;
@@ -290,7 +290,7 @@ impl Indexer {
     /// use std::sync::Arc;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = ApplicationConfig::with_profile(Profile::Development);
+    /// let config = ApplicationConfig::from_env();
     /// let embedding_service = Arc::new(DefaultEmbeddingService::new(config.embedding.clone()));
     /// let storage = Arc::new(QdrantStorage::new("http://localhost:6334".to_string(), "collection".to_string()).await?);
     /// // Note: DbFileRepository::new() requires a PoolManager - see production code for full setup
@@ -837,7 +837,6 @@ mod tests {
     use super::*;
     use crate::indexing::service::FileContent;
     use async_trait::async_trait;
-    use codetriever_config::Profile;
     use codetriever_embeddings::{
         EmbeddingProvider, EmbeddingResult, EmbeddingService, EmbeddingStats,
     };
@@ -906,7 +905,7 @@ mod tests {
         let mock_repo = Arc::new(MockFileRepository::new()) as Arc<dyn FileRepository>;
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
-        let config = ApplicationConfig::with_profile(Profile::Test);
+        let config = ApplicationConfig::from_env();
         let code_parser = CodeParser::default(); // No tokenizer for unit tests
 
         // Create indexer with all required dependencies
@@ -953,7 +952,7 @@ fn main() {
         let mock_repo = Arc::new(MockFileRepository::new());
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
-        let config = ApplicationConfig::with_profile(Profile::Test);
+        let config = ApplicationConfig::from_env();
         let code_parser = CodeParser::default();
 
         // Pre-populate with existing file with the hash we will use
@@ -1011,7 +1010,7 @@ fn main() {
         let mock_repo = Arc::new(MockFileRepository::new()) as Arc<dyn FileRepository>;
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
-        let config = ApplicationConfig::with_profile(Profile::Test);
+        let config = ApplicationConfig::from_env();
         let code_parser = CodeParser::default();
 
         // Create indexer with all required dependencies

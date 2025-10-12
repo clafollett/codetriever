@@ -80,8 +80,7 @@ fn test_indexer_stores_chunks_in_qdrant() {
         let vector_storage = indexer.vector_storage();
 
         // Create database client for search
-        let db_config =
-            codetriever_config::DatabaseConfig::for_profile(codetriever_config::Profile::Test);
+        let db_config = codetriever_config::DatabaseConfig::from_env();
         let pools = codetriever_meta_data::PoolManager::new(
             &db_config,
             codetriever_meta_data::PoolConfig::default(),

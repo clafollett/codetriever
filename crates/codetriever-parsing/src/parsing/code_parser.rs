@@ -120,9 +120,13 @@ impl CodeParser {
     /// The tokenizer is shared via Arc, avoiding expensive clones.
     fn count_tokens(&self, text: &str) -> Option<usize> {
         self.tokenizer.as_ref().and_then(|tokenizer| {
-            // Use encode with add_special_tokens=false to avoid truncation issues
-            // This gives us accurate token counts without special tokens
-            tokenizer
+            // Clone tokenizer to disable truncation for accurate counting
+            // The shared tokenizer has truncation enabled for embeddings,
+            // but we need full count to determine if splitting is needed
+            let mut counting_tokenizer = tokenizer.as_ref().clone();
+            counting_tokenizer.with_truncation(None).ok()?;
+
+            counting_tokenizer
                 .encode(text, false)
                 .ok()
                 .map(|encoding| encoding.len())
@@ -498,9 +502,19 @@ impl CodeParser {
 
                 // Check if chunk needs splitting based on token count
                 let content_str = content.to_string();
+                eprintln!(
+                    "🔍 [PARSER DEBUG] Processing {} '{}', content length: {} bytes",
+                    node.kind(),
+                    name.as_deref().unwrap_or("<unnamed>"),
+                    content_str.len()
+                );
                 if let Some(token_count) = self.count_tokens(&content_str) {
+                    eprintln!(
+                        "🔍 [PARSER DEBUG] Token count: {}, max_tokens: {}, split_large_units: {}",
+                        token_count, self.max_tokens, self.split_large_units
+                    );
                     if self.split_large_units && token_count > self.max_tokens {
-                        println!(
+                        eprintln!(
                             "📝 Splitting large {} '{}' ({} tokens > {} max) into smaller chunks",
                             node.kind(),
                             name.as_deref().unwrap_or("<unnamed>"),

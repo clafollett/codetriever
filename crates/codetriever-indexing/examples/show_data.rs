@@ -1,7 +1,7 @@
 //! Example to index data and show what's stored in PostgreSQL and Qdrant
 
 use codetriever_common::CorrelationId;
-use codetriever_config::{ApplicationConfig, DatabaseConfig, Profile};
+use codetriever_config::{ApplicationConfig, DatabaseConfig};
 use codetriever_embeddings::DefaultEmbeddingService;
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
 use codetriever_meta_data::{
@@ -28,7 +28,7 @@ type ChunkRow = (
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Setup database from environment
-    let db_config = DatabaseConfig::for_profile(Profile::Development);
+    let db_config = DatabaseConfig::from_env();
 
     // Create pool manager (this will create the connection pool)
     let pools = PoolManager::new(&db_config, PoolConfig::default()).await?;
@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     // Create all required dependencies
-    let config = ApplicationConfig::with_profile(Profile::Development);
+    let config = ApplicationConfig::from_env();
     let embedding_service = Arc::new(DefaultEmbeddingService::new(config.embedding.clone()))
         as Arc<dyn codetriever_embeddings::EmbeddingService>;
 

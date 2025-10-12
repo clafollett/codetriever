@@ -34,7 +34,7 @@ impl DefaultEmbeddingProvider {
             "provider-{}",
             PROVIDER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
-        eprintln!("🏗️  Creating DefaultEmbeddingProvider {provider_id}");
+        tracing::debug!("Creating DefaultEmbeddingProvider {provider_id}");
 
         let pool = EmbeddingModelPool::new(
             config.model.id.clone(),
@@ -59,7 +59,7 @@ impl DefaultEmbeddingProvider {
             "provider-{}",
             PROVIDER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
-        eprintln!("🏗️  Creating DefaultEmbeddingProvider {provider_id} (from_model)");
+        tracing::debug!("Creating DefaultEmbeddingProvider {provider_id} (from_model)");
 
         // For compatibility, create single-model pool
         let pool = EmbeddingModelPool::new(
@@ -80,10 +80,7 @@ impl DefaultEmbeddingProvider {
 
 impl Drop for DefaultEmbeddingProvider {
     fn drop(&mut self) {
-        eprintln!(
-            "🗑️  Dropping DefaultEmbeddingProvider: {}",
-            self.provider_id
-        );
+        tracing::debug!("Dropping DefaultEmbeddingProvider: {}", self.provider_id);
     }
 }
 
@@ -148,7 +145,7 @@ impl DefaultEmbeddingService {
             "service-{}",
             SERVICE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
-        eprintln!("🏗️  Creating DefaultEmbeddingService {service_id}");
+        tracing::debug!("Creating DefaultEmbeddingService {service_id}");
 
         let batch_size = config.performance.batch_size;
         let model_name = config.model.id.clone();
@@ -174,7 +171,7 @@ impl DefaultEmbeddingService {
             "service-{}",
             SERVICE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
-        eprintln!("🏗️  Creating DefaultEmbeddingService {service_id} (with_provider)");
+        tracing::debug!("Creating DefaultEmbeddingService {service_id} (with_provider)");
 
         let stats = Arc::new(RwLock::new(EmbeddingStats {
             model_name: provider.model_name().to_string(),
@@ -193,7 +190,7 @@ impl DefaultEmbeddingService {
 
 impl Drop for DefaultEmbeddingService {
     fn drop(&mut self) {
-        eprintln!("🗑️  Dropping DefaultEmbeddingService: {}", self.service_id);
+        tracing::debug!("Dropping DefaultEmbeddingService: {}", self.service_id);
     }
 }
 
