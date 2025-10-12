@@ -94,6 +94,12 @@ pub struct ModelConfig {
     /// Must match vector storage configuration for consistency
     pub dimensions: usize,
 
+    /// Model's actual maximum position embeddings from `HuggingFace` config.json
+    /// This is the authoritative ceiling read from the model's config
+    /// User's `max_tokens` MUST be ≤ this value
+    #[serde(default)]
+    pub max_position_embeddings: Option<usize>,
+
     /// Model capabilities and constraints for validation
     #[serde(default)]
     pub capabilities: ModelCapabilities,
@@ -295,6 +301,7 @@ impl EmbeddingConfig {
                 id: model_id,
                 max_tokens,
                 dimensions,
+                max_position_embeddings: None, // Will be populated when model loads
                 capabilities: ModelCapabilities::default(),
             },
             performance: PerformanceConfig {
