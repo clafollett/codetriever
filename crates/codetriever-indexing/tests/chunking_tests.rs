@@ -51,23 +51,25 @@ fn test_token_counter_batch() {
     assert_eq!(counts, vec![1, 1, 1]);
 }
 
-#[tokio::test]
-async fn test_token_counter_registry() {
-    // Create a mock tokenizer
-    let tokenizer = create_mock_tokenizer();
-    let registry = TokenCounterRegistry::new(tokenizer, 8192).await;
+#[test]
+fn test_token_counter_registry() {
+    codetriever_test_utils::get_test_runtime().block_on(async {
+        // Create a mock tokenizer
+        let tokenizer = create_mock_tokenizer();
+        let registry = TokenCounterRegistry::new(tokenizer, 8192).await;
 
-    // Test default counter
-    let default_counter = registry.default();
-    assert_eq!(default_counter.max_tokens(), 8192);
+        // Test default counter
+        let default_counter = registry.default();
+        assert_eq!(default_counter.max_tokens(), 8192);
 
-    // Test model-specific lookup
-    let jina_counter = registry.for_model("jinaai/jina-embeddings-v2-small-en");
-    assert_eq!(jina_counter.max_tokens(), 8192);
+        // Test model-specific lookup
+        let jina_counter = registry.for_model("jinaai/jina-embeddings-v2-small-en");
+        assert_eq!(jina_counter.max_tokens(), 8192);
 
-    // Test fallback for unknown model
-    let unknown_counter = registry.for_model("unknown-model");
-    assert_eq!(unknown_counter.max_tokens(), 8192); // Should get default
+        // Test fallback for unknown model
+        let unknown_counter = registry.for_model("unknown-model");
+        assert_eq!(unknown_counter.max_tokens(), 8192); // Should get default
+    })
 }
 
 #[test]

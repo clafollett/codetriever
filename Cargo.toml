@@ -10,6 +10,7 @@ members = [
     "crates/codetriever-parsing",
     "crates/codetriever-search",
     "crates/codetriever-indexing",
+    "crates/codetriever-test-utils",
 ]
 resolver = "3"
 
@@ -21,10 +22,11 @@ authors = ["LaFollett Labs LLC"]
 repository = "https://github.com/clafollett/codetriever"
 
 [workspace.dependencies]
-# Async runtime
-tokio = { version = "1.47.1", features = ["full"] }
+# Async runtime - only features we actually use (not "full")
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 tokio-util = "0.7.16"
 futures = "0.3.31"
+futures-util = "0.3.31"
 async-trait = "0.1.89"
 
 # Web framework

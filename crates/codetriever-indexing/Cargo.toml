@@ -56,6 +56,7 @@ rayon = { workspace = true }
 # Target-specific dependencies now handled by embeddings crate
 
 [dev-dependencies]
+codetriever-test-utils = { path = "../codetriever-test-utils" }
 once_cell = { workspace = true }
 tempfile = { workspace = true }
 sqlx = { workspace = true }

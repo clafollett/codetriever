@@ -595,6 +595,9 @@ async fn search_handler_impl(
                 query = %query,
                 "Search failed with unexpected error"
             );
+            // Also print to stderr for test visibility
+            eprintln!("Search error: {search_error}");
+            eprintln!("Query: {query}");
             return Err(ApiError::InternalServerError { correlation_id });
         }
         Err(_timeout) => {

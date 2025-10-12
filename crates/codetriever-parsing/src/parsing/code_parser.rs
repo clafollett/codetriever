@@ -109,6 +109,11 @@ impl CodeParser {
         }
     }
 
+    /// Check if tokenizer is loaded
+    pub fn has_tokenizer(&self) -> bool {
+        self.tokenizer.is_some()
+    }
+
     /// Count tokens in a text using the tokenizer if available
     ///
     /// Uses the shared tokenizer with add_special_tokens=false for accurate counting.

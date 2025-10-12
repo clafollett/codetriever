@@ -1,11 +1,13 @@
 //! Example to index data and show what's stored in PostgreSQL and Qdrant
 
 use codetriever_common::CorrelationId;
-use codetriever_config::{DatabaseConfig, Profile};
+use codetriever_config::{ApplicationConfig, DatabaseConfig, Profile};
+use codetriever_embeddings::DefaultEmbeddingService;
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
 use codetriever_meta_data::{
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
+    traits::FileRepository,
 };
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
 use std::sync::Arc;
@@ -39,9 +41,20 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    // Create indexer
-    let mut indexer = Indexer::new_with_repository(repository.clone());
-    indexer.set_storage(storage.clone());
+    // Create all required dependencies
+    let config = ApplicationConfig::with_profile(Profile::Development);
+    let embedding_service = Arc::new(DefaultEmbeddingService::new(config.embedding.clone()))
+        as Arc<dyn codetriever_embeddings::EmbeddingService>;
+
+    // Create indexer with all required dependencies
+    let code_parser = codetriever_parsing::CodeParser::default();
+    let mut indexer = Indexer::new(
+        embedding_service,
+        Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
+        repository.clone() as Arc<dyn FileRepository>,
+        code_parser,
+        &config,
+    );
 
     // Index some sample code
     let sample_code = r#"

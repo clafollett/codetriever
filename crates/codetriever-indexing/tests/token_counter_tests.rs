@@ -5,73 +5,77 @@ use codetriever_parsing::chunking::{
 };
 use std::sync::Arc;
 
-#[tokio::test]
-async fn test_registry_has_all_models() {
-    // Create a dummy tokenizer for Jina
-    let tokenizer_path = hf_hub::api::tokio::ApiBuilder::new()
-        .with_progress(false)
-        .build()
-        .unwrap()
-        .model("jinaai/jina-embeddings-v2-small-en".to_string())
-        .get("tokenizer.json")
-        .await
-        .unwrap();
+#[test]
+fn test_registry_has_all_models() {
+    codetriever_test_utils::get_test_runtime().block_on(async {
+        // Create a dummy tokenizer for Jina
+        let tokenizer_path = hf_hub::api::tokio::ApiBuilder::new()
+            .with_progress(false)
+            .build()
+            .unwrap()
+            .model("jinaai/jina-embeddings-v2-small-en".to_string())
+            .get("tokenizer.json")
+            .await
+            .unwrap();
 
-    let tokenizer = Arc::new(
-        tokenizers::Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))
-            .unwrap(),
-    );
+        let tokenizer = Arc::new(
+            tokenizers::Tokenizer::from_file(&tokenizer_path)
+                .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))
+                .unwrap(),
+        );
 
-    let registry = TokenCounterRegistry::new(tokenizer, 8192).await;
-    let models = registry.list_models();
+        let registry = TokenCounterRegistry::new(tokenizer, 8192).await;
+        let models = registry.list_models();
 
-    // Check we have models from each family
-    let has_jina = models.iter().any(|m| m.contains("jina"));
-    let has_gpt4 = models.iter().any(|m| m.contains("gpt-4"));
-    let has_gpt35 = models.iter().any(|m| m.contains("gpt-3.5"));
-    let has_gpt5 = models.iter().any(|m| m.starts_with("gpt-5"));
-    let has_o1 = models.iter().any(|m| m.contains("o1"));
+        // Check we have models from each family
+        let has_jina = models.iter().any(|m| m.contains("jina"));
+        let has_gpt4 = models.iter().any(|m| m.contains("gpt-4"));
+        let has_gpt35 = models.iter().any(|m| m.contains("gpt-3.5"));
+        let has_gpt5 = models.iter().any(|m| m.starts_with("gpt-5"));
+        let has_o1 = models.iter().any(|m| m.contains("o1"));
 
-    assert!(has_jina, "Should have Jina models");
-    assert!(has_gpt4, "Should have GPT-4 models");
-    assert!(has_gpt35, "Should have GPT-3.5 models");
-    assert!(has_gpt5, "Should have GPT-5 models");
-    assert!(has_o1, "Should have O1 models");
+        assert!(has_jina, "Should have Jina models");
+        assert!(has_gpt4, "Should have GPT-4 models");
+        assert!(has_gpt35, "Should have GPT-3.5 models");
+        assert!(has_gpt5, "Should have GPT-5 models");
+        assert!(has_o1, "Should have O1 models");
 
-    println!("Registry has {} models", models.len());
-    assert!(
-        models.len() > 20,
-        "Should have at least 20 models registered"
-    );
+        println!("Registry has {} models", models.len());
+        assert!(
+            models.len() > 20,
+            "Should have at least 20 models registered"
+        );
+    })
 }
 
-#[tokio::test]
-async fn test_registry_fallback_to_heuristic() {
-    let tokenizer_path = hf_hub::api::tokio::ApiBuilder::new()
-        .with_progress(false)
-        .build()
-        .unwrap()
-        .model("jinaai/jina-embeddings-v2-small-en".to_string())
-        .get("tokenizer.json")
-        .await
-        .unwrap();
+#[test]
+fn test_registry_fallback_to_heuristic() {
+    codetriever_test_utils::get_test_runtime().block_on(async {
+        let tokenizer_path = hf_hub::api::tokio::ApiBuilder::new()
+            .with_progress(false)
+            .build()
+            .unwrap()
+            .model("jinaai/jina-embeddings-v2-small-en".to_string())
+            .get("tokenizer.json")
+            .await
+            .unwrap();
 
-    let tokenizer = Arc::new(
-        tokenizers::Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))
-            .unwrap(),
-    );
+        let tokenizer = Arc::new(
+            tokenizers::Tokenizer::from_file(&tokenizer_path)
+                .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))
+                .unwrap(),
+        );
 
-    let registry = TokenCounterRegistry::new(tokenizer, 8192).await;
+        let registry = TokenCounterRegistry::new(tokenizer, 8192).await;
 
-    // Unknown model should get heuristic counter
-    let counter = registry.for_model("unknown-model-xyz");
-    assert_eq!(counter.name(), "heuristic-fallback");
+        // Unknown model should get heuristic counter
+        let counter = registry.for_model("unknown-model-xyz");
+        assert_eq!(counter.name(), "heuristic-fallback");
 
-    // But known models should get their specific counter
-    let gpt4_counter = registry.for_model("gpt-4");
-    assert_eq!(gpt4_counter.name(), "gpt-4");
+        // But known models should get their specific counter
+        let gpt4_counter = registry.for_model("gpt-4");
+        assert_eq!(gpt4_counter.name(), "gpt-4");
+    })
 }
 
 #[test]

@@ -1,15 +1,14 @@
 #[path = "test_utils.rs"]
 mod test_utils;
 
-#[cfg(test)]
-mod tests {
-    use super::test_utils::{cleanup_test_storage, create_test_storage};
-    use codetriever_common::CorrelationId;
-    use codetriever_parsing::CodeChunk;
-    use codetriever_vector_data::VectorStorage;
+use codetriever_common::CorrelationId;
+use codetriever_parsing::CodeChunk;
+use codetriever_vector_data::VectorStorage;
+use test_utils::{cleanup_test_storage, create_test_storage};
 
-    #[tokio::test]
-    async fn test_store_and_retrieve_chunks() {
+#[test]
+fn test_store_and_retrieve_chunks() {
+    codetriever_test_utils::get_test_runtime().block_on(async {
         let storage = create_test_storage("qdrant_chunks")
             .await
             .expect("Failed to create storage");
@@ -67,5 +66,5 @@ mod tests {
         cleanup_test_storage(&storage)
             .await
             .expect("Failed to cleanup");
-    }
+    })
 }

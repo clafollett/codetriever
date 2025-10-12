@@ -25,180 +25,187 @@ struct PerformanceThresholds {
     small_search: u128,
 }
 
-#[tokio::test]
+#[test]
 #[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
-async fn test_search_performance_baseline() -> test_utils::TestResult {
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
+fn test_search_performance_baseline() -> test_utils::TestResult {
+    test_utils::get_test_runtime().block_on(async {
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
 
-    // Index some test content first
-    let index_request = json!({
-        "project_id": "perf-test",
-        "files": [
-            {
-                "path": "src/auth.rs",
-                "content": "fn authenticate(user: &str) -> Result<Token> { /* auth logic */ }"
-            },
-            {
-                "path": "src/database.rs",
-                "content": "fn connect() -> Result<Connection> { /* db logic */ }"
-            }
-        ]
-    });
+        // Index some test content first
+        let index_request = json!({
+            "project_id": "perf-test",
+            "files": [
+                {
+                    "path": "src/auth.rs",
+                    "content": "fn authenticate(user: &str) -> Result<Token> { /* auth logic */ }"
+                },
+                {
+                    "path": "src/database.rs",
+                    "content": "fn connect() -> Result<Connection> { /* db logic */ }"
+                }
+            ]
+        });
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/index")
-        .header("content-type", "application/json")
-        .body(Body::from(index_request.to_string()))
-        .unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri("/index")
+            .header("content-type", "application/json")
+            .body(Body::from(index_request.to_string()))
+            .unwrap();
 
-    let start_index = Instant::now();
-    let response = app.oneshot(request).await.unwrap();
-    let index_duration = start_index.elapsed();
+        let start_index = Instant::now();
+        let response = app.oneshot(request).await.unwrap();
+        let index_duration = start_index.elapsed();
 
-    assert!(response.status().is_success(), "Index should succeed");
-    assert!(
-        index_duration.as_millis() < PERFORMANCE_THRESHOLDS.index,
-        "Indexing took {}ms, should be under {}ms",
-        index_duration.as_millis(),
-        PERFORMANCE_THRESHOLDS.index
-    );
+        assert!(response.status().is_success(), "Index should succeed");
+        assert!(
+            index_duration.as_millis() < PERFORMANCE_THRESHOLDS.index,
+            "Indexing took {}ms, should be under {}ms",
+            index_duration.as_millis(),
+            PERFORMANCE_THRESHOLDS.index
+        );
 
-    // Now test search performance
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
-    let search_request = json!({
-        "query": "authentication logic",
-        "limit": 10
-    });
+        // Now test search performance
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
+        let search_request = json!({
+            "query": "authentication logic",
+            "limit": 10
+        });
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/search")
-        .header("content-type", "application/json")
-        .body(Body::from(search_request.to_string()))
-        .unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri("/search")
+            .header("content-type", "application/json")
+            .body(Body::from(search_request.to_string()))
+            .unwrap();
 
-    let start_search = Instant::now();
-    let response = app.oneshot(request).await.unwrap();
-    let search_duration = start_search.elapsed();
+        let start_search = Instant::now();
+        let response = app.oneshot(request).await.unwrap();
+        let search_duration = start_search.elapsed();
 
-    assert!(response.status().is_success(), "Search should succeed");
-    assert!(
-        search_duration.as_millis() < PERFORMANCE_THRESHOLDS.search,
-        "Search took {}ms, should be under {}ms",
-        search_duration.as_millis(),
-        PERFORMANCE_THRESHOLDS.search
-    );
+        assert!(response.status().is_success(), "Search should succeed");
+        assert!(
+            search_duration.as_millis() < PERFORMANCE_THRESHOLDS.search,
+            "Search took {}ms, should be under {}ms",
+            search_duration.as_millis(),
+            PERFORMANCE_THRESHOLDS.search
+        );
 
-    println!(
-        "✅ Performance baseline: Index={}ms, Search={}ms",
-        index_duration.as_millis(),
-        search_duration.as_millis()
-    );
-    Ok(())
+        println!(
+            "✅ Performance baseline: Index={}ms, Search={}ms",
+            index_duration.as_millis(),
+            search_duration.as_millis()
+        );
+        Ok(())
+    })
 }
 
-#[tokio::test]
+#[test]
 #[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
-async fn test_small_search_performance() -> test_utils::TestResult {
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
+fn test_small_search_performance() -> test_utils::TestResult {
+    test_utils::get_test_runtime().block_on(async {
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
 
-    // Test with small, targeted search that should be very fast
-    let search_request = json!({
-        "query": "fn",
-        "limit": 1
-    });
+        // Test with small, targeted search that should be very fast
+        let search_request = json!({
+            "query": "fn",
+            "limit": 1
+        });
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/search")
-        .header("content-type", "application/json")
-        .body(Body::from(search_request.to_string()))
-        .unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri("/search")
+            .header("content-type", "application/json")
+            .body(Body::from(search_request.to_string()))
+            .unwrap();
 
-    let start = Instant::now();
-    let response = app.oneshot(request).await.unwrap();
-    let duration = start.elapsed();
+        let start = Instant::now();
+        let response = app.oneshot(request).await.unwrap();
+        let duration = start.elapsed();
 
-    assert!(
-        response.status().is_success(),
-        "Small search should succeed"
-    );
-    assert!(
-        duration.as_millis() < PERFORMANCE_THRESHOLDS.small_search,
-        "Small search took {}ms, should be under {}ms",
-        duration.as_millis(),
-        PERFORMANCE_THRESHOLDS.small_search
-    );
-    Ok(())
+        assert!(
+            response.status().is_success(),
+            "Small search should succeed"
+        );
+        assert!(
+            duration.as_millis() < PERFORMANCE_THRESHOLDS.small_search,
+            "Small search took {}ms, should be under {}ms",
+            duration.as_millis(),
+            PERFORMANCE_THRESHOLDS.small_search
+        );
+        Ok(())
+    })
 }
 
-#[tokio::test]
+#[test]
 #[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
-async fn test_repeated_search_caching_performance() -> test_utils::TestResult {
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
+fn test_repeated_search_caching_performance() -> test_utils::TestResult {
+    test_utils::get_test_runtime().block_on(async {
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
 
-    let search_request = json!({
-        "query": "function definition",
-        "limit": 5
-    });
+        let search_request = json!({
+            "query": "function definition",
+            "limit": 5
+        });
 
-    // First search (cold)
-    let request = Request::builder()
-        .method("POST")
-        .uri("/search")
-        .header("content-type", "application/json")
-        .body(Body::from(search_request.to_string()))
-        .unwrap();
+        // First search (cold)
+        let request = Request::builder()
+            .method("POST")
+            .uri("/search")
+            .header("content-type", "application/json")
+            .body(Body::from(search_request.to_string()))
+            .unwrap();
 
-    let start_cold = Instant::now();
-    let response = app.oneshot(request).await.unwrap();
-    let cold_duration = start_cold.elapsed();
+        let start_cold = Instant::now();
+        let response = app.oneshot(request).await.unwrap();
+        let cold_duration = start_cold.elapsed();
 
-    assert!(response.status().is_success());
+        assert!(response.status().is_success());
 
-    // Second search (should potentially be faster due to caching)
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
-    let request = Request::builder()
-        .method("POST")
-        .uri("/search")
-        .header("content-type", "application/json")
-        .body(Body::from(search_request.to_string()))
-        .unwrap();
+        // Second search (should potentially be faster due to caching)
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/search")
+            .header("content-type", "application/json")
+            .body(Body::from(search_request.to_string()))
+            .unwrap();
 
-    let start_warm = Instant::now();
-    let response = app.oneshot(request).await.unwrap();
-    let warm_duration = start_warm.elapsed();
+        let start_warm = Instant::now();
+        let response = app.oneshot(request).await.unwrap();
+        let warm_duration = start_warm.elapsed();
 
-    assert!(response.status().is_success());
+        assert!(response.status().is_success());
 
-    println!(
-        "✅ Cache performance: Cold={}ms, Warm={}ms",
-        cold_duration.as_millis(),
-        warm_duration.as_millis()
-    );
+        println!(
+            "✅ Cache performance: Cold={}ms, Warm={}ms",
+            cold_duration.as_millis(),
+            warm_duration.as_millis()
+        );
 
-    // Note: Due to fresh router instances, this test mainly validates consistent performance
-    Ok(())
+        // Note: Due to fresh router instances, this test mainly validates consistent performance
+        Ok(())
+    })
 }
 
-#[tokio::test]
+#[test]
 #[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
-async fn test_index_large_batch_performance() -> test_utils::TestResult {
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
+fn test_index_large_batch_performance() -> test_utils::TestResult {
+    test_utils::get_test_runtime().block_on(async {
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
 
-    // Create a batch of multiple files to test indexing performance
-    let mut files = Vec::new();
-    for i in 0..20 {
-        files.push(json!({
-            "path": format!("src/module_{}.rs", i),
-            "content": format!("
+        // Create a batch of multiple files to test indexing performance
+        let mut files = Vec::new();
+        for i in 0..20 {
+            files.push(json!({
+                "path": format!("src/module_{}.rs", i),
+                "content": format!("
                 pub struct Module{} {{
                     id: usize,
                     name: String,
@@ -214,38 +221,39 @@ async fn test_index_large_batch_performance() -> test_utils::TestResult {
                         Ok(())
                     }}
                 }}", i, i, i)
-        }));
-    }
+            }));
+        }
 
-    let request_body = json!({
-        "project_id": "perf-batch-test",
-        "files": files
-    });
+        let request_body = json!({
+            "project_id": "perf-batch-test",
+            "files": files
+        });
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/index")
-        .header("content-type", "application/json")
-        .body(Body::from(request_body.to_string()))
-        .unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri("/index")
+            .header("content-type", "application/json")
+            .body(Body::from(request_body.to_string()))
+            .unwrap();
 
-    let start = Instant::now();
-    let response = app.oneshot(request).await.unwrap();
-    let duration = start.elapsed();
+        let start = Instant::now();
+        let response = app.oneshot(request).await.unwrap();
+        let duration = start.elapsed();
 
-    assert!(response.status().is_success(), "Batch index should succeed");
+        assert!(response.status().is_success(), "Batch index should succeed");
 
-    // Large batch should still complete within reasonable time
-    assert!(
-        duration.as_millis() < PERFORMANCE_THRESHOLDS.index * 2, // 2x threshold for large batch
-        "Large batch indexing took {}ms, should be under {}ms",
-        duration.as_millis(),
-        PERFORMANCE_THRESHOLDS.index * 2
-    );
+        // Large batch should still complete within reasonable time
+        assert!(
+            duration.as_millis() < PERFORMANCE_THRESHOLDS.index * 2, // 2x threshold for large batch
+            "Large batch indexing took {}ms, should be under {}ms",
+            duration.as_millis(),
+            PERFORMANCE_THRESHOLDS.index * 2
+        );
 
-    println!(
-        "✅ Batch indexing performance: {}ms for 20 files",
-        duration.as_millis()
-    );
-    Ok(())
+        println!(
+            "✅ Batch indexing performance: {}ms for 20 files",
+            duration.as_millis()
+        );
+        Ok(())
+    })
 }

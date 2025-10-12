@@ -5,7 +5,9 @@
 //! its own dependencies, eliminating circular dependencies and architectural debt.
 
 use crate::{IndexerResult, indexing::Indexer};
+use codetriever_config::ApplicationConfig;
 use codetriever_embeddings::EmbeddingService;
+use codetriever_meta_data::traits::FileRepository;
 use codetriever_vector_data::VectorStorage;
 use std::sync::Arc;
 
@@ -55,15 +57,35 @@ impl ServiceFactory {
     }
 
     /// Create Indexer with injected dependencies
-    pub fn indexer(
+    ///
+    /// All dependencies are required - no defaults, no fallbacks.
+    /// Factory coordinates tokenizer loading for clean dependency injection.
+    pub async fn indexer(
         &self,
         embedding_service: Arc<dyn EmbeddingService>,
         vector_storage: Arc<dyn VectorStorage>,
+        repository: Arc<dyn FileRepository>,
     ) -> IndexerResult<Indexer> {
-        let mut indexer = Indexer::new();
-        indexer.set_embedding_service(embedding_service);
-        indexer.set_storage_arc(vector_storage);
-        Ok(indexer)
+        let config = ApplicationConfig::with_profile(codetriever_config::Profile::Development);
+
+        // Load tokenizer from embedding service for accurate chunking
+        let tokenizer = embedding_service.provider().get_tokenizer().await;
+
+        // Create CodeParser with tokenizer (no lazy loading!)
+        let code_parser = codetriever_parsing::CodeParser::new(
+            tokenizer,
+            config.indexing.split_large_units,
+            config.indexing.max_chunk_tokens, // Use chunk size, not model max
+            config.indexing.chunk_overlap_tokens,
+        );
+
+        Ok(Indexer::new(
+            embedding_service,
+            vector_storage,
+            repository,
+            code_parser,
+            &config,
+        ))
     }
 
     /// Get configuration

@@ -51,31 +51,33 @@ async fn get_model() -> Option<Arc<Mutex<EmbeddingModel>>> {
     Some(Arc::clone(&MODEL))
 }
 
-#[tokio::test]
-async fn test_model_requires_huggingface_token() {
-    // This test forces us to implement real model downloading
-    let mut model = EmbeddingModel::new(
-        "jinaai/jina-embeddings-v2-base-code".to_string(),
-        TEST_MAX_TOKENS,
-    );
-
-    let test_code = vec!["print('hello world')"];
-    let result = model.embed(&test_code).await;
-
-    // If HF_TOKEN is not set, we expect a specific error
-    if std::env::var("HF_TOKEN").is_err() && std::env::var("HUGGING_FACE_HUB_TOKEN").is_err() {
-        assert!(
-            result.is_err(),
-            "Should fail without HF_TOKEN or HUGGING_FACE_HUB_TOKEN environment variable"
+#[test]
+fn test_model_requires_huggingface_token() {
+    codetriever_test_utils::get_test_runtime().block_on(async {
+        // This test forces us to implement real model downloading
+        let mut model = EmbeddingModel::new(
+            "jinaai/jina-embeddings-v2-base-code".to_string(),
+            TEST_MAX_TOKENS,
         );
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("HF_TOKEN")
-                || err.to_string().contains("HUGGING_FACE_HUB_TOKEN")
-                || err.to_string().contains("authentication"),
-            "Error should mention missing token or authentication: {err}"
-        );
-    }
+
+        let test_code = vec!["print('hello world')"];
+        let result = model.embed(&test_code).await;
+
+        // If HF_TOKEN is not set, we expect a specific error
+        if std::env::var("HF_TOKEN").is_err() && std::env::var("HUGGING_FACE_HUB_TOKEN").is_err() {
+            assert!(
+                result.is_err(),
+                "Should fail without HF_TOKEN or HUGGING_FACE_HUB_TOKEN environment variable"
+            );
+            let err = result.unwrap_err();
+            assert!(
+                err.to_string().contains("HF_TOKEN")
+                    || err.to_string().contains("HUGGING_FACE_HUB_TOKEN")
+                    || err.to_string().contains("authentication"),
+                "Error should mention missing token or authentication: {err}"
+            );
+        }
+    });
 }
 
 #[tokio::test]

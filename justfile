@@ -140,14 +140,14 @@ test-integration:
     @echo "🔧 Running integration tests..."
     cargo test --workspace --tests
 
-# Run tests with GPU acceleration
-test-metal:
+# Run tests with GPU acceleration (optionally specify test names)
+test-metal *TESTS:
     @echo "🍎 Running tests with Metal GPU support..."
-    cargo test-metal --workspace
+    cargo test-metal --workspace {{TESTS}}
 
-test-cuda:
+test-cuda *TESTS:
     @echo "🐧 Running tests with CUDA GPU support..."
-    cargo test-cuda --workspace
+    cargo test-cuda --workspace {{TESTS}}
 
 # Format code
 
@@ -374,38 +374,22 @@ qdrant-status:
     @echo "🔍 Checking Qdrant status..."
     @curl -s http://localhost:6333/ | python3 -m json.tool 2>/dev/null || echo "Qdrant not responding on port 6333"
 
-# Check PostgreSQL test data
-db-check-test-data:
-    @echo "🔍 Checking for test data in PostgreSQL..."
-    @echo "Tables with 'test' in repository_id:"
-    @echo ""
-    @echo "project_branches:"
-    @PGPASSWORD=${DB_PASSWORD} psql -h localhost -p 5433 -U ${DB_USER} -d ${DB_NAME} -c "SELECT repository_id, branch FROM project_branches WHERE repository_id LIKE '%test%';" 2>/dev/null || echo "No test data or connection error"
-    @echo ""
-    @echo "indexed_files:"
-    @PGPASSWORD=${DB_PASSWORD} psql -h localhost -p 5433 -U ${DB_USER} -d ${DB_NAME} -c "SELECT repository_id, branch, file_path FROM indexed_files WHERE repository_id LIKE '%test%';" 2>/dev/null || echo "No test data or connection error"
-    @echo ""
-    @echo "chunk_metadata (count):"
-    @PGPASSWORD=${DB_PASSWORD} psql -h localhost -p 5433 -U ${DB_USER} -d ${DB_NAME} -c "SELECT repository_id, COUNT(*) as chunk_count FROM chunk_metadata WHERE repository_id LIKE '%test%' GROUP BY repository_id;" 2>/dev/null || echo "No test data or connection error"
-
-# Clean up PostgreSQL test data
-db-clean-test-data:
-    @echo "🧹 Cleaning test data from PostgreSQL..."
-    @PGPASSWORD=${DB_PASSWORD} psql -h localhost -p 5433 -U ${DB_USER} -d ${DB_NAME} -c "DELETE FROM project_branches WHERE repository_id LIKE '%test%';" 2>/dev/null || echo "No test data to clean or connection error"
-    @echo "✅ Test data cleaned from PostgreSQL"
+# Reset both databases (PostgreSQL + Qdrant) - complete wipe and reinit
+reset-dbs:
+    @echo "🗑️  RESETTING ALL DATABASES - This will delete ALL data!"
+    @echo "   Stopping Docker containers and removing volumes..."
+    @docker-compose -f docker/docker-compose.{{ENV}}.yml down -v 2>/dev/null || true
+    @echo "   Removing local data folders..."
+    @rm -rf ~/.codetriever/qdrant 2>/dev/null || true
+    @rm -rf ~/.codetriever/postgres 2>/dev/null || true
+    @echo "   Reinitializing..."
+    @just init
+    @echo "✅ Databases reset complete!"
 
 # List Qdrant collections
 qdrant-list:
     @echo "📋 Listing Qdrant collections..."
-    @curl -H "api-key: ${QDRANT_API_KEY}" http://localhost:6333/collections
-
-# Clean Qdrant test collections
-clean-test-data:
-    @echo "🧹 Cleaning test collections..."
-    @curl -s -H "api-key: ${QDRANT_API_KEY}" http://localhost:6334/collections | \
-        python3 -c "import sys, json; data = json.load(sys.stdin); [print(c['name']) for c in data.get('result', {}).get('collections', []) if c['name'].startswith('test_')]" | \
-        xargs -I {} curl -X DELETE -H "api-key: ${QDRANT_API_KEY}" "http://localhost:6334/collections/{}" 2>/dev/null || true
-    @echo "✅ Test data cleaned"
+    @curl -s -H "api-key: ${QDRANT_API_KEY}" http://localhost:6334/collections | python3 -m json.tool || echo "❌ Qdrant not responding"
 # ========================
 # GitHub Issue Workflow
 # ========================

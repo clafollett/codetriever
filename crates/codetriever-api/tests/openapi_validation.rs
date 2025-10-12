@@ -13,37 +13,39 @@ use serde_json::Value;
 use tower::ServiceExt;
 use utoipa::OpenApi;
 
-#[tokio::test]
+#[test]
 #[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
-async fn test_openapi_json_endpoint_accessible() -> test_utils::TestResult {
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
+fn test_openapi_json_endpoint_accessible() -> test_utils::TestResult {
+    test_utils::get_test_runtime().block_on(async {
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
 
-    // Test /openapi.json endpoint
-    let request = Request::builder()
-        .uri("/openapi.json")
-        .body(Body::empty())
-        .unwrap();
+        // Test /openapi.json endpoint
+        let request = Request::builder()
+            .uri("/openapi.json")
+            .body(Body::empty())
+            .unwrap();
 
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
 
-    // Test /api-docs/openapi.json endpoint
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
-    let request = Request::builder()
-        .uri("/api-docs/openapi.json")
-        .body(Body::empty())
-        .unwrap();
+        // Test /api-docs/openapi.json endpoint
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
+        let request = Request::builder()
+            .uri("/api-docs/openapi.json")
+            .body(Body::empty())
+            .unwrap();
 
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
-    Ok(())
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+        Ok(())
+    })
 }
 
-#[tokio::test]
-#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
-async fn test_openapi_schema_structure() -> test_utils::TestResult {
+#[test]
+#[allow(clippy::significant_drop_tightening, clippy::unnecessary_wraps)] // Keep Result for consistency
+fn test_openapi_schema_structure() -> test_utils::TestResult {
     // Get the generated OpenAPI spec
     let openapi_spec = ApiDoc::openapi();
 
@@ -72,9 +74,9 @@ async fn test_openapi_schema_structure() -> test_utils::TestResult {
     Ok(())
 }
 
-#[tokio::test]
-#[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
-async fn test_search_response_matches_schema() -> test_utils::TestResult {
+#[test]
+#[allow(clippy::significant_drop_tightening, clippy::unnecessary_wraps)] // Keep Result for consistency
+fn test_search_response_matches_schema() -> test_utils::TestResult {
     // This is a framework for future schema validation
     // For now, just verify that we can generate and parse the schema
 
@@ -100,42 +102,44 @@ async fn test_search_response_matches_schema() -> test_utils::TestResult {
     Ok(())
 }
 
-#[tokio::test]
+#[test]
 #[allow(clippy::significant_drop_tightening)] // test_state must live until cleanup
-async fn test_schema_consistency_with_actual_endpoints() -> test_utils::TestResult {
-    // Test that our live schema matches what we expect
-    // This is where future validation against actual responses would go
+fn test_schema_consistency_with_actual_endpoints() -> test_utils::TestResult {
+    test_utils::get_test_runtime().block_on(async {
+        // Test that our live schema matches what we expect
+        // This is where future validation against actual responses would go
 
-    let test_state = test_utils::app_state().await?;
-    let app = create_router(test_state.state().clone());
+        let test_state = test_utils::app_state().await?;
+        let app = create_router(test_state.state().clone());
 
-    // Test that we can get the schema from the live endpoint
-    let request = Request::builder()
-        .uri("/openapi.json")
-        .body(Body::empty())
-        .unwrap();
+        // Test that we can get the schema from the live endpoint
+        let request = Request::builder()
+            .uri("/openapi.json")
+            .body(Body::empty())
+            .unwrap();
 
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), 200);
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let schema_json: Value = serde_json::from_slice(&body).unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let schema_json: Value = serde_json::from_slice(&body).unwrap();
 
-    // Verify the live schema has expected structure
-    let paths = schema_json.get("paths").expect("Schema should have paths");
-    assert!(
-        paths.get("/search").is_some_and(Value::is_object),
-        "Search endpoint should be documented"
-    );
-    assert!(
-        paths.get("/index").is_some_and(Value::is_object),
-        "Index endpoint should be documented"
-    );
+        // Verify the live schema has expected structure
+        let paths = schema_json.get("paths").expect("Schema should have paths");
+        assert!(
+            paths.get("/search").is_some_and(Value::is_object),
+            "Search endpoint should be documented"
+        );
+        assert!(
+            paths.get("/index").is_some_and(Value::is_object),
+            "Index endpoint should be documented"
+        );
 
-    println!("✅ Live OpenAPI endpoint serves valid schema");
-    Ok(())
+        println!("✅ Live OpenAPI endpoint serves valid schema");
+        Ok(())
+    })
 }
 
 // TODO: Add actual response validation tests once APIs are stable

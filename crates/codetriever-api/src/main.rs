@@ -6,7 +6,7 @@ use codetriever_api::{AppState, routes};
 use codetriever_config::{ApplicationConfig, Profile};
 use codetriever_embeddings::DefaultEmbeddingService;
 use codetriever_indexing::{ServiceConfig, ServiceFactory};
-use codetriever_meta_data::{DataClient, PoolConfig, PoolManager};
+use codetriever_meta_data::{DataClient, DbFileRepository, PoolConfig, PoolManager};
 use codetriever_search::SearchService;
 use codetriever_vector_data::QdrantStorage;
 use std::net::SocketAddr;
@@ -39,7 +39,11 @@ async fn main() -> MainResult {
     // Initialize connection pools once at startup
     info!("Initializing database connection pool...");
     let pools = PoolManager::new(&config.database, PoolConfig::default()).await?;
-    let db_client_concrete = Arc::new(DataClient::new(pools));
+    let db_client_concrete = Arc::new(DataClient::new(pools.clone()));
+
+    // Create file repository for indexer (shares same connection pools)
+    let file_repository = Arc::new(DbFileRepository::new(pools))
+        as Arc<dyn codetriever_meta_data::traits::FileRepository>;
 
     info!("Initializing vector storage...");
     let vector_storage = Arc::new(
@@ -67,7 +71,13 @@ async fn main() -> MainResult {
 
     info!("Initializing indexer service...");
     let factory = ServiceFactory::new(ServiceConfig::from_env()?);
-    let indexer = factory.indexer(Arc::clone(&embedding_service), Arc::clone(&vector_storage))?;
+    let indexer = factory
+        .indexer(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&file_repository),
+        )
+        .await?;
     let indexer_service =
         Arc::new(Mutex::new(indexer)) as Arc<Mutex<dyn codetriever_indexing::IndexerService>>;
 

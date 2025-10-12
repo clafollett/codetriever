@@ -106,6 +106,17 @@ pub struct PerformanceConfig {
     /// Larger batches improve throughput but use more memory
     pub batch_size: usize,
 
+    /// Number of embedding model instances in the pool
+    /// More instances allow parallel inference but use more memory
+    /// Recommended: 2-4 for production, 1 for development
+    #[serde(default = "default_pool_size")]
+    pub pool_size: usize,
+
+    /// Maximum milliseconds to wait when collecting requests into a batch
+    /// Lower = better latency, Higher = better throughput
+    #[serde(default = "default_batch_timeout_ms")]
+    pub batch_timeout_ms: u64,
+
     /// Whether to use GPU acceleration if available (Metal/CUDA)
     /// Significantly improves performance for large models
     pub use_gpu: bool,
@@ -169,6 +180,14 @@ impl Default for ModelCapabilities {
 }
 
 /// Default cache enabled setting
+const fn default_pool_size() -> usize {
+    2
+}
+
+const fn default_batch_timeout_ms() -> u64 {
+    10
+}
+
 const fn default_cache_enabled() -> bool {
     true // Enable caching by default to improve performance
 }
@@ -219,6 +238,20 @@ impl EmbeddingConfig {
                 Profile::Test => 4,
             });
 
+        let pool_size = std::env::var("CODETRIEVER_EMBEDDING_POOL_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(match profile {
+                Profile::Development => 2,
+                Profile::Staging | Profile::Production => 3,
+                Profile::Test => 1, // Single model for tests to avoid complexity
+            });
+
+        let batch_timeout_ms = std::env::var("CODETRIEVER_EMBEDDING_BATCH_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10); // 10ms default for good latency/throughput balance
+
         let use_gpu = std::env::var("CODETRIEVER_EMBEDDING_USE_GPU")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -266,6 +299,8 @@ impl EmbeddingConfig {
             },
             performance: PerformanceConfig {
                 batch_size,
+                pool_size,
+                batch_timeout_ms,
                 use_gpu,
                 gpu_device,
                 memory_limit_mb,

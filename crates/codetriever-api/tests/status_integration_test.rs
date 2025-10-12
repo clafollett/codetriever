@@ -1,6 +1,6 @@
 //! Integration tests for `/status` endpoint using real Docker services
 //!
-//! Run with: `cargo test --test status_integration_test -- --test-threads=1`
+//! Run with: `cargo test --test status_integration_test --features metal`
 //! Requires: Docker services running (`PostgreSQL` + Qdrant)
 
 use codetriever_api::routes::status::get_status;

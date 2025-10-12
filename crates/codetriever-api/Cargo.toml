@@ -68,13 +68,14 @@ utoipa = { version = "5.4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 
 [dev-dependencies]
-tower = { workspace = true }
+codetriever-test-utils = { path = "../codetriever-test-utils" }
 codetriever-indexing = { path = "../codetriever-indexing", features = [
     "test-utils",
 ] }
 codetriever-search = { path = "../codetriever-search", features = [
     "test-utils",
 ] }
+tower = { workspace = true }
 
 [lints]
 workspace = true

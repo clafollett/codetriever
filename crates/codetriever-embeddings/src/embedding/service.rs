@@ -4,49 +4,97 @@
 //! that uses the existing EmbeddingModel.
 
 use super::model::EmbeddingModel;
+use super::pool::EmbeddingModelPool;
 use super::traits::{EmbeddingProvider, EmbeddingService, EmbeddingStats};
 use crate::EmbeddingResult;
 use async_trait::async_trait;
 use codetriever_config::EmbeddingConfig; // Use unified configuration
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use std::time::Duration;
+use tokio::sync::RwLock;
 
-/// Default implementation of EmbeddingProvider using the existing model
+// Global provider counter for debugging
+static PROVIDER_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Default implementation of EmbeddingProvider using model pool with batching
+///
+/// Uses a pool of embedding models for parallel inference without lock contention.
 pub struct DefaultEmbeddingProvider {
-    model: Arc<Mutex<EmbeddingModel>>,
+    pool: EmbeddingModelPool,
     config: EmbeddingConfig,
+    provider_id: String, // Unique ID for debugging
 }
 
 impl DefaultEmbeddingProvider {
     /// Create a new embedding provider with the given configuration
+    ///
+    /// Initializes a pool of embedding models for parallel inference
     pub fn new(config: EmbeddingConfig) -> Self {
-        // Use new nested configuration structure - no wrapper needed
-        let model = EmbeddingModel::new(config.model.id.clone(), config.model.max_tokens);
+        let provider_id = format!(
+            "provider-{}",
+            PROVIDER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        eprintln!("🏗️  Creating DefaultEmbeddingProvider {provider_id}");
+
+        let pool = EmbeddingModelPool::new(
+            config.model.id.clone(),
+            config.model.max_tokens,
+            config.performance.pool_size,
+            config.performance.batch_size,
+            Duration::from_millis(config.performance.batch_timeout_ms),
+        );
+
         Self {
-            model: Arc::new(Mutex::new(model)),
+            pool,
             config,
+            provider_id,
         }
     }
 
-    /// Create from an existing EmbeddingModel
-    pub fn from_model(model: EmbeddingModel, config: EmbeddingConfig) -> Self {
+    /// Create from an existing EmbeddingModel (for testing/compatibility)
+    ///
+    /// Creates a pool with a single model instance
+    pub fn from_model(_model: EmbeddingModel, config: EmbeddingConfig) -> Self {
+        let provider_id = format!(
+            "provider-{}",
+            PROVIDER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        eprintln!("🏗️  Creating DefaultEmbeddingProvider {provider_id} (from_model)");
+
+        // For compatibility, create single-model pool
+        let pool = EmbeddingModelPool::new(
+            config.model.id.clone(),
+            config.model.max_tokens,
+            1, // Single model
+            config.performance.batch_size,
+            Duration::from_millis(config.performance.batch_timeout_ms),
+        );
+
         Self {
-            model: Arc::new(Mutex::new(model)),
+            pool,
             config,
+            provider_id,
         }
+    }
+}
+
+impl Drop for DefaultEmbeddingProvider {
+    fn drop(&mut self) {
+        eprintln!(
+            "🗑️  Dropping DefaultEmbeddingProvider: {}",
+            self.provider_id
+        );
     }
 }
 
 #[async_trait]
 impl EmbeddingProvider for DefaultEmbeddingProvider {
     async fn embed_batch(&self, texts: &[&str]) -> EmbeddingResult<Vec<Vec<f32>>> {
-        // Zero-copy optimization: convert &[&str] to Vec<&str> for internal processing
-        // This avoids the expensive String allocations that were happening before
-        let text_refs: Vec<&str> = texts.to_vec();
-        let mut model = self.model.lock().await;
+        // Convert to owned strings for pool (required for async channel transfer)
+        let owned_texts: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
 
-        // Call the optimized embed method that accepts string references
-        model.embed(&text_refs).await
+        // Submit to pool - will be batched with other concurrent requests
+        self.pool.embed(owned_texts).await
     }
 
     fn embedding_dimension(&self) -> usize {
@@ -62,33 +110,49 @@ impl EmbeddingProvider for DefaultEmbeddingProvider {
     }
 
     async fn is_ready(&self) -> bool {
-        let mut model = self.model.lock().await;
-        // Call ensure_model_loaded to check and load if necessary
-        model.ensure_model_loaded().await.is_ok()
+        // Pool is always ready - models load lazily on first use
+        // We could check if at least one worker is ready, but it's not critical
+        true
     }
 
     async fn ensure_ready(&self) -> EmbeddingResult<()> {
-        if !self.is_ready().await {
-            // The model loads on first use, so trigger a dummy embedding with string refs
-            let _ = self.embed_batch(&["test"]).await?;
-        }
+        // Warm up the pool by submitting a test request
+        // This triggers lazy loading in at least one worker
+        let _ = self.embed_batch(&["test"]).await?;
         Ok(())
+    }
+
+    async fn get_tokenizer(&self) -> Option<std::sync::Arc<tokenizers::Tokenizer>> {
+        // Delegate to pool - this will load tokenizer lazily on first call
+        self.pool.get_tokenizer().await.ok().flatten()
     }
 }
 
+// Global service counter for debugging
+static SERVICE_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Default implementation of EmbeddingService
+///
+/// Provider is Arc-shared to ensure pool stays alive across all users
 pub struct DefaultEmbeddingService {
-    provider: Box<dyn EmbeddingProvider>,
+    provider: Arc<dyn EmbeddingProvider>,
     stats: Arc<RwLock<EmbeddingStats>>,
     batch_size: usize,
+    service_id: String, // Unique ID for debugging
 }
 
 impl DefaultEmbeddingService {
     /// Create a new embedding service with the default provider
     pub fn new(config: EmbeddingConfig) -> Self {
+        let service_id = format!(
+            "service-{}",
+            SERVICE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        eprintln!("🏗️  Creating DefaultEmbeddingService {service_id}");
+
         let batch_size = config.performance.batch_size;
         let model_name = config.model.id.clone();
-        let provider = Box::new(DefaultEmbeddingProvider::new(config));
+        let provider = Arc::new(DefaultEmbeddingProvider::new(config));
 
         let stats = Arc::new(RwLock::new(EmbeddingStats {
             model_name,
@@ -100,11 +164,18 @@ impl DefaultEmbeddingService {
             provider,
             stats,
             batch_size,
+            service_id,
         }
     }
 
     /// Create with a custom provider
-    pub fn with_provider(provider: Box<dyn EmbeddingProvider>, batch_size: usize) -> Self {
+    pub fn with_provider(provider: Arc<dyn EmbeddingProvider>, batch_size: usize) -> Self {
+        let service_id = format!(
+            "service-{}",
+            SERVICE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        eprintln!("🏗️  Creating DefaultEmbeddingService {service_id} (with_provider)");
+
         let stats = Arc::new(RwLock::new(EmbeddingStats {
             model_name: provider.model_name().to_string(),
             embedding_dimension: provider.embedding_dimension(),
@@ -115,7 +186,14 @@ impl DefaultEmbeddingService {
             provider,
             stats,
             batch_size,
+            service_id,
         }
+    }
+}
+
+impl Drop for DefaultEmbeddingService {
+    fn drop(&mut self) {
+        eprintln!("🗑️  Dropping DefaultEmbeddingService: {}", self.service_id);
     }
 }
 
@@ -216,6 +294,11 @@ impl EmbeddingProvider for MockEmbeddingProvider {
     async fn ensure_ready(&self) -> EmbeddingResult<()> {
         Ok(())
     }
+
+    async fn get_tokenizer(&self) -> Option<std::sync::Arc<tokenizers::Tokenizer>> {
+        // Mock doesn't have a real tokenizer
+        None
+    }
 }
 
 #[cfg(test)]
@@ -224,7 +307,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_embedding_service_batching() {
-        let provider = Box::new(MockEmbeddingProvider::new(768));
+        let provider = Arc::new(MockEmbeddingProvider::new(768));
         let service = DefaultEmbeddingService::with_provider(provider, 2);
 
         let texts = vec!["text1", "text2", "text3", "text4", "text5"];
@@ -240,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_embedding_service_error_handling() {
-        let provider = Box::new(MockEmbeddingProvider::new(768).with_failure());
+        let provider = Arc::new(MockEmbeddingProvider::new(768).with_failure());
         let service = DefaultEmbeddingService::with_provider(provider, 2);
 
         let texts = vec!["text1"];
