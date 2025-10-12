@@ -25,7 +25,8 @@ const DEFAULT_MAX_TOKENS: usize = 512; // Conservative for memory
 const DEFAULT_DIMENSIONS: usize = 768; // JinaBERT v2 standard
 
 // Performance Configuration
-const DEFAULT_BATCH_SIZE: usize = 64; // Balance memory/speed
+const DEFAULT_INDEXER_BATCH_SIZE: usize = 64; // Balance memory/speed for indexing (GPU)
+const DEFAULT_SEARCH_BATCH_SIZE: usize = 8; // Typical concurrent API users
 const DEFAULT_POOL_SIZE: usize = 2; // Minimum for parallelism
 const DEFAULT_BATCH_TIMEOUT_MS: u64 = 10; // Low latency
 const DEFAULT_USE_GPU: bool = true; // Use GPU if available
@@ -164,9 +165,15 @@ pub struct ModelConfig {
 /// Performance and resource configuration - controls runtime behavior
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PerformanceConfig {
-    /// Batch size for processing multiple texts together
-    /// Larger batches improve throughput but use more memory
-    pub batch_size: usize,
+    /// Batch size for indexing operations - controls GPU memory usage during model forward pass
+    /// Larger batches = better GPU utilization but more memory
+    /// This is the PRIMARY batching config for indexing workflows
+    pub indexer_batch_size: usize,
+
+    /// Batch size for search API operations - controls concurrent user query batching
+    /// Only relevant for multi-user API scenarios
+    /// Smaller than indexer batch since search handles 1-5 queries at a time
+    pub search_batch_size: usize,
 
     /// Number of embedding model instances in the pool
     /// More instances allow parallel inference but use more memory
@@ -282,10 +289,15 @@ impl EmbeddingConfig {
             .unwrap_or(DEFAULT_DIMENSIONS);
 
         // Performance configuration - controls runtime resource usage and optimization
-        let batch_size = std::env::var("CODETRIEVER_EMBEDDING_BATCH_SIZE")
+        let indexer_batch_size = std::env::var("CODETRIEVER_EMBEDDING_INDEXER_BATCH_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(DEFAULT_BATCH_SIZE);
+            .unwrap_or(DEFAULT_INDEXER_BATCH_SIZE);
+
+        let search_batch_size = std::env::var("CODETRIEVER_EMBEDDING_SEARCH_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SEARCH_BATCH_SIZE);
 
         let pool_size = std::env::var("CODETRIEVER_EMBEDDING_POOL_SIZE")
             .ok()
@@ -340,7 +352,8 @@ impl EmbeddingConfig {
                 capabilities: ModelCapabilities::default(),
             },
             performance: PerformanceConfig {
-                batch_size,
+                indexer_batch_size,
+                search_batch_size,
                 pool_size,
                 batch_timeout_ms,
                 use_gpu,
@@ -365,10 +378,16 @@ impl validation::Validate for EmbeddingConfig {
 
         // Validate performance configuration
         validation::validate_range(
-            self.performance.batch_size as u64,
+            self.performance.indexer_batch_size as u64,
             1,
             1000,
-            "performance.batch_size",
+            "performance.indexer_batch_size",
+        )?;
+        validation::validate_range(
+            self.performance.search_batch_size as u64,
+            1,
+            1000,
+            "performance.search_batch_size",
         )?;
 
         // Advanced validation as specified by architect
@@ -418,10 +437,10 @@ impl EmbeddingConfig {
             _ => 1024,                               // Conservative default estimate
         };
 
-        // Batch processing memory overhead
+        // Batch processing memory overhead (use indexer batch size as it's larger)
         #[allow(clippy::arithmetic_side_effects)]
         let batch_memory =
-            (self.model.dimensions * self.performance.batch_size * 4) / (1024 * 1024); // f32 vectors
+            (self.model.dimensions * self.performance.indexer_batch_size * 4) / (1024 * 1024); // f32 vectors
 
         #[allow(clippy::arithmetic_side_effects)]
         let total_memory = model_memory + batch_memory;
@@ -440,9 +459,6 @@ pub struct IndexingConfig {
 
     /// Number of concurrent indexing tasks
     pub concurrency_limit: usize,
-
-    /// Batch size for embedding generation
-    pub embedding_batch_size: usize,
 }
 
 impl IndexingConfig {
@@ -463,16 +479,10 @@ impl IndexingConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_CONCURRENCY_LIMIT);
 
-        let embedding_batch_size = std::env::var("CODETRIEVER_INDEXING_EMBEDDING_BATCH_SIZE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(DEFAULT_BATCH_SIZE);
-
         Self {
             max_chunk_tokens,
             split_large_units,
             concurrency_limit,
-            embedding_batch_size,
         }
     }
 }
@@ -481,12 +491,6 @@ impl validation::Validate for IndexingConfig {
     fn validate(&self) -> ConfigResult<()> {
         validation::validate_range(self.max_chunk_tokens as u64, 1, 10_000, "max_chunk_tokens")?;
         validation::validate_range(self.concurrency_limit as u64, 1, 100, "concurrency_limit")?;
-        validation::validate_range(
-            self.embedding_batch_size as u64,
-            1,
-            1000,
-            "embedding_batch_size",
-        )?;
         Ok(())
     }
 }
@@ -938,7 +942,7 @@ impl ApplicationConfig {
         #[allow(clippy::arithmetic_side_effects)]
         let vector_memory = (self.vector_storage.vector_dimension as u64
             * 4
-            * self.embedding.performance.batch_size as u64)
+            * self.embedding.performance.indexer_batch_size as u64)
             / (1024 * 1024);
 
         // Database connection pool memory - PostgreSQL connection overhead
@@ -1051,18 +1055,18 @@ mod tests {
     fn test_environment_variable_overrides() {
         // Test that environment variables properly override defaults
         unsafe {
-            std::env::set_var("CODETRIEVER_EMBEDDING_BATCH_SIZE", "999");
+            std::env::set_var("CODETRIEVER_EMBEDDING_INDEXER_BATCH_SIZE", "999");
             std::env::set_var("CODETRIEVER_API_PORT", "1234");
         }
 
         let config = ApplicationConfig::from_env();
 
-        assert_eq!(config.embedding.performance.batch_size, 999);
+        assert_eq!(config.embedding.performance.indexer_batch_size, 999);
         assert_eq!(config.api.port, 1234);
 
         // Cleanup
         unsafe {
-            std::env::remove_var("CODETRIEVER_EMBEDDING_BATCH_SIZE");
+            std::env::remove_var("CODETRIEVER_EMBEDDING_INDEXER_BATCH_SIZE");
             std::env::remove_var("CODETRIEVER_API_PORT");
         }
     }

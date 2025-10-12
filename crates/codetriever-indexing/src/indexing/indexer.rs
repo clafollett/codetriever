@@ -408,7 +408,8 @@ impl Indexer {
         tracing::debug!("All files processed. Total chunks: {}", all_chunks.len());
 
         // Generate embeddings for all chunks in batches to avoid memory explosion
-        let batch_size = self.config.indexing.embedding_batch_size;
+        // Use indexer_batch_size (GPU memory management) not search_batch_size (API concurrency)
+        let batch_size = self.config.embedding.performance.indexer_batch_size;
 
         if !all_chunks.is_empty() {
             tracing::debug!(
