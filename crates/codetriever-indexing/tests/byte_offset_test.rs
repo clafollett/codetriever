@@ -4,7 +4,7 @@ use codetriever_parsing::CodeParser;
 
 #[test]
 fn test_byte_offsets_with_tree_sitter() {
-    let parser = CodeParser::new(None, false, 1000, 100);
+    let parser = CodeParser::new(None, false, 1000);
 
     let rust_code = r#"fn first() {
     println!("First function");
@@ -37,7 +37,7 @@ fn second() {
 
 #[test]
 fn test_byte_offsets_without_tree_sitter() {
-    let parser = CodeParser::new(None, false, 1000, 100);
+    let parser = CodeParser::new(None, false, 1000);
 
     // Use a simple text file (no tree-sitter)
     let text = "Line 1\nLine 2\nLine 3";

@@ -90,7 +90,6 @@ impl ServiceFactory {
             tokenizer,
             config.indexing.split_large_units,
             config.indexing.max_chunk_tokens, // Use chunk size, not model max
-            0,                                // No overlap - removed in Phase 2
         );
 
         Ok(Indexer::new(

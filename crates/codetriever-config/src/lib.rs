@@ -21,14 +21,14 @@ pub use error::{ConfigError, ConfigResult};
 
 // Embedding Model Configuration
 const DEFAULT_MODEL_ID: &str = "jinaai/jina-embeddings-v2-base-code";
-const DEFAULT_MAX_TOKENS: usize = 512; // Conservative for memory
+const DEFAULT_MAX_TOKENS: usize = 1024; // Conservative for memory
 const DEFAULT_DIMENSIONS: usize = 768; // JinaBERT v2 standard
 
 // Performance Configuration
-const DEFAULT_INDEXER_BATCH_SIZE: usize = 64; // Balance memory/speed for indexing (GPU)
-const DEFAULT_SEARCH_BATCH_SIZE: usize = 8; // Typical concurrent API users
-const DEFAULT_POOL_SIZE: usize = 2; // Minimum for parallelism
-const DEFAULT_BATCH_TIMEOUT_MS: u64 = 10; // Low latency
+const DEFAULT_INDEXER_BATCH_SIZE: usize = 1; // Balance memory/speed for indexing (GPU)
+const DEFAULT_SEARCH_BATCH_SIZE: usize = 1; // Typical concurrent API users
+const DEFAULT_POOL_SIZE: usize = 4; // Minimum for parallelism
+const DEFAULT_BATCH_TIMEOUT_MS: u64 = 1; // Low latency
 const DEFAULT_USE_GPU: bool = true; // Use GPU if available
 
 // Parsing Configuration

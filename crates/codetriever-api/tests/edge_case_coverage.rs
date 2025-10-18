@@ -312,34 +312,83 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
     assert!(status.is_success() || status == 413); // 413 = Request Entity Too Large
 
     // CRITICAL: Verify file was properly chunked (not truncated!)
-    // This file: 5000 lines of "println!("test");" = ~30,000 tokens total
-    //
-    // Expected chunks by config:
-    // - max_chunk_tokens=512 (current): ~60 theoretical, ~22 actual (parser overhead)
-    // - max_chunk_tokens=1024: ~30 theoretical, ~11 actual
-    // - max_chunk_tokens=2048: ~15 theoretical, ~6 actual
-    //
-    // Key assertion: chunks > 1 (proves splitting works, not single truncated chunk)
+    // Test file: 5000 lines × 6 tokens/line ≈ 30,000 tokens total
+    // At 512 tokens/chunk → expect ~58 chunks (30000/512)
     if status.is_success() {
         let chunks_created = response["chunks_created"].as_u64().unwrap();
+        let file_size_bytes = large_content.len();
 
-        // CRITICAL: File MUST be split (not kept as 1 truncated chunk)
-        assert!(
-            chunks_created > 1,
-            "Large file MUST be chunked, got {chunks_created} chunk. Tokenizer likely not loaded!"
+        eprintln!(
+            "📊 [Large File Test] File: {file_size_bytes} bytes → {chunks_created} chunks created"
         );
 
-        // For 512-token chunks, expect 15-30 chunks (allows parser variation)
-        // This will catch regressions while being resilient to config changes
-        let expected_min = 15;
-        let expected_max = 60;
+        // CRITICAL: File MUST be split into multiple chunks (not kept as 1 truncated chunk)
         assert!(
-            chunks_created >= expected_min && chunks_created <= expected_max,
-            "Expected {expected_min}-{expected_max} chunks for ~30K token file, got {chunks_created}. Check max_chunk_tokens config!"
+            chunks_created > 1,
+            "Large file MUST be split into multiple chunks, got {chunks_created}. Tokenizer may not be loaded!"
+        );
+
+        // Calculate expected chunks: ~30K tokens ÷ 512 tokens/chunk ≈ 58 chunks
+        // Allow wide range for parser overhead and token estimation variance
+        let expected_chunks_approx = 30_000 / 512; // ≈ 58
+        let min_chunks = (expected_chunks_approx * 7) / 10; // 70% of expected (≈40)
+        let max_chunks = (expected_chunks_approx * 13) / 10; // 130% of expected (≈75)
+
+        assert!(
+            chunks_created >= min_chunks && chunks_created <= max_chunks,
+            "Expected {min_chunks}-{max_chunks} chunks (≈{expected_chunks_approx}), got {chunks_created}. Chunking may be broken!"
         );
 
         eprintln!(
-            "✅ [Large File Test] Properly chunked into {chunks_created} chunks (config: 512 tokens/chunk)"
+            "✅ [Large File Test] Chunking correct: {chunks_created} chunks (expected ≈{expected_chunks_approx} ± 30%)"
+        );
+
+        // PROOF OF STORAGE: Verify chunks are persisted and retrievable via search
+        eprintln!("🔍 [Large File Test] Verifying storage: searching for indexed content...");
+        let app2 = create_router(test_state.state().clone());
+        let search_request = Request::builder()
+            .method("POST")
+            .uri("/search")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "query": "println test function large",
+                    "limit": 100
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        let search_response = app2.oneshot(search_request).await.unwrap();
+        let search_body = axum::body::to_bytes(search_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let search_result: serde_json::Value =
+            serde_json::from_slice(&search_body).unwrap();
+
+        let matches = search_result["matches"].as_array().unwrap();
+        let match_count = matches.len();
+        #[allow(clippy::cast_precision_loss)] // Acceptable for test metrics
+        let retrieval_rate = (match_count as f64 / chunks_created as f64) * 100.0;
+
+        eprintln!(
+            "🔍 [Large File Test] Search returned {match_count} / {chunks_created} chunks ({retrieval_rate:.1}% retrieval rate)"
+        );
+
+        // NOTE: Test file has highly repetitive content (5000 identical lines).
+        // Semantic search engines deduplicate near-identical embeddings.
+        // We expect SOME matches (proves storage works), but not all (dedup is working).
+        // Threshold: At least 5% of chunks should be retrievable (proves persistence).
+        let min_retrievable = std::cmp::max(3, (chunks_created / 20) as usize); // 5% or minimum 3
+
+        assert!(
+            match_count >= min_retrievable,
+            "Storage verification failed: only {match_count}/{chunks_created} chunks retrievable ({retrieval_rate:.1}%). \
+             Expected at least {min_retrievable} (5% threshold). Chunks may not be persisting to Qdrant!"
+        );
+
+        eprintln!(
+            "✅ [Large File Test] Storage verified: {match_count}/{chunks_created} chunks retrievable ({retrieval_rate:.1}% - semantic dedup applied)"
         );
     }
 

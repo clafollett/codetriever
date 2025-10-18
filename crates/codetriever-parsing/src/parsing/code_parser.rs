@@ -79,23 +79,26 @@ pub struct CodeParser {
     tokenizer: Option<Arc<Tokenizer>>, // Tokenizer for counting (no truncation)
     split_large_units: bool,
     max_tokens: usize,
-    overlap_tokens: usize,
 }
 
 impl Default for CodeParser {
     fn default() -> Self {
-        // Use conservative defaults: split large units, 128 token overlap
-        Self::new(None, true, 512, 128)
+        // Use conservative defaults: split large units, 512 max tokens
+        Self::new(None, true, 512)
     }
 }
 
 impl CodeParser {
     /// Creates a new CodeParser with optional tokenizer for token counting
+    ///
+    /// # Arguments
+    /// * `tokenizer` - Optional tokenizer for accurate token counting
+    /// * `split_large_units` - Whether to split large code units that exceed max_tokens
+    /// * `max_tokens` - Maximum tokens per chunk (should match embedding model's max_tokens)
     pub fn new(
         tokenizer: Option<Arc<Tokenizer>>,
         split_large_units: bool,
         max_tokens: usize,
-        overlap_tokens: usize,
     ) -> Self {
         // Share the original tokenizer Arc - we'll handle truncation per-call
         // This avoids the expensive clone of the entire tokenizer
@@ -105,7 +108,6 @@ impl CodeParser {
             tokenizer: counting_tokenizer,
             split_large_units,
             max_tokens,
-            overlap_tokens,
         }
     }
 
@@ -210,7 +212,7 @@ impl CodeParser {
         }
     }
 
-    /// Split content into token-based chunks with overlap
+    /// Split content into token-based chunks (no overlap - sequential chunks)
     fn split_by_tokens(
         &self,
         content: &str,
@@ -221,7 +223,14 @@ impl CodeParser {
         start_line: usize,
     ) -> Option<Vec<CodeChunk>> {
         let tokenizer = self.tokenizer.as_ref()?;
-        let encoding = tokenizer.encode(content, false).ok()?;
+
+        // Clone tokenizer and disable truncation for accurate encoding of large content
+        // The shared tokenizer might have truncation enabled, which would cause encode() to fail
+        // on very large content (>8192 tokens)
+        let mut encoding_tokenizer = tokenizer.as_ref().clone();
+        encoding_tokenizer.with_truncation(None).ok()?;
+
+        let encoding = encoding_tokenizer.encode(content, false).ok()?;
         let tokens = encoding.get_ids().to_vec();
         let total_tokens = tokens.len();
 
@@ -241,7 +250,7 @@ impl CodeParser {
             let chunk_end = (chunk_start + self.max_tokens).min(total_tokens);
             let chunk_tokens = &tokens[chunk_start..chunk_end];
 
-            if let Ok(chunk_text) = tokenizer.decode(chunk_tokens, false) {
+            if let Ok(chunk_text) = encoding_tokenizer.decode(chunk_tokens, false) {
                 // Count lines in this chunk
                 let chunk_line_count = chunk_text.lines().count();
 
@@ -261,15 +270,8 @@ impl CodeParser {
                 part_num += 1;
             }
 
-            // Move to next chunk with overlap
-            let next_start = chunk_end.saturating_sub(self.overlap_tokens);
-
-            // Ensure we always make progress
-            if next_start >= chunk_end || next_start <= chunk_start {
-                chunk_start = chunk_end; // Force progress
-            } else {
-                chunk_start = next_start;
-            }
+            // Move to next chunk (no overlap - sequential chunks)
+            chunk_start = chunk_end;
 
             // Stop if we've processed everything
             if chunk_start >= total_tokens {
@@ -358,8 +360,10 @@ impl CodeParser {
                     );
 
                     if let Some(token_count) = self.count_tokens(&current_content) {
-                        // Create chunk if approaching limit
-                        if token_count >= self.max_tokens - self.overlap_tokens {
+                        // Create chunk if approaching limit (90% threshold to stay safely under max)
+                        // This ensures chunks never exceed max_tokens
+                        let split_threshold = (self.max_tokens * 9) / 10;
+                        if token_count >= split_threshold {
                             chunks.push(self.create_chunk(
                                 file_path,
                                 current_content,
@@ -706,8 +710,9 @@ impl CodeParser {
             if !in_function && !in_class && !current_chunk.is_empty() {
                 let current_content = current_chunk.join(line_ending);
                 if let Some(token_count) = self.count_tokens(&current_content) {
-                    // Create chunk if approaching token limit (leave room for more lines)
-                    if token_count >= self.max_tokens - self.overlap_tokens {
+                    // Create chunk if approaching token limit (90% threshold to stay safely under max)
+                    let split_threshold = (self.max_tokens * 9) / 10;
+                    if token_count >= split_threshold {
                         let chunk = self.create_chunk(
                             file_path,
                             current_content,
@@ -719,25 +724,9 @@ impl CodeParser {
                         );
                         chunks.push(chunk);
 
-                        // Calculate overlap: keep some lines for context
-                        // Try to keep approximately fallback_overlap_tokens worth of content
-                        let mut overlap_lines = Vec::new();
-                        let mut overlap_tokens = 0;
-
-                        // Walk backwards through current_chunk to build overlap
-                        for line in current_chunk.iter().rev() {
-                            if let Some(line_tokens) = self.count_tokens(line) {
-                                if overlap_tokens + line_tokens > self.overlap_tokens {
-                                    break;
-                                }
-                                overlap_tokens += line_tokens;
-                                overlap_lines.insert(0, *line);
-                            }
-                        }
-
-                        // Start next chunk with overlap
-                        current_chunk = overlap_lines;
-                        current_start = line_num - current_chunk.len() + 1;
+                        // Start next chunk fresh (no overlap)
+                        current_chunk.clear();
+                        current_start = line_num + 1;
                     }
                 }
             }
@@ -977,14 +966,14 @@ mod tests {
 
     #[test]
     fn test_parser_initialization() {
-        let _parser = CodeParser::new(None, true, 512, 128);
+        let _parser = CodeParser::new(None, true, 512);
         // Parser should be created successfully
         // (parsers are now created on-demand, not stored)
     }
 
     #[test]
     fn test_rust_parsing() {
-        let parser = CodeParser::new(None, true, 512, 128);
+        let parser = CodeParser::new(None, true, 512);
         let code = r#"
 fn main() {
     println!("Hello, world!");
@@ -1025,7 +1014,7 @@ impl Point {
 
     #[test]
     fn test_python_parsing() {
-        let parser = CodeParser::new(None, true, 512, 128);
+        let parser = CodeParser::new(None, true, 512);
         let code = r#"
 def hello():
     print("Hello, world!")
@@ -1054,7 +1043,7 @@ async def async_function():
 
     #[test]
     fn test_heuristic_fallback() {
-        let parser = CodeParser::new(None, true, 512, 128);
+        let parser = CodeParser::new(None, true, 512);
         // Use a language without tree-sitter support or malformed code
         let code = r#"
 function test() {
@@ -1075,7 +1064,7 @@ class Example {
 
     #[test]
     fn test_chunk_metadata() {
-        let parser = CodeParser::new(None, true, 512, 128);
+        let parser = CodeParser::new(None, true, 512);
         let code = "fn test() {\n    println!(\"test\");\n}";
 
         let chunks = parser.parse(code, "rust", "/path/to/file.rs").unwrap();

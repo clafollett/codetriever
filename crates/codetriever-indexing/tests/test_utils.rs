@@ -4,7 +4,7 @@
 //! Functions are only compiled into test binaries that actually use them.
 
 use codetriever_config::{ApplicationConfig, DatabaseConfig};
-use codetriever_embeddings::{DefaultEmbeddingService, EmbeddingService};
+use codetriever_embeddings::EmbeddingService;
 use codetriever_meta_data::{
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
@@ -13,9 +13,9 @@ use codetriever_meta_data::{
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
 use std::sync::Arc;
 
-// Re-export shared test runtime from codetriever-test-utils
+// Re-export shared test utilities from codetriever-test-utils
 #[allow(unused_imports)]
-pub use codetriever_test_utils::get_test_runtime;
+pub use codetriever_test_utils::{get_shared_embedding_service, get_test_runtime};
 
 /// Get the Qdrant URL for testing, defaulting to localhost
 /// Can be overridden with QDRANT_TEST_URL environment variable
@@ -101,11 +101,16 @@ pub async fn cleanup_test_storage(storage: &QdrantStorage) -> Result<(), String>
     Ok(())
 }
 
-/// Create embedding service for testing
+/// Get shared embedding service for testing
+///
+/// **IMPORTANT**: Uses centralized shared service from codetriever-test-utils.
+/// All tests across ALL crates share the SAME embedding service to prevent
+/// loading multiple 4GB models and exhausting RAM.
+///
+/// DO NOT create new embedding services in tests!
 #[allow(unused)]
 pub fn create_test_embedding_service() -> Arc<dyn EmbeddingService> {
-    let config = test_config();
-    Arc::new(DefaultEmbeddingService::new(config.embedding.clone()))
+    get_shared_embedding_service()
 }
 
 /// Create CodeParser with tokenizer loaded from embedding service
@@ -127,7 +132,6 @@ pub async fn create_code_parser_with_tokenizer(
         tokenizer,
         config.indexing.split_large_units,
         config.indexing.max_chunk_tokens,
-        0, // No overlap - removed in Phase 2
     )
 }
 
