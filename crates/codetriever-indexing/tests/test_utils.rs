@@ -3,8 +3,8 @@
 //! This module provides common testing utilities used across multiple test files.
 //! Functions are only compiled into test binaries that actually use them.
 
-use codetriever_config::{ApplicationConfig, DatabaseConfig, Profile};
-use codetriever_embeddings::{DefaultEmbeddingService, EmbeddingService};
+use codetriever_config::{ApplicationConfig, DatabaseConfig};
+use codetriever_embeddings::EmbeddingService;
 use codetriever_meta_data::{
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
@@ -13,9 +13,9 @@ use codetriever_meta_data::{
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
 use std::sync::Arc;
 
-// Re-export shared test runtime from codetriever-test-utils
+// Re-export shared test utilities from codetriever-test-utils
 #[allow(unused_imports)]
-pub use codetriever_test_utils::get_test_runtime;
+pub use codetriever_test_utils::{get_shared_embedding_service, get_test_runtime};
 
 /// Get the Qdrant URL for testing, defaulting to localhost
 /// Can be overridden with QDRANT_TEST_URL environment variable
@@ -88,7 +88,7 @@ pub async fn create_test_storage(test_name: &str) -> Result<QdrantStorage, Strin
 /// Get default test configuration
 #[allow(unused)]
 pub fn test_config() -> ApplicationConfig {
-    ApplicationConfig::with_profile(Profile::Test)
+    ApplicationConfig::from_env()
 }
 
 /// Clean up test storage by dropping the collection
@@ -101,11 +101,16 @@ pub async fn cleanup_test_storage(storage: &QdrantStorage) -> Result<(), String>
     Ok(())
 }
 
-/// Create embedding service for testing
+/// Get shared embedding service for testing
+///
+/// **IMPORTANT**: Uses centralized shared service from codetriever-test-utils.
+/// All tests across ALL crates share the SAME embedding service to prevent
+/// loading multiple 4GB models and exhausting RAM.
+///
+/// DO NOT create new embedding services in tests!
 #[allow(unused)]
 pub fn create_test_embedding_service() -> Arc<dyn EmbeddingService> {
-    let config = test_config();
-    Arc::new(DefaultEmbeddingService::new(config.embedding.clone()))
+    get_shared_embedding_service()
 }
 
 /// Create CodeParser with tokenizer loaded from embedding service
@@ -127,7 +132,6 @@ pub async fn create_code_parser_with_tokenizer(
         tokenizer,
         config.indexing.split_large_units,
         config.indexing.max_chunk_tokens,
-        config.indexing.chunk_overlap_tokens,
     )
 }
 
@@ -138,7 +142,7 @@ pub async fn create_test_repository() -> Arc<dyn FileRepository> {
     codetriever_common::initialize_environment();
 
     // Create REAL database connection pool
-    let db_config = DatabaseConfig::for_profile(Profile::Test);
+    let db_config = DatabaseConfig::from_env();
     let pools = PoolManager::new(&db_config, PoolConfig::default())
         .await
         .expect("Failed to create pool manager for test repository");

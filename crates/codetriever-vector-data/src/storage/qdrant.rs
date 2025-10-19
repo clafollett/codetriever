@@ -451,7 +451,7 @@ impl VectorStorage for QdrantStorage {
     }
 
     /// Store chunks with deterministic IDs based on repository, branch, file, and generation
-    #[tracing::instrument(skip(self, chunks), fields(repository_id, branch, chunk_count = chunks.len(), generation))]
+    #[tracing::instrument(skip(self, chunks), fields(repository_id, branch, chunk_count = chunks.len(), generation, elapsed_ms))]
     async fn store_chunks(
         &self,
         repository_id: &str,
@@ -460,6 +460,8 @@ impl VectorStorage for QdrantStorage {
         generation: i64,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<uuid::Uuid>> {
+        let start = std::time::Instant::now();
+
         let mut points = Vec::new();
         let mut chunk_ids = Vec::new();
 
@@ -553,7 +555,11 @@ impl VectorStorage for QdrantStorage {
             .await
             .map_err(|e| VectorDataError::Storage(format!("Failed to store chunks: {e}")))?;
 
-        Ok(chunk_ids)
+        let result = Ok(chunk_ids);
+
+        tracing::Span::current().record("elapsed_ms", start.elapsed().as_millis() as u64);
+
+        result
     }
 
     /// Delete chunks from Qdrant by their IDs

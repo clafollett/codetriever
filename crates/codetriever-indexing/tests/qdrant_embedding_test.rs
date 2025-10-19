@@ -3,13 +3,50 @@
 #[path = "test_utils.rs"]
 mod test_utils;
 
-use codetriever_indexing::indexing::Indexer;
+use codetriever_indexing::indexing::{Indexer, service::FileContent};
 use codetriever_search::SearchProvider;
 use std::{path::Path, sync::Arc};
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
     create_test_repository, create_test_storage, test_config,
 };
+
+/// Read files from directory (reuse from index_rust_mini_redis_test pattern)
+async fn read_directory_files(
+    dir: &Path,
+    base_dir: &Path,
+    recursive: bool,
+) -> Result<Vec<FileContent>, std::io::Error> {
+    let mut files = Vec::new();
+
+    let mut entries = tokio::fs::read_dir(dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+
+        if path.is_file() {
+            if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                let path_str = path
+                    .strip_prefix(base_dir)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .to_string();
+
+                let hash = codetriever_meta_data::hash_content(&content);
+
+                files.push(FileContent {
+                    path: path_str,
+                    content,
+                    hash,
+                });
+            }
+        } else if recursive && path.is_dir() {
+            let sub_files = Box::pin(read_directory_files(&path, base_dir, recursive)).await?;
+            files.extend(sub_files);
+        }
+    }
+
+    Ok(files)
+}
 
 #[test]
 fn test_indexer_stores_chunks_in_qdrant() {
@@ -19,9 +56,12 @@ fn test_indexer_stores_chunks_in_qdrant() {
 
         // Create all required dependencies
         let config = test_config();
+
+        // create_test_storage handles collection creation automatically
         let storage = create_test_storage("indexer_integration")
             .await
             .expect("Failed to create storage");
+
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
 
@@ -50,11 +90,25 @@ fn test_indexer_stores_chunks_in_qdrant() {
             return;
         }
 
+        // Read files and use real index_file_content() API
+        let files = read_directory_files(&test_path, &test_path, true)
+            .await
+            .expect("Failed to read directory");
+
+        println!("Read {} files from test repo", files.len());
+
+        // Use unique project ID per run to avoid DB state conflicts
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let project_id = format!("test-indexer-{timestamp}:main");
+
         let start = std::time::Instant::now();
         let result = indexer
-            .index_directory(&test_path, true) // Set recursive to true!
+            .index_file_content(&project_id, files)
             .await
-            .expect("Failed to index directory");
+            .expect("Failed to index files");
         let duration = start.elapsed();
 
         println!("Indexing stats:");
@@ -80,8 +134,7 @@ fn test_indexer_stores_chunks_in_qdrant() {
         let vector_storage = indexer.vector_storage();
 
         // Create database client for search
-        let db_config =
-            codetriever_config::DatabaseConfig::for_profile(codetriever_config::Profile::Test);
+        let db_config = codetriever_config::DatabaseConfig::from_env();
         let pools = codetriever_meta_data::PoolManager::new(
             &db_config,
             codetriever_meta_data::PoolConfig::default(),

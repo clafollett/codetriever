@@ -3,14 +3,71 @@
 //! This crate provides a unified configuration system that eliminates duplication
 //! across the codebase and provides type-safe, validated configuration with
 //! support for multiple sources (environment, files, CLI, etc.).
+//!
+//! Configuration follows a simple hierarchy:
+//! 1. Safe defaults (defined as constants)
+//! 2. Environment variable overrides
+//! 3. Runtime validation
 
 pub mod error;
-pub mod profile;
 pub mod source;
 pub mod validation;
 
 pub use error::{ConfigError, ConfigResult};
-pub use profile::Profile;
+
+// =============================================================================
+// SAFE DEFAULTS - Work for any environment (dev, staging, prod, test)
+// =============================================================================
+
+// Embedding Model Configuration
+const DEFAULT_EMBEDDING_MODEL_ID: &str = "jinaai/jina-embeddings-v2-base-code";
+const DEFAULT_EMBEDDING_MODEL_DIMENSIONS: usize = 768; // JinaBERT v2 standard
+const DEFAULT_EMBEDDING_MODEL_MAX_CONTEXT_TOKENS: usize = 512; // Conservative for memory
+const DEFAULT_EMBEDDING_MODEL_POOL_SIZE: usize = 8; // Minimum for parallelism
+
+// Performance Configuration
+const DEFAULT_EMBEDDING_INDEXER_CHUNK_BATCH_SIZE: usize = 1; // Balance memory/speed for indexing (GPU)
+const DEFAULT_EMBEDDING_SEARCH_CHUNK_BATCH_SIZE: usize = 1; // Typical concurrent API users
+const DEFAULT_EMBEDDING_BATCH_TIMEOUT_MS: u64 = 1; // Low latency
+const DEFAULT_EMBEDDING_USE_GPU: bool = true; // Use GPU if available
+
+// Tokenizer Configuration
+const DEFAULT_TOKENIZER_CONCURRENT_FILE_LIMIT: usize = 4; // Reasonable parallelism
+const DEFAULT_TOKENIZER_MAX_CHUNK_TOKENS: usize = 512; // Matches model max_tokens
+const DEFAULT_TOKENIZER_SPLIT_LARGE_UNITS: bool = true; // Always split large functions
+const DEFAULT_CHUNK_QUEUE_CAPACITY: usize = 1000; // Bounded queue for back pressure
+
+// Database Configuration (safe local defaults)
+const DEFAULT_DB_HOST: &str = "localhost";
+const DEFAULT_DB_PORT: u16 = 5432;
+const DEFAULT_DB_NAME: &str = "codetriever";
+const DEFAULT_DB_USER: &str = "codetriever";
+const DEFAULT_DB_PASSWORD: &str = "localdev123";
+const DEFAULT_DB_SSL_MODE: &str = "disable";
+const DEFAULT_DB_MAX_CONNECTIONS: u32 = 5; // Conservative
+const DEFAULT_DB_MIN_CONNECTIONS: u32 = 2; // Keep some warm
+const DEFAULT_DB_TIMEOUT_SECONDS: u64 = 30; // Reasonable timeout
+const DEFAULT_DB_IDLE_TIMEOUT_SECONDS: u64 = 300; // 5 minutes
+const DEFAULT_AUTO_MIGRATE: bool = true; // Auto-migrate by default
+
+// Vector Storage Configuration
+const DEFAULT_QDRANT_URL: &str = "http://localhost:6334";
+const DEFAULT_VECTOR_DIMENSION: usize = 768; // Matches JinaBERT
+const DEFAULT_VECTOR_TIMEOUT_SECONDS: u64 = 30;
+
+// API Server Configuration
+const DEFAULT_API_HOST: &str = "127.0.0.1"; // Localhost only for security
+const DEFAULT_API_PORT: u16 = 3000;
+const DEFAULT_API_TIMEOUT_SECONDS: u64 = 60;
+const DEFAULT_API_ENABLE_CORS: bool = true;
+const DEFAULT_API_ENABLE_DOCS: bool = true;
+
+// Telemetry Configuration
+const DEFAULT_TELEMETRY_ENABLED: bool = false; // Opt-in
+const DEFAULT_TRACING_LEVEL: &str = "info";
+const DEFAULT_TRACE_SAMPLE_RATE: f64 = 0.1; // Light sampling
+const DEFAULT_TELEMETRY_SERVICE_NAME: &str = "codetriever";
+const DEFAULT_TELEMETRY_ENVIRONMENT: &str = "development";
 
 // Database imports for PostgreSQL functionality
 use sqlx::{
@@ -20,11 +77,11 @@ use sqlx::{
 use std::time::Duration;
 
 /// Core configuration for the entire codetriever application
+///
+/// All settings have safe defaults and can be overridden via environment variables.
+/// No profile/environment selection needed - same defaults work everywhere.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ApplicationConfig {
-    /// Application profile (dev, staging, production, test)
-    pub profile: Profile,
-
     /// Embedding generation configuration
     pub embedding: EmbeddingConfig,
 
@@ -94,6 +151,12 @@ pub struct ModelConfig {
     /// Must match vector storage configuration for consistency
     pub dimensions: usize,
 
+    /// Model's actual maximum position embeddings from `HuggingFace` config.json
+    /// This is the authoritative ceiling read from the model's config
+    /// User's `max_tokens` MUST be ≤ this value
+    #[serde(default)]
+    pub max_position_embeddings: Option<usize>,
+
     /// Model capabilities and constraints for validation
     #[serde(default)]
     pub capabilities: ModelCapabilities,
@@ -102,9 +165,15 @@ pub struct ModelConfig {
 /// Performance and resource configuration - controls runtime behavior
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PerformanceConfig {
-    /// Batch size for processing multiple texts together
-    /// Larger batches improve throughput but use more memory
-    pub batch_size: usize,
+    /// Batch size for indexing operations - controls GPU memory usage during model forward pass
+    /// Larger batches = better GPU utilization but more memory
+    /// This is the PRIMARY batching config for indexing workflows
+    pub indexer_batch_size: usize,
+
+    /// Batch size for search API operations - controls concurrent user query batching
+    /// Only relevant for multi-user API scenarios
+    /// Smaller than indexer batch since search handles 1-5 queries at a time
+    pub search_batch_size: usize,
 
     /// Number of embedding model instances in the pool
     /// More instances allow parallel inference but use more memory
@@ -193,10 +262,8 @@ const fn default_cache_enabled() -> bool {
 }
 
 impl EmbeddingConfig {
-    pub fn for_profile(profile: Profile) -> Self {
-        // Environment variables override profile defaults
-        // Following architect's nested structure specification exactly
-
+    /// Load configuration from environment variables with safe defaults
+    pub fn from_env() -> Self {
         // Provider configuration - determines local vs remote inference
         let provider = std::env::var("CODETRIEVER_EMBEDDING_PROVIDER")
             .ok()
@@ -209,53 +276,45 @@ impl EmbeddingConfig {
 
         // Model configuration with comprehensive environment override support
         let model_id = std::env::var("CODETRIEVER_EMBEDDING_MODEL")
-            .unwrap_or_else(|_| "jinaai/jina-embeddings-v2-base-code".to_string());
+            .unwrap_or_else(|_| DEFAULT_EMBEDDING_MODEL_ID.to_string());
 
-        let max_tokens = std::env::var("CODETRIEVER_EMBEDDING_MAX_TOKENS")
+        let mode_max_tokens = std::env::var("CODETRIEVER_EMBEDDING_MAX_TOKENS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Test => 512,
-                _ => 8192,
-            });
+            .unwrap_or(DEFAULT_EMBEDDING_MODEL_MAX_CONTEXT_TOKENS);
 
-        let dimensions = std::env::var("CODETRIEVER_EMBEDDING_DIMENSION")
+        let mode_dimensions = std::env::var("CODETRIEVER_EMBEDDING_DIMENSION")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Test => 4,
-                _ => 512,
-            });
+            .unwrap_or(DEFAULT_EMBEDDING_MODEL_DIMENSIONS);
+
+        let model_pool_size = std::env::var("CODETRIEVER_EMBEDDING_MODEL_POOL_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_EMBEDDING_MODEL_POOL_SIZE);
 
         // Performance configuration - controls runtime resource usage and optimization
-        let batch_size = std::env::var("CODETRIEVER_EMBEDDING_BATCH_SIZE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 16,
-                Profile::Staging => 32,
-                Profile::Production => 64,
-                Profile::Test => 4,
-            });
+        let indexer_chunk_batch_size =
+            std::env::var("CODETRIEVER_EMBEDDING_INDEXER_CHUNK_BATCH_SIZE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_EMBEDDING_INDEXER_CHUNK_BATCH_SIZE);
 
-        let pool_size = std::env::var("CODETRIEVER_EMBEDDING_POOL_SIZE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 2,
-                Profile::Staging | Profile::Production => 3,
-                Profile::Test => 1, // Single model for tests to avoid complexity
-            });
+        let search_chunk_batch_size =
+            std::env::var("CODETRIEVER_EMBEDDING_SEARCH_CHUNK_BATCH_SIZE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_EMBEDDING_SEARCH_CHUNK_BATCH_SIZE);
 
         let batch_timeout_ms = std::env::var("CODETRIEVER_EMBEDDING_BATCH_TIMEOUT_MS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(10); // 10ms default for good latency/throughput balance
+            .unwrap_or(DEFAULT_EMBEDDING_BATCH_TIMEOUT_MS);
 
         let use_gpu = std::env::var("CODETRIEVER_EMBEDDING_USE_GPU")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(!matches!(profile, Profile::Test));
+            .unwrap_or(DEFAULT_EMBEDDING_USE_GPU);
 
         let gpu_device = std::env::var("CODETRIEVER_EMBEDDING_GPU_DEVICE").ok();
 
@@ -266,24 +325,20 @@ impl EmbeddingConfig {
         // Cache configuration - manages model persistence and storage optimization
         let cache_dir = std::env::var("CODETRIEVER_EMBEDDING_CACHE_DIR")
             .ok()
-            .or_else(|| match profile {
-                Profile::Development => Some(
+            .or_else(|| {
+                Some(
                     dirs::cache_dir()
                         .unwrap_or_else(|| std::path::PathBuf::from(".cache"))
-                        .join("codetriever-dev")
+                        .join("codetriever")
                         .to_string_lossy()
                         .to_string(),
-                ),
-                Profile::Staging | Profile::Production => {
-                    Some("/opt/codetriever/cache".to_string())
-                }
-                Profile::Test => None,
+                )
             });
 
         let cache_enabled = std::env::var("CODETRIEVER_EMBEDDING_CACHE_ENABLED")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(!matches!(profile, Profile::Test));
+            .unwrap_or(true); // Enable caching by default
 
         let cache_max_size_mb = std::env::var("CODETRIEVER_EMBEDDING_CACHE_MAX_SIZE_MB")
             .ok()
@@ -293,13 +348,15 @@ impl EmbeddingConfig {
             provider,
             model: ModelConfig {
                 id: model_id,
-                max_tokens,
-                dimensions,
+                max_tokens: mode_max_tokens,
+                dimensions: mode_dimensions,
+                max_position_embeddings: None, // Will be populated when model loads
                 capabilities: ModelCapabilities::default(),
             },
             performance: PerformanceConfig {
-                batch_size,
-                pool_size,
+                indexer_batch_size: indexer_chunk_batch_size,
+                search_batch_size: search_chunk_batch_size,
+                pool_size: model_pool_size,
                 batch_timeout_ms,
                 use_gpu,
                 gpu_device,
@@ -323,10 +380,16 @@ impl validation::Validate for EmbeddingConfig {
 
         // Validate performance configuration
         validation::validate_range(
-            self.performance.batch_size as u64,
+            self.performance.indexer_batch_size as u64,
             1,
             1000,
-            "performance.batch_size",
+            "performance.indexer_batch_size",
+        )?;
+        validation::validate_range(
+            self.performance.search_batch_size as u64,
+            1,
+            1000,
+            "performance.search_batch_size",
         )?;
 
         // Advanced validation as specified by architect
@@ -376,10 +439,10 @@ impl EmbeddingConfig {
             _ => 1024,                               // Conservative default estimate
         };
 
-        // Batch processing memory overhead
+        // Batch processing memory overhead (use indexer batch size as it's larger)
         #[allow(clippy::arithmetic_side_effects)]
         let batch_memory =
-            (self.model.dimensions * self.performance.batch_size * 4) / (1024 * 1024); // f32 vectors
+            (self.model.dimensions * self.performance.indexer_batch_size * 4) / (1024 * 1024); // f32 vectors
 
         #[allow(clippy::arithmetic_side_effects)]
         let total_memory = model_memory + batch_memory;
@@ -393,69 +456,44 @@ pub struct IndexingConfig {
     /// Maximum chunk size in tokens
     pub max_chunk_tokens: usize,
 
-    /// Overlap between chunks in tokens
-    pub chunk_overlap_tokens: usize,
-
     /// Whether to split large code units
     pub split_large_units: bool,
 
     /// Number of concurrent indexing tasks
     pub concurrency_limit: usize,
 
-    /// Batch size for embedding generation
-    pub embedding_batch_size: usize,
+    /// Chunk queue capacity (bounded for back pressure control)
+    pub chunk_queue_capacity: usize,
 }
 
 impl IndexingConfig {
-    pub fn for_profile(profile: Profile) -> Self {
-        // Environment variables override profile defaults
+    /// Load configuration from environment variables with safe defaults
+    pub fn from_env() -> Self {
         let max_chunk_tokens = std::env::var("CODETRIEVER_INDEXING_MAX_CHUNK_TOKENS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Test => 64,
-                _ => 512,
-            });
-
-        let chunk_overlap_tokens = std::env::var("CODETRIEVER_INDEXING_CHUNK_OVERLAP_TOKENS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Test => 16,
-                _ => 128,
-            });
+            .unwrap_or(DEFAULT_TOKENIZER_MAX_CHUNK_TOKENS);
 
         let split_large_units = std::env::var("CODETRIEVER_INDEXING_SPLIT_LARGE_UNITS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(!matches!(profile, Profile::Test));
+            .unwrap_or(DEFAULT_TOKENIZER_SPLIT_LARGE_UNITS);
 
         let concurrency_limit = std::env::var("CODETRIEVER_INDEXING_CONCURRENCY_LIMIT")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 2,
-                Profile::Staging => 4,
-                Profile::Production => 8,
-                Profile::Test => 1,
-            });
+            .unwrap_or(DEFAULT_TOKENIZER_CONCURRENT_FILE_LIMIT);
 
-        let embedding_batch_size = std::env::var("CODETRIEVER_INDEXING_EMBEDDING_BATCH_SIZE")
+        let chunk_queue_capacity = std::env::var("CODETRIEVER_INDEXING_CHUNK_QUEUE_CAPACITY")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 16,
-                Profile::Staging => 32,
-                Profile::Production => 64,
-                Profile::Test => 4,
-            });
+            .unwrap_or(DEFAULT_CHUNK_QUEUE_CAPACITY);
 
         Self {
             max_chunk_tokens,
-            chunk_overlap_tokens,
             split_large_units,
             concurrency_limit,
-            embedding_batch_size,
+            chunk_queue_capacity,
         }
     }
 }
@@ -463,18 +501,12 @@ impl IndexingConfig {
 impl validation::Validate for IndexingConfig {
     fn validate(&self) -> ConfigResult<()> {
         validation::validate_range(self.max_chunk_tokens as u64, 1, 10_000, "max_chunk_tokens")?;
-        validation::validate_range(
-            self.chunk_overlap_tokens as u64,
-            0,
-            self.max_chunk_tokens as u64,
-            "chunk_overlap_tokens",
-        )?;
         validation::validate_range(self.concurrency_limit as u64, 1, 100, "concurrency_limit")?;
         validation::validate_range(
-            self.embedding_batch_size as u64,
-            1,
-            1000,
-            "embedding_batch_size",
+            self.chunk_queue_capacity as u64,
+            100,
+            100_000,
+            "chunk_queue_capacity",
         )?;
         Ok(())
     }
@@ -497,40 +529,23 @@ pub struct VectorStorageConfig {
 }
 
 impl VectorStorageConfig {
-    pub fn for_profile(profile: Profile) -> Self {
-        // Environment variables override profile defaults
-        let url =
-            std::env::var("CODETRIEVER_VECTOR_STORAGE_URL").unwrap_or_else(|_| match profile {
-                Profile::Development | Profile::Test => "http://localhost:6334".to_string(),
-                Profile::Staging => "http://qdrant-staging:6334".to_string(),
-                Profile::Production => "http://qdrant:6334".to_string(),
-            });
+    /// Load configuration from environment variables with safe defaults
+    pub fn from_env() -> Self {
+        let url = std::env::var("CODETRIEVER_VECTOR_STORAGE_URL")
+            .unwrap_or_else(|_| DEFAULT_QDRANT_URL.to_string());
 
         let collection_name = std::env::var("CODETRIEVER_VECTOR_STORAGE_COLLECTION_NAME")
-            .unwrap_or_else(|_| match profile {
-                Profile::Development => "codetriever-dev".to_string(),
-                Profile::Staging => "codetriever-staging".to_string(),
-                Profile::Production => "codetriever".to_string(),
-                Profile::Test => "codetriever-test".to_string(),
-            });
+            .unwrap_or_else(|_| "codetriever".to_string());
 
         let vector_dimension = std::env::var("CODETRIEVER_VECTOR_STORAGE_DIMENSION")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Test => 4,
-                _ => 512,
-            });
+            .unwrap_or(DEFAULT_VECTOR_DIMENSION);
 
         let timeout_seconds = std::env::var("CODETRIEVER_VECTOR_STORAGE_TIMEOUT_SECONDS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 30,
-                Profile::Staging => 60,
-                Profile::Production => 120,
-                Profile::Test => 5,
-            });
+            .unwrap_or(DEFAULT_VECTOR_TIMEOUT_SECONDS);
 
         Self {
             url,
@@ -592,93 +607,64 @@ pub struct DatabaseConfig {
 }
 
 impl DatabaseConfig {
-    pub fn for_profile(profile: Profile) -> Self {
-        // Environment variables override profile defaults - comprehensive PostgreSQL configuration
-
-        // Individual connection components with environment overrides
+    /// Load configuration from environment variables with safe defaults
+    pub fn from_env() -> Self {
         let host = std::env::var("CODETRIEVER_DATABASE_HOST")
             .or_else(|_| std::env::var("DB_HOST"))
-            .unwrap_or_else(|_| "localhost".to_string());
+            .unwrap_or_else(|_| DEFAULT_DB_HOST.to_string());
 
         let port = std::env::var("CODETRIEVER_DATABASE_PORT")
             .or_else(|_| std::env::var("DB_PORT"))
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(5432);
+            .unwrap_or(DEFAULT_DB_PORT);
 
         let database = std::env::var("CODETRIEVER_DATABASE_NAME")
             .or_else(|_| std::env::var("DB_NAME"))
-            .unwrap_or_else(|_| match profile {
-                Profile::Development => "codetriever_dev".to_string(),
-                Profile::Staging => "codetriever_staging".to_string(),
-                Profile::Production => "codetriever".to_string(),
-                Profile::Test => "codetriever_test".to_string(),
-            });
+            .unwrap_or_else(|_| DEFAULT_DB_NAME.to_string());
 
         let username = std::env::var("CODETRIEVER_DATABASE_USERNAME")
             .or_else(|_| std::env::var("DB_USER"))
-            .unwrap_or_else(|_| "codetriever".to_string());
+            .unwrap_or_else(|_| DEFAULT_DB_USER.to_string());
 
         let password = std::env::var("CODETRIEVER_DATABASE_PASSWORD")
             .or_else(|_| std::env::var("DB_PASSWORD"))
-            .unwrap_or_else(|_| match profile {
-                Profile::Development => "localdev123".to_string(),
-                Profile::Test => "test".to_string(),
-                _ => String::new(), // Production should always use env vars
+            .unwrap_or_else(|_| {
+                tracing::warn!(
+                    "Using default database password '{}' - Set CODETRIEVER_DATABASE_PASSWORD or DB_PASSWORD environment variable. NEVER use default password in production!",
+                    DEFAULT_DB_PASSWORD
+                );
+                DEFAULT_DB_PASSWORD.to_string()
             });
 
         let ssl_mode = std::env::var("CODETRIEVER_DATABASE_SSL_MODE")
             .or_else(|_| std::env::var("DB_SSLMODE"))
-            .unwrap_or_else(|_| match profile {
-                Profile::Development | Profile::Test => "disable".to_string(),
-                _ => "prefer".to_string(),
-            });
+            .unwrap_or_else(|_| DEFAULT_DB_SSL_MODE.to_string());
 
-        // Connection pool settings
         let max_connections = std::env::var("CODETRIEVER_DATABASE_MAX_CONNECTIONS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 5,
-                Profile::Staging => 10,
-                Profile::Production => 50,
-                Profile::Test => 1,
-            });
+            .unwrap_or(DEFAULT_DB_MAX_CONNECTIONS);
 
         let min_connections = std::env::var("CODETRIEVER_DATABASE_MIN_CONNECTIONS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 2,
-                Profile::Staging => 5,
-                Profile::Production => 10,
-                Profile::Test => 1,
-            });
+            .unwrap_or(DEFAULT_DB_MIN_CONNECTIONS);
 
         let timeout_seconds = std::env::var("CODETRIEVER_DATABASE_TIMEOUT_SECONDS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 30,
-                Profile::Staging => 60,
-                Profile::Production => 120,
-                Profile::Test => 5,
-            });
+            .unwrap_or(DEFAULT_DB_TIMEOUT_SECONDS);
 
         let idle_timeout_seconds = std::env::var("CODETRIEVER_DATABASE_IDLE_TIMEOUT_SECONDS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 600,
-                Profile::Staging => 300,
-                Profile::Production => 180,
-                Profile::Test => 10,
-            });
+            .unwrap_or(DEFAULT_DB_IDLE_TIMEOUT_SECONDS);
 
         let auto_migrate = std::env::var("CODETRIEVER_DATABASE_AUTO_MIGRATE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(!matches!(profile, Profile::Production));
+            .unwrap_or(DEFAULT_AUTO_MIGRATE);
 
         // Construct comprehensive URL if not provided
         let url = std::env::var("CODETRIEVER_DATABASE_URL").unwrap_or_else(|_| {
@@ -777,41 +763,30 @@ pub struct ApiConfig {
 }
 
 impl ApiConfig {
-    pub fn for_profile(profile: Profile) -> Self {
-        // Environment variables override profile defaults
-        let host = std::env::var("CODETRIEVER_API_HOST").unwrap_or_else(|_| match profile {
-            Profile::Development | Profile::Test => "127.0.0.1".to_string(),
-            Profile::Staging | Profile::Production => "0.0.0.0".to_string(),
-        });
+    /// Load configuration from environment variables with safe defaults
+    pub fn from_env() -> Self {
+        let host =
+            std::env::var("CODETRIEVER_API_HOST").unwrap_or_else(|_| DEFAULT_API_HOST.to_string());
 
         let port = std::env::var("CODETRIEVER_API_PORT")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 3000,
-                Profile::Staging | Profile::Production => 8080,
-                Profile::Test => 0, // Random port for tests
-            });
+            .unwrap_or(DEFAULT_API_PORT);
 
         let timeout_seconds = std::env::var("CODETRIEVER_API_TIMEOUT_SECONDS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 30,
-                Profile::Staging => 60,
-                Profile::Production => 120,
-                Profile::Test => 5,
-            });
+            .unwrap_or(DEFAULT_API_TIMEOUT_SECONDS);
 
         let enable_cors = std::env::var("CODETRIEVER_API_ENABLE_CORS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(!matches!(profile, Profile::Production));
+            .unwrap_or(DEFAULT_API_ENABLE_CORS);
 
         let enable_docs = std::env::var("CODETRIEVER_API_ENABLE_DOCS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(!matches!(profile, Profile::Production | Profile::Test));
+            .unwrap_or(DEFAULT_API_ENABLE_DOCS);
 
         Self {
             host,
@@ -863,60 +838,38 @@ pub struct TelemetryConfig {
 }
 
 impl TelemetryConfig {
-    pub fn for_profile(profile: Profile) -> Self {
-        // Environment variables override profile defaults
+    /// Load configuration from environment variables with safe defaults
+    pub fn from_env() -> Self {
         let enabled = std::env::var("CODETRIEVER_TELEMETRY_ENABLED")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(!matches!(profile, Profile::Test));
+            .unwrap_or(DEFAULT_TELEMETRY_ENABLED);
 
-        let otlp_endpoint = std::env::var("CODETRIEVER_TELEMETRY_OTLP_ENDPOINT")
-            .ok()
-            .or_else(|| match profile {
-                Profile::Development => Some("http://localhost:4317".to_string()),
-                Profile::Staging => Some("http://otel-staging:4317".to_string()),
-                Profile::Production => Some("http://otel:4317".to_string()),
-                Profile::Test => None,
-            });
+        let otlp_endpoint = std::env::var("CODETRIEVER_TELEMETRY_OTLP_ENDPOINT").ok();
 
-        let tracing_level = std::env::var("CODETRIEVER_TELEMETRY_TRACING_LEVEL").unwrap_or_else(
-            |_| match profile {
-                Profile::Development => "debug".to_string(),
-                Profile::Staging => "info".to_string(),
-                Profile::Production => "warn".to_string(),
-                Profile::Test => "error".to_string(),
-            },
-        );
+        let tracing_level = std::env::var("CODETRIEVER_TELEMETRY_TRACING_LEVEL")
+            .unwrap_or_else(|_| DEFAULT_TRACING_LEVEL.to_string());
 
         let enable_metrics = std::env::var("CODETRIEVER_TELEMETRY_ENABLE_METRICS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(!matches!(profile, Profile::Test));
+            .unwrap_or(DEFAULT_TELEMETRY_ENABLED);
 
         let metrics_port = std::env::var("CODETRIEVER_TELEMETRY_METRICS_PORT")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 9090,
-                Profile::Staging | Profile::Production => 8090,
-                Profile::Test => 0, // Random port for tests
-            });
+            .unwrap_or(0); // Random port by default
 
         let trace_sample_rate = std::env::var("CODETRIEVER_TELEMETRY_TRACE_SAMPLE_RATE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(match profile {
-                Profile::Development => 1.0, // All traces in dev
-                Profile::Staging => 0.5,
-                Profile::Production => 0.1, // Light sampling in prod
-                Profile::Test => 0.0,       // No traces in tests
-            });
+            .unwrap_or(DEFAULT_TRACE_SAMPLE_RATE);
 
         let service_name = std::env::var("CODETRIEVER_TELEMETRY_SERVICE_NAME")
-            .unwrap_or_else(|_| "codetriever".to_string());
+            .unwrap_or_else(|_| DEFAULT_TELEMETRY_SERVICE_NAME.to_string());
 
         let environment = std::env::var("CODETRIEVER_TELEMETRY_ENVIRONMENT")
-            .unwrap_or_else(|_| profile.to_string());
+            .unwrap_or_else(|_| DEFAULT_TELEMETRY_ENVIRONMENT.to_string());
 
         Self {
             enabled,
@@ -959,16 +912,18 @@ impl validation::Validate for TelemetryConfig {
 }
 
 impl ApplicationConfig {
-    /// Create configuration with profile-based defaults
-    pub fn with_profile(profile: Profile) -> Self {
+    /// Load configuration from environment variables with safe defaults
+    ///
+    /// All configuration is loaded from environment variables or falls back
+    /// to safe defaults that work in any environment (dev, staging, prod, test).
+    pub fn from_env() -> Self {
         Self {
-            profile,
-            embedding: EmbeddingConfig::for_profile(profile),
-            indexing: IndexingConfig::for_profile(profile),
-            vector_storage: VectorStorageConfig::for_profile(profile),
-            database: DatabaseConfig::for_profile(profile),
-            api: ApiConfig::for_profile(profile),
-            telemetry: TelemetryConfig::for_profile(profile),
+            embedding: EmbeddingConfig::from_env(),
+            indexing: IndexingConfig::from_env(),
+            vector_storage: VectorStorageConfig::from_env(),
+            database: DatabaseConfig::from_env(),
+            api: ApiConfig::from_env(),
+            telemetry: TelemetryConfig::from_env(),
         }
     }
 
@@ -1004,7 +959,7 @@ impl ApplicationConfig {
         #[allow(clippy::arithmetic_side_effects)]
         let vector_memory = (self.vector_storage.vector_dimension as u64
             * 4
-            * self.embedding.performance.batch_size as u64)
+            * self.embedding.performance.indexer_batch_size as u64)
             / (1024 * 1024);
 
         // Database connection pool memory - PostgreSQL connection overhead
@@ -1077,16 +1032,17 @@ mod tests {
 
     #[test]
     fn test_application_config_can_be_created() {
-        // This test will fail initially - RED phase
-        let config = ApplicationConfig::with_profile(Profile::Test);
-        assert_eq!(config.profile, Profile::Test);
-        assert!(config.embedding.model.id.contains("jina")); // Now uses real model
+        let config = ApplicationConfig::from_env();
+        assert!(config.embedding.model.id.contains("jina")); // Uses real model
+        assert_eq!(
+            config.embedding.model.max_tokens,
+            DEFAULT_EMBEDDING_MODEL_MAX_CONTEXT_TOKENS
+        );
     }
 
     #[test]
     fn test_config_validation_rejects_invalid_urls() {
-        // This test will fail initially - RED phase
-        let mut config = ApplicationConfig::with_profile(Profile::Test);
+        let mut config = ApplicationConfig::from_env();
         config.vector_storage.url = "not-a-valid-url".to_string();
 
         let validation_result = config.validate();
@@ -1095,54 +1051,55 @@ mod tests {
 
     #[test]
     fn test_config_can_be_serialized_to_toml() {
-        // This test will fail initially - RED phase
-        let config = ApplicationConfig::with_profile(Profile::Development);
+        let config = ApplicationConfig::from_env();
         let toml_result = toml::to_string(&config);
         assert!(toml_result.is_ok(), "Config should serialize to TOML");
 
         if let Ok(toml_string) = toml_result {
-            assert!(toml_string.contains("profile"));
             assert!(toml_string.contains("embedding"));
+            assert!(toml_string.contains("database"));
         }
     }
 
     #[test]
-    fn test_profile_based_defaults_are_different() {
-        // This test will fail initially - RED phase
-        let dev_config = ApplicationConfig::with_profile(Profile::Development);
-        let prod_config = ApplicationConfig::with_profile(Profile::Production);
+    fn test_config_uses_safe_defaults() {
+        let config = ApplicationConfig::from_env();
 
-        // Development should have debug settings, production should be optimized
-        assert_ne!(
-            dev_config.indexing.concurrency_limit,
-            prod_config.indexing.concurrency_limit
+        // All configs should use safe defaults that work in any environment
+        assert_eq!(
+            config.embedding.model.max_tokens,
+            DEFAULT_EMBEDDING_MODEL_MAX_CONTEXT_TOKENS
         );
-        assert_ne!(dev_config.api.enable_docs, prod_config.api.enable_docs);
+        assert_eq!(
+            config.indexing.concurrency_limit,
+            DEFAULT_TOKENIZER_CONCURRENT_FILE_LIMIT
+        );
+        assert_eq!(config.api.enable_docs, DEFAULT_API_ENABLE_DOCS);
     }
 
     #[test]
     fn test_environment_variable_overrides() {
-        // Test that environment variables properly override profile defaults
+        // Test that environment variables properly override defaults
         unsafe {
-            std::env::set_var("CODETRIEVER_EMBEDDING_BATCH_SIZE", "999");
+            std::env::set_var("CODETRIEVER_EMBEDDING_INDEXER_CHUNK_BATCH_SIZE", "999");
             std::env::set_var("CODETRIEVER_API_PORT", "1234");
         }
 
-        let config = ApplicationConfig::with_profile(Profile::Development);
+        let config = ApplicationConfig::from_env();
 
-        assert_eq!(config.embedding.performance.batch_size, 999);
+        assert_eq!(config.embedding.performance.indexer_batch_size, 999);
         assert_eq!(config.api.port, 1234);
 
         // Cleanup
         unsafe {
-            std::env::remove_var("CODETRIEVER_EMBEDDING_BATCH_SIZE");
+            std::env::remove_var("CODETRIEVER_EMBEDDING_INDEXER_CHUNK_BATCH_SIZE");
             std::env::remove_var("CODETRIEVER_API_PORT");
         }
     }
 
     #[test]
     fn test_cross_field_validation_catches_dimension_mismatch() {
-        let mut config = ApplicationConfig::with_profile(Profile::Test);
+        let mut config = ApplicationConfig::from_env();
         config.embedding.model.dimensions = 512;
         config.vector_storage.vector_dimension = 256; // Mismatch!
 
@@ -1157,26 +1114,23 @@ mod tests {
 
     #[test]
     fn test_memory_estimation_calculation() {
-        let config = ApplicationConfig::with_profile(Profile::Test);
+        let config = ApplicationConfig::from_env();
         let memory_usage = config.estimate_memory_usage_mb();
 
-        // Test model should use minimal memory (100 base + 10 test model + minimal extras)
+        // Base model uses ~2GB + overhead
         assert!(
-            memory_usage < 2300,
-            "Test config memory usage was: {memory_usage} MB (now uses real model)"
+            memory_usage > 2000,
+            "Config memory usage was: {memory_usage} MB (uses real base model)"
         );
-
-        let prod_config = ApplicationConfig::with_profile(Profile::Production);
-        let prod_memory = prod_config.estimate_memory_usage_mb();
-
-        // Production should use significantly more memory
-        assert!(prod_memory > memory_usage);
-        assert!(prod_memory > 2000); // At least 2GB for production with base model
+        assert!(
+            memory_usage < 5000,
+            "Config memory usage was: {memory_usage} MB (should be reasonable)"
+        );
     }
 
     #[test]
     fn test_telemetry_config_validation() {
-        let mut config = ApplicationConfig::with_profile(Profile::Development);
+        let mut config = ApplicationConfig::from_env();
         config.telemetry.tracing_level = "invalid-level".to_string();
 
         let validation_result = config.validate();
@@ -1188,44 +1142,27 @@ mod tests {
     }
 
     #[test]
-    fn test_all_profiles_create_valid_configs() {
-        let profiles = [
-            Profile::Development,
-            Profile::Staging,
-            Profile::Production,
-            Profile::Test,
-        ];
-
-        for profile in profiles {
-            let config = ApplicationConfig::with_profile(profile);
-            let validation_result = config.validate();
-            assert!(
-                validation_result.is_ok(),
-                "Profile {profile:?} should create valid config: {validation_result:?}"
-            );
-        }
+    fn test_from_env_creates_valid_config() {
+        let config = ApplicationConfig::from_env();
+        let validation_result = config.validate();
+        assert!(
+            validation_result.is_ok(),
+            "from_env() should create valid config: {validation_result:?}"
+        );
     }
 
     #[test]
     fn test_embedding_model_consistency() {
-        let dev_config = ApplicationConfig::with_profile(Profile::Development);
-        let prod_config = ApplicationConfig::with_profile(Profile::Production);
-        let test_config = ApplicationConfig::with_profile(Profile::Test);
+        let config = ApplicationConfig::from_env();
 
-        // All non-test profiles should use the correct Jina model
+        // All configs use the correct Jina model
         assert_eq!(
-            dev_config.embedding.model.id,
+            config.embedding.model.id,
             "jinaai/jina-embeddings-v2-base-code"
         );
         assert_eq!(
-            prod_config.embedding.model.id,
-            "jinaai/jina-embeddings-v2-base-code"
-        );
-
-        // Test profile should use same real model but with minimal settings
-        assert_eq!(
-            test_config.embedding.model.id,
-            "jinaai/jina-embeddings-v2-base-code"
+            config.embedding.model.dimensions,
+            DEFAULT_EMBEDDING_MODEL_DIMENSIONS
         );
     }
 
@@ -1244,22 +1181,24 @@ mod tests {
     }
 
     #[test]
-    fn test_telemetry_profile_differences() {
-        let dev_config = ApplicationConfig::with_profile(Profile::Development);
-        let prod_config = ApplicationConfig::with_profile(Profile::Production);
+    fn test_telemetry_defaults() {
+        let config = ApplicationConfig::from_env();
 
-        // Development should have full tracing, production should be minimal
-        assert!((dev_config.telemetry.trace_sample_rate - 1.0).abs() < f64::EPSILON);
-        assert!((prod_config.telemetry.trace_sample_rate - 0.1).abs() < f64::EPSILON);
-
-        assert_eq!(dev_config.telemetry.tracing_level, "debug");
-        assert_eq!(prod_config.telemetry.tracing_level, "warn");
+        // Uses safe defaults for telemetry
+        assert!(
+            (config.telemetry.trace_sample_rate - DEFAULT_TRACE_SAMPLE_RATE).abs() < f64::EPSILON
+        );
+        assert_eq!(config.telemetry.tracing_level, DEFAULT_TRACING_LEVEL);
+        assert_eq!(
+            config.telemetry.service_name,
+            DEFAULT_TELEMETRY_SERVICE_NAME
+        );
     }
 
     #[test]
     fn test_configuration_serialization_roundtrip() {
         // Test TOML serialization/deserialization without file I/O
-        let original_config = ApplicationConfig::with_profile(Profile::Development);
+        let original_config = ApplicationConfig::from_env();
 
         let toml_result = toml::to_string(&original_config);
         assert!(toml_result.is_ok());
@@ -1269,7 +1208,6 @@ mod tests {
             assert!(parsed_result.is_ok());
 
             if let Ok(parsed_config) = parsed_result {
-                assert_eq!(original_config.profile, parsed_config.profile);
                 assert_eq!(
                     original_config.embedding.model.id,
                     parsed_config.embedding.model.id

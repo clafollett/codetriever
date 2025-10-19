@@ -28,7 +28,7 @@
       }
     },
     "responses": {
-      "enabled": true
+      "enabled": false
     },
     "completion": {
       "enabled": true

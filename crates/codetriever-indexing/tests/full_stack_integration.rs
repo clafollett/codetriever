@@ -3,7 +3,7 @@
 //! Run with: cargo test --test full_stack_integration -- --test-threads=1
 
 use codetriever_common::CorrelationId;
-use codetriever_config::{ApplicationConfig, DatabaseConfig, Profile};
+use codetriever_config::{ApplicationConfig, DatabaseConfig};
 use codetriever_embeddings::DefaultEmbeddingService;
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
 use codetriever_meta_data::{
@@ -24,7 +24,7 @@ async fn get_connection_pool() -> anyhow::Result<PgPool> {
     codetriever_common::initialize_environment();
 
     // Use DatabaseConfig to get connection details from environment
-    let config = DatabaseConfig::for_profile(Profile::Test);
+    let config = DatabaseConfig::from_env();
 
     // Just connect to the existing database that was set up by 'just init'
     // No need for a separate test database
@@ -52,7 +52,7 @@ fn test_full_stack_indexing_with_postgres_and_qdrant() {
             .expect("Failed to setup test database");
         // Create pool manager from the test pool
         let pool_config = PoolConfig::default();
-        let db_config = DatabaseConfig::for_profile(Profile::Test);
+        let db_config = DatabaseConfig::from_env();
         let pools = PoolManager::new(&db_config, pool_config)
             .await
             .expect("Failed to create pool manager");
@@ -65,7 +65,7 @@ fn test_full_stack_indexing_with_postgres_and_qdrant() {
             .expect("Failed to create Qdrant storage");
 
         // Create all required dependencies
-        let config = ApplicationConfig::with_profile(Profile::Test);
+        let config = ApplicationConfig::from_env();
         let embedding_service = Arc::new(DefaultEmbeddingService::new(config.embedding.clone()))
             as Arc<dyn codetriever_embeddings::EmbeddingService>;
 
@@ -341,7 +341,7 @@ fn test_uuid_based_chunk_deletion() {
             .expect("Failed to setup test database");
         // Create pool manager from the test pool
         let pool_config = PoolConfig::default();
-        let db_config = DatabaseConfig::for_profile(Profile::Test);
+        let db_config = DatabaseConfig::from_env();
         let pools = PoolManager::new(&db_config, pool_config)
             .await
             .expect("Failed to create pool manager");

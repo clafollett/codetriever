@@ -1,77 +1,90 @@
 name: Release
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
-  # Manual releases when we're ready
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to release (e.g., 0.1.0)'
+      version_bump:
+        description: 'Version bump type'
         required: true
-        type: string
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   release:
-    name: Create Release
+    name: Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Need full history for changelog
-      
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-      
-      - name: Create tag
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-release
+        run: cargo install cargo-release --version '^0.25'
+
+      - name: Set version bump
+        id: version
         run: |
-          git tag -a v${{ github.event.inputs.version }} -m "Release v${{ github.event.inputs.version }}"
-          git push origin v${{ github.event.inputs.version }}
-      
-      - name: Generate Release Notes
-        id: notes
+          echo "bump=${{ github.event.inputs.version_bump }}" >> $GITHUB_OUTPUT
+          echo "Manual release triggered with ${{ github.event.inputs.version_bump }} version bump"
+
+      - name: Bump version
+        id: bump
         run: |
-          # Get the previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          
-          if [ -z "$PREV_TAG" ]; then
-            echo "First release! 🎉" > release_notes.md
-            echo "" >> release_notes.md
-            echo "## All Changes" >> release_notes.md
-            git log --pretty=format:"- %s" >> release_notes.md
+          # cargo-release will bump version AND commit with message from Cargo.toml config
+          cargo release ${{ steps.version.outputs.bump }} --no-confirm --execute
+
+          # Get the new version and output it
+          NEW_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d '"' -f2)
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Push version bump
+        run: |
+          # Push the commit that cargo-release created
+          # Push to current branch (get actual branch name, not github.ref_name)
+          git push origin HEAD:$(git rev-parse --abbrev-ref HEAD)
+          git tag v${{ steps.bump.outputs.version }}
+          git push origin v${{ steps.bump.outputs.version }}
+
+      - name: Publish Draft Release
+        run: |
+          # Find and publish the draft release
+          DRAFT_RELEASE=$(gh release list --draft --limit 1 --json tagName -q '.[0].tagName // empty')
+
+          if [ -n "$DRAFT_RELEASE" ]; then
+            echo "Publishing draft release: $DRAFT_RELEASE"
+            # Update the tag to match our version
+            gh release edit $DRAFT_RELEASE \
+              --tag v${{ steps.bump.outputs.version }} \
+              --draft=false \
+              --prerelease
           else
-            echo "## What's Changed since $PREV_TAG" > release_notes.md
-            echo "" >> release_notes.md
-            
-            # Group commits by type
-            echo "### 🚀 Features" >> release_notes.md
-            git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="^feat:" >> release_notes.md || true
-            echo "" >> release_notes.md
-            
-            echo "### 🐛 Fixes" >> release_notes.md
-            git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="^fix:" >> release_notes.md || true
-            echo "" >> release_notes.md
-            
-            echo "### 🔧 Other Changes" >> release_notes.md
-            git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="^feat:" --grep="^fix:" --invert-grep >> release_notes.md || true
-            echo "" >> release_notes.md
-            
-            echo "### 📊 Stats" >> release_notes.md
-            echo "- Commits: $(git rev-list --count $PREV_TAG..HEAD)" >> release_notes.md
-            echo "- Files changed: $(git diff --shortstat $PREV_TAG..HEAD | awk '{print $1}')" >> release_notes.md
+            echo "No draft release found. Creating a new release..."
+            # Fallback: create a new release if no draft exists
+            gh release create v${{ steps.bump.outputs.version }} \
+              --title "Release v${{ steps.bump.outputs.version }}" \
+              --generate-notes \
+              --prerelease
           fi
-          
-          # Show what we're releasing
-          echo "Release notes:"
-          cat release_notes.md
-      
-      - name: Create GitHub Release
-        run: |
-          gh release create v${{ github.event.inputs.version }} \
-            --title "v${{ github.event.inputs.version }}" \
-            --notes-file release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -66,17 +66,21 @@ impl ServiceFactory {
         vector_storage: Arc<dyn VectorStorage>,
         repository: Arc<dyn FileRepository>,
     ) -> IndexerResult<Indexer> {
-        let config = ApplicationConfig::with_profile(codetriever_config::Profile::Development);
+        let config = ApplicationConfig::from_env();
 
         // Load tokenizer from embedding service for accurate chunking
         let tokenizer = embedding_service.provider().get_tokenizer().await;
+
+        // DEBUG: Check if tokenizer loaded
+        tracing::debug!("Tokenizer loaded: {}", tokenizer.is_some());
+        tracing::debug!("split_large_units: {}", config.indexing.split_large_units);
+        tracing::debug!("max_chunk_tokens: {}", config.indexing.max_chunk_tokens);
 
         // Create CodeParser with tokenizer (no lazy loading!)
         let code_parser = codetriever_parsing::CodeParser::new(
             tokenizer,
             config.indexing.split_large_units,
             config.indexing.max_chunk_tokens, // Use chunk size, not model max
-            config.indexing.chunk_overlap_tokens,
         );
 
         Ok(Indexer::new(

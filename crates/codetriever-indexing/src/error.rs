@@ -247,4 +247,10 @@ impl From<codetriever_parsing::ParsingError> for IndexerError {
     }
 }
 
+impl From<crate::queues::QueueError> for IndexerError {
+    fn from(err: crate::queues::QueueError) -> Self {
+        Self::Other(format!("Queue error: {err}"))
+    }
+}
+
 pub type IndexerResult<T> = std::result::Result<T, IndexerError>;

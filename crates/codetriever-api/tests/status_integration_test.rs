@@ -4,15 +4,15 @@
 //! Requires: Docker services running (`PostgreSQL` + Qdrant)
 
 use codetriever_api::routes::status::get_status;
-use codetriever_config::{DatabaseConfig, Profile};
+use codetriever_config::DatabaseConfig;
 use codetriever_meta_data::{DataClient, PoolConfig, PoolManager};
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
 use std::time::SystemTime;
 
 #[tokio::test]
 async fn test_status_with_real_postgres_and_qdrant() {
-    // Load development config
-    let db_config = DatabaseConfig::for_profile(Profile::Development);
+    // Load config with safe defaults
+    let db_config = DatabaseConfig::from_env();
     let qdrant_url =
         std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
 

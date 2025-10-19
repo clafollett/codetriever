@@ -245,12 +245,12 @@ impl LazySearchService {
 
 /// Create a properly configured search service with real Qdrant storage
 async fn create_configured_search_service() -> Result<Arc<dyn SearchProvider>, SearchError> {
-    use codetriever_config::{ApplicationConfig, Profile};
+    use codetriever_config::ApplicationConfig;
     use codetriever_meta_data::{PoolConfig, PoolManager};
     use codetriever_vector_data::QdrantStorage;
 
     // Load configuration
-    let config = ApplicationConfig::with_profile(Profile::Development);
+    let config = ApplicationConfig::from_env();
 
     // Set up embedding service first
     let embedding_service = Arc::new(codetriever_embeddings::DefaultEmbeddingService::new(
@@ -595,9 +595,6 @@ async fn search_handler_impl(
                 query = %query,
                 "Search failed with unexpected error"
             );
-            // Also print to stderr for test visibility
-            eprintln!("Search error: {search_error}");
-            eprintln!("Query: {query}");
             return Err(ApiError::InternalServerError { correlation_id });
         }
         Err(_timeout) => {

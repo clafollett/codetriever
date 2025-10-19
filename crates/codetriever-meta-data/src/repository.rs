@@ -142,6 +142,7 @@ impl FileRepository for DbFileRepository {
         })
     }
 
+    #[tracing::instrument(skip(self), fields(elapsed_ms))]
     async fn check_file_state(
         &self,
         repository_id: &str,
@@ -149,6 +150,8 @@ impl FileRepository for DbFileRepository {
         file_path: &str,
         content_hash: &str,
     ) -> DatabaseResult<FileState> {
+        let start = std::time::Instant::now();
+
         // Use read pool for SELECT operations
         let pool = self.pools.read_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -173,7 +176,7 @@ impl FileRepository for DbFileRepository {
         .await
         .map_db_err(operation.clone(), correlation_id)?;
 
-        match existing {
+        let result = match existing {
             None => {
                 // New file, start at generation 1
                 Ok(FileState::New { generation: 1 })
@@ -201,15 +204,24 @@ impl FileRepository for DbFileRepository {
                     })
                 }
             }
-        }
+        };
+
+        #[allow(clippy::cast_possible_truncation)]
+        let elapsed = start.elapsed().as_millis() as u64;
+        tracing::Span::current().record("elapsed_ms", elapsed);
+
+        result
     }
 
+    #[tracing::instrument(skip(self, metadata), fields(elapsed_ms))]
     async fn record_file_indexing(
         &self,
         repository_id: &str,
         branch: &str,
         metadata: &FileMetadata,
     ) -> DatabaseResult<IndexedFile> {
+        let start = std::time::Instant::now();
+
         // Use write pool for INSERT operations
         let pool = self.pools.write_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -252,7 +264,7 @@ impl FileRepository for DbFileRepository {
         .await
         .map_db_err(operation, correlation_id)?;
 
-        Ok(IndexedFile {
+        let result = Ok(IndexedFile {
             repository_id: row.get("repository_id"),
             branch: row.get("branch"),
             file_path: row.get("file_path"),
@@ -263,9 +275,16 @@ impl FileRepository for DbFileRepository {
             commit_date: row.get("commit_date"),
             author: row.get("author"),
             indexed_at: row.get("indexed_at"),
-        })
+        });
+
+        #[allow(clippy::cast_possible_truncation)]
+        let elapsed = start.elapsed().as_millis() as u64;
+        tracing::Span::current().record("elapsed_ms", elapsed);
+
+        result
     }
 
+    #[tracing::instrument(skip(self, chunks), fields(chunk_count = chunks.len(), elapsed_ms))]
     async fn insert_chunks(
         &self,
         repository_id: &str,
@@ -275,6 +294,8 @@ impl FileRepository for DbFileRepository {
         if chunks.is_empty() {
             return Ok(());
         }
+
+        let start = std::time::Instant::now();
 
         let pool = self.pools.write_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -353,7 +374,13 @@ impl FileRepository for DbFileRepository {
         .await
         .map_db_err(operation, correlation_id)?;
 
-        Ok(())
+        let result = Ok(());
+
+        #[allow(clippy::cast_possible_truncation)]
+        let elapsed = start.elapsed().as_millis() as u64;
+        tracing::Span::current().record("elapsed_ms", elapsed);
+
+        result
     }
 
     async fn replace_file_chunks(

@@ -67,31 +67,31 @@ impl<T> RoundRobinDispatcher<T> {
 impl<T: Send> Dispatcher<T> for RoundRobinDispatcher<T> {
     async fn dispatch(&mut self, request: T) -> bool {
         let worker_count = self.worker_channels.len();
-        eprintln!(
-            "🔀 RoundRobin: dispatch called, {worker_count} workers available, current={}",
+        tracing::trace!(
+            "RoundRobin: dispatch called, {worker_count} workers available, current={}",
             self.current
         );
 
         if worker_count == 0 {
-            eprintln!("❌ RoundRobin: NO WORKERS AVAILABLE!");
+            tracing::error!("RoundRobin: NO WORKERS AVAILABLE!");
             self.stats.failed_dispatches += 1;
             return false;
         }
 
         // Try to send to current worker
-        eprintln!("🔀 RoundRobin: sending to worker {}", self.current);
+        tracing::trace!("RoundRobin: sending to worker {}", self.current);
         let result = self.worker_channels[self.current].send(request);
 
         if result.is_ok() {
-            eprintln!("✅ RoundRobin: sent to worker {}", self.current);
+            tracing::trace!("RoundRobin: sent to worker {}", self.current);
             self.stats.total_dispatched += 1;
             // Advance to next worker (round-robin)
             self.current = (self.current + 1) % worker_count;
             self.stats.current_worker = self.current;
-            eprintln!("🔀 RoundRobin: next worker will be {}", self.current);
+            tracing::trace!("RoundRobin: next worker will be {}", self.current);
             true
         } else {
-            eprintln!("❌ RoundRobin: worker {} channel CLOSED!", self.current);
+            tracing::warn!("RoundRobin: worker {} channel CLOSED!", self.current);
             // Worker channel closed - remove it and retry
             self.worker_channels.remove(self.current);
             self.stats.failed_dispatches += 1;

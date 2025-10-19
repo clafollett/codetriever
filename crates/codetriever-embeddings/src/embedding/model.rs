@@ -76,6 +76,9 @@ pub struct EmbeddingModel {
     model: Option<BoxedEmbedderModel>,
     tokenizer: Option<Tokenizer>,
     max_tokens: usize,
+    /// Model's actual max_position_embeddings from HuggingFace config.json
+    /// This is the authoritative limit from the model's architecture
+    max_position_embeddings: Option<usize>,
 }
 
 impl EmbeddingModel {
@@ -104,6 +107,7 @@ impl EmbeddingModel {
             model: None,
             tokenizer: None,
             max_tokens,
+            max_position_embeddings: None,
         }
     }
 
@@ -160,14 +164,16 @@ impl EmbeddingModel {
         // Count truncations for summary
         let mut truncated_count = 0;
         for encoding in encodings.iter() {
-            if encoding.len() >= self.max_tokens {
+            if encoding.len() > self.max_tokens {
                 truncated_count += 1;
             }
         }
         if truncated_count > 0 {
-            println!(
-                "WARNING: {} of {} texts truncated at {} tokens",
-                truncated_count, num_texts, self.max_tokens
+            tracing::warn!(
+                "{} of {} texts truncated at {} tokens",
+                truncated_count,
+                num_texts,
+                self.max_tokens
             );
         }
 
@@ -285,16 +291,23 @@ impl EmbeddingModel {
         self.tokenizer.as_ref().map(|t| Arc::new(t.clone()))
     }
 
+    /// Get the model's actual max_position_embeddings from HuggingFace config.json
+    /// This is the authoritative limit from the model's architecture
+    /// Returns None if the model hasn't been loaded yet
+    pub fn max_position_embeddings(&self) -> Option<usize> {
+        self.max_position_embeddings
+    }
+
     /// Ensures the model is loaded and ready for inference.
     pub async fn ensure_model_loaded(&mut self) -> EmbeddingResult<()> {
         if self.model.is_some() {
             return Ok(());
         }
 
-        println!("Loading embedding model: {}", self.model_id);
+        tracing::info!("Loading embedding model: {}", self.model_id);
 
         // Initialize API
-        println!("Creating HuggingFace API client...");
+        tracing::debug!("Creating HuggingFace API client...");
         let api = Api::new()
             .map_err(|e| EmbeddingError::Embedding(format!("Failed to create HF API: {e}")))?;
         let repo = api.repo(Repo::new(self.model_id.clone(), RepoType::Model));
@@ -305,7 +318,7 @@ impl EmbeddingModel {
             .await
             .map_err(|e| EmbeddingError::Embedding(format!("Failed to download config: {e}")))?;
 
-        // Parse config to determine model type
+        // Parse config to determine model type and extract max_position_embeddings
         let config_str = std::fs::read_to_string(&config_path)
             .map_err(|e| EmbeddingError::Embedding(format!("Failed to read config: {e}")))?;
 
@@ -313,6 +326,39 @@ impl EmbeddingModel {
         let is_jina = config_str.contains("\"position_embedding_type\": \"alibi\"")
             || config_str.contains("jina")
             || config_str.contains("JinaBert");
+
+        // Extract max_position_embeddings from config (common to all BERT models)
+        let config_json: serde_json::Value = serde_json::from_str(&config_str)
+            .map_err(|e| EmbeddingError::Embedding(format!("Failed to parse config JSON: {e}")))?;
+
+        let model_max_position_embeddings = config_json
+            .get("max_position_embeddings")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .ok_or_else(|| {
+                EmbeddingError::Embedding(
+                    "Model config missing max_position_embeddings field".to_string(),
+                )
+            })?;
+
+        // Store the model's ACTUAL max_position_embeddings before any modifications
+        // This is the authoritative limit from the model's architecture
+        self.max_position_embeddings = Some(model_max_position_embeddings);
+
+        tracing::info!(
+            "Model {} supports up to {} tokens (configured to use {})",
+            self.model_id,
+            model_max_position_embeddings,
+            self.max_tokens
+        );
+
+        // Validate user's max_tokens doesn't exceed model's capability
+        if self.max_tokens > model_max_position_embeddings {
+            return Err(EmbeddingError::Embedding(format!(
+                "Configured max_tokens ({}) exceeds model's max_position_embeddings ({})",
+                self.max_tokens, model_max_position_embeddings
+            )));
+        }
 
         // Download model weights
         let weights_path = match repo.get("model.safetensors").await {
@@ -330,7 +376,7 @@ impl EmbeddingModel {
             })?;
 
             // Override max_position_embeddings to match our truncation limit
-            // This ensures the model's ALiBi positional encoding can handle our configured token inputs
+            // This optimizes the model's ALiBi positional encoding for our configured token inputs
             config.max_position_embeddings = self.max_tokens;
 
             // Load Jina model weights - convert to F32 for numerical stability
@@ -364,6 +410,7 @@ impl EmbeddingModel {
             let config: BertConfig = serde_json::from_str(&config_str).map_err(|e| {
                 EmbeddingError::Embedding(format!("Failed to parse BERT config: {e}"))
             })?;
+
             Box::new(BertModel::load(vb, &config).map_err(|e| {
                 EmbeddingError::Embedding(format!("Failed to initialize BERT model: {e}"))
             })?)

@@ -7,6 +7,7 @@ pub mod config;
 pub mod error;
 pub mod factory;
 pub mod indexing;
+pub mod queues;
 pub mod security;
 
 // Re-export error types

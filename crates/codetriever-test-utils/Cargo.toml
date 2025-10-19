@@ -8,6 +8,9 @@ repository.workspace = true
 
 [dependencies]
 tokio = { workspace = true }
+codetriever-common = { path = "../codetriever-common" }
+codetriever-config = { path = "../codetriever-config" }
+codetriever-embeddings = { path = "../codetriever-embeddings" }
 
 [lints]
 workspace = true

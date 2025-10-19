@@ -1,7 +1,7 @@
 //! Configuration source loading and composition
 
 use crate::validation::Validate;
-use crate::{ApplicationConfig, ConfigResult, Profile};
+use crate::{ApplicationConfig, ConfigResult};
 use std::path::Path;
 
 /// Trait for loading configuration from different sources
@@ -24,16 +24,8 @@ pub struct EnvironmentSource;
 
 impl ConfigurationSource for EnvironmentSource {
     fn load(&self) -> ConfigResult<ApplicationConfig> {
-        // Load profile from environment variable with sensible default
-        // CODETRIEVER_PROFILE controls base configuration template
-        // Valid values: development, staging, production, test
-        let profile = std::env::var("CODETRIEVER_PROFILE")
-            .unwrap_or_else(|_| "development".to_string()) // Default to dev for safety
-            .parse()?; // Parse string to Profile enum with error handling
-
-        // Create configuration using profile-based defaults
-        // All individual fields can be overridden by specific env vars
-        Ok(ApplicationConfig::with_profile(profile))
+        // Load configuration from environment variables with safe defaults
+        Ok(ApplicationConfig::from_env())
     }
 
     fn name(&self) -> &'static str {
@@ -105,7 +97,7 @@ impl ConfigurationLoader {
     /// Returns configuration loading or validation errors
     pub fn load(&self) -> ConfigResult<ApplicationConfig> {
         // Start with default configuration
-        let mut config = ApplicationConfig::with_profile(Profile::Development);
+        let mut config = ApplicationConfig::from_env();
 
         // Sort sources by priority (lowest first, so highest priority overwrites)
         let mut sorted_sources = self.sources.iter().collect::<Vec<_>>();
@@ -137,16 +129,12 @@ impl Default for ConfigurationLoader {
 
 /// Merge two configurations, with the second taking precedence
 fn merge_configs(
-    base: &ApplicationConfig,
+    _base: &ApplicationConfig,
     override_config: ApplicationConfig,
 ) -> ApplicationConfig {
     // Merge configurations with override taking precedence
     // This allows partial configs to override only specific fields
-    tracing::trace!(
-        "Merging configuration from base profile: {:?} with override profile: {:?}",
-        base.profile,
-        override_config.profile
-    );
+    tracing::trace!("Merging configuration with override from environment");
 
     // For now, we use complete replacement since our environment source
     // loads complete configurations. Future enhancement could implement

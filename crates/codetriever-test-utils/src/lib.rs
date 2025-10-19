@@ -1,8 +1,8 @@
 //! Shared test utilities for all Codetriever integration tests
 //!
-//! Provides a persistent Tokio runtime and atomic counter shared across
-//! ALL integration tests in ALL crates, preventing race conditions and
-//! ensuring resource isolation.
+//! Provides a persistent Tokio runtime, atomic counter, and SHARED EMBEDDING SERVICE
+//! across ALL integration tests in ALL crates, preventing race conditions, ensuring
+//! resource isolation, and dramatically reducing memory usage.
 //!
 //! ## Usage
 //!
@@ -18,13 +18,14 @@
 //! fn my_integration_test() {
 //!     codetriever_test_utils::get_test_runtime().block_on(async {
 //!         let counter = codetriever_test_utils::next_collection_counter();
+//!         let embedding_service = codetriever_test_utils::get_shared_embedding_service();
 //!         // ... test logic ...
 //!     })
 //! }
 //! ```
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 /// Shared Tokio runtime for ALL integration tests across ALL crates
 ///
@@ -41,6 +42,20 @@ static TEST_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 /// Prevents collection name collisions when tests run in parallel across
 /// multiple crates (e.g., codetriever-api and codetriever-indexing).
 static COLLECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Type alias for shared embedding service to reduce type complexity
+type SharedEmbeddingService = Arc<dyn codetriever_embeddings::EmbeddingService>;
+
+/// Shared embedding service for ALL integration tests across ALL crates
+///
+/// This service is initialized ONCE and reused by all tests, preventing:
+/// - Multiple 4GB+ model loads eating all RAM
+/// - Slow test startup from repeated model loading
+/// - Resource exhaustion when tests run in parallel
+///
+/// The embedding service contains a pool of models (default `pool_size=2`),
+/// so all tests share the SAME model instances.
+static SHARED_EMBEDDING_SERVICE: OnceLock<SharedEmbeddingService> = OnceLock::new();
 
 /// Get the shared test runtime (creates on first call, reuses thereafter)
 ///
@@ -107,6 +122,51 @@ pub fn get_test_runtime() -> &'static tokio::runtime::Runtime {
 /// ```
 pub fn next_collection_counter() -> usize {
     COLLECTION_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Get the shared embedding service (creates on first call, reuses thereafter)
+///
+/// **CRITICAL**: This service is shared across ALL test crates to prevent
+/// loading multiple 4GB+ embedding models into RAM. All tests use the SAME
+/// model pool, dramatically reducing memory usage and improving performance.
+///
+/// The service contains an internal pool (default size 2) for parallel inference.
+/// This pool is shared across ALL tests in ALL crates.
+///
+/// **Memory Impact:**
+/// - Without sharing: 7 tests × 4GB = 28GB+ RAM usage 😱
+/// - With sharing: 1 service × 4GB = 4GB RAM usage ✅
+///
+/// # Example
+/// ```ignore
+/// use codetriever_test_utils::get_shared_embedding_service;
+///
+/// #[test]
+/// fn my_test() {
+///     get_test_runtime().block_on(async {
+///         let embedding_service = get_shared_embedding_service();
+///         // ... use service ...
+///     });
+/// }
+/// ```
+///
+/// # Panics
+/// Panics if embedding service initialization fails (e.g., model not found)
+#[allow(clippy::expect_used)] // Test infrastructure - panic on init failure is acceptable
+pub fn get_shared_embedding_service() -> SharedEmbeddingService {
+    Arc::clone(SHARED_EMBEDDING_SERVICE.get_or_init(|| {
+        eprintln!("🔧 Initializing SHARED embedding service (ONE time for ALL test crates!)");
+        codetriever_common::initialize_environment();
+
+        let config = codetriever_config::ApplicationConfig::from_env();
+
+        let service = Arc::new(codetriever_embeddings::DefaultEmbeddingService::new(
+            config.embedding,
+        )) as SharedEmbeddingService;
+
+        eprintln!("✅ SHARED embedding service initialized (pool warms up lazily on first use)");
+        service
+    }))
 }
 
 #[cfg(test)]

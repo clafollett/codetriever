@@ -16,8 +16,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
 
 use codetriever_api::AppState;
-use codetriever_config::{ApplicationConfig, Profile};
-use codetriever_embeddings::DefaultEmbeddingService;
+use codetriever_config::ApplicationConfig;
 use codetriever_indexing::{ServiceConfig, ServiceFactory};
 use codetriever_meta_data::{
     DataClient, DbFileRepository, PoolConfig, PoolManager, traits::FileRepository,
@@ -47,7 +46,7 @@ static SHARED_RESOURCES: OnceCell<SharedResources> = OnceCell::const_new();
 async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::Error>> {
     eprintln!("🔧 Initializing SharedResources (should only happen once!)");
     codetriever_common::initialize_environment();
-    let config = ApplicationConfig::with_profile(Profile::Development);
+    let config = ApplicationConfig::from_env();
 
     // Create shared database pool
     eprintln!("🔧 Creating database pools...");
@@ -60,18 +59,13 @@ async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::
     let file_repository = Arc::new(DbFileRepository::new(pools)) as Arc<dyn FileRepository>;
     eprintln!("✅ File repository created");
 
-    // Create shared embedding service (with pool inside)
-    eprintln!("🔧 Creating embedding service...");
-    let embedding_service = Arc::new(DefaultEmbeddingService::new(config.embedding.clone()))
-        as Arc<dyn codetriever_embeddings::EmbeddingService>;
-    eprintln!("✅ Embedding service created");
+    // Get SHARED embedding service from codetriever-test-utils
+    // This is initialized ONCE across ALL test crates (prevents 28GB+ RAM usage)
+    eprintln!("🔧 Getting shared embedding service...");
+    let embedding_service = codetriever_test_utils::get_shared_embedding_service();
+    eprintln!("✅ Embedding service obtained (shared across all tests)");
 
-    // Warm up pool once
-    eprintln!("🔧 Warming up embedding pool...");
-    embedding_service.provider().ensure_ready().await?;
-    eprintln!("✅ Embedding pool warmed up");
-
-    eprintln!("✅ SharedResources initialized (pool created)");
+    eprintln!("✅ SharedResources initialized (shared embedding pool)");
 
     Ok(SharedResources {
         db_client,

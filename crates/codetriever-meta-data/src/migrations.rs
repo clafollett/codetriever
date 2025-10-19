@@ -48,10 +48,10 @@ pub async fn setup_database(config: &codetriever_config::DatabaseConfig) -> anyh
         }
         Err(e) => {
             // If we can't check existence (e.g., connection error), log it
-            eprintln!("Warning: Could not check if database exists: {e}");
+            tracing::warn!("Could not check if database exists: {e}");
 
             // Try to create database - if it fails with "already exists", that's OK
-            println!("Attempting to create database...");
+            tracing::info!("Attempting to create database...");
             if let Err(create_err) = Postgres::create_database(&database_url).await {
                 // Ignore error if database already exists
                 let err_msg = create_err.to_string();
@@ -103,7 +103,7 @@ pub async fn wait_for_migrations(
             Err(e) if attempts < MAX_ATTEMPTS => {
                 // Use saturating_add for retry counter - if we somehow overflow, we're way past MAX_ATTEMPTS
                 attempts = attempts.saturating_add(1);
-                eprintln!("Database not ready (attempt {attempts}/{MAX_ATTEMPTS}): {e}");
+                tracing::debug!("Database not ready (attempt {attempts}/{MAX_ATTEMPTS}): {e}");
                 sleep(Duration::from_secs(2)).await;
             }
             Err(e) => return Err(e),

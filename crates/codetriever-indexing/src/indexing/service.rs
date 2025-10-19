@@ -6,14 +6,10 @@ use async_trait::async_trait;
 /// Trait for indexing operations to enable dependency injection and testing
 #[async_trait]
 pub trait IndexerService: Send + Sync {
-    /// Index a directory and return the result
-    async fn index_directory(
-        &mut self,
-        path: &std::path::Path,
-        recursive: bool,
-    ) -> crate::IndexerResult<IndexResult>;
-
     /// Index file content directly without filesystem access
+    ///
+    /// This is the primary indexing API - files are provided as in-memory content
+    /// rather than filesystem paths, allowing for flexibility in how files are sourced.
     async fn index_file_content(
         &mut self,
         project_id: &str,
@@ -64,25 +60,6 @@ pub mod test_utils {
 
     #[async_trait]
     impl IndexerService for MockIndexerService {
-        async fn index_directory(
-            &mut self,
-            _path: &std::path::Path,
-            _recursive: bool,
-        ) -> crate::IndexerResult<IndexResult> {
-            if self.should_error {
-                Err(crate::IndexerError::Io {
-                    message: "Mock error".to_string(),
-                    source: None,
-                })
-            } else {
-                Ok(IndexResult {
-                    files_indexed: self.files_to_return,
-                    chunks_created: self.chunks_to_return,
-                    chunks_stored: 0,
-                })
-            }
-        }
-
         async fn index_file_content(
             &mut self,
             _project_id: &str,

@@ -34,13 +34,13 @@ impl DefaultEmbeddingProvider {
             "provider-{}",
             PROVIDER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
-        eprintln!("🏗️  Creating DefaultEmbeddingProvider {provider_id}");
+        tracing::debug!("Creating DefaultEmbeddingProvider {provider_id}");
 
         let pool = EmbeddingModelPool::new(
             config.model.id.clone(),
             config.model.max_tokens,
             config.performance.pool_size,
-            config.performance.batch_size,
+            config.performance.indexer_batch_size,
             Duration::from_millis(config.performance.batch_timeout_ms),
         );
 
@@ -59,14 +59,14 @@ impl DefaultEmbeddingProvider {
             "provider-{}",
             PROVIDER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
-        eprintln!("🏗️  Creating DefaultEmbeddingProvider {provider_id} (from_model)");
+        tracing::debug!("Creating DefaultEmbeddingProvider {provider_id} (from_model)");
 
         // For compatibility, create single-model pool
         let pool = EmbeddingModelPool::new(
             config.model.id.clone(),
             config.model.max_tokens,
             1, // Single model
-            config.performance.batch_size,
+            config.performance.indexer_batch_size,
             Duration::from_millis(config.performance.batch_timeout_ms),
         );
 
@@ -80,21 +80,25 @@ impl DefaultEmbeddingProvider {
 
 impl Drop for DefaultEmbeddingProvider {
     fn drop(&mut self) {
-        eprintln!(
-            "🗑️  Dropping DefaultEmbeddingProvider: {}",
-            self.provider_id
-        );
+        tracing::debug!("Dropping DefaultEmbeddingProvider: {}", self.provider_id);
     }
 }
 
 #[async_trait]
 impl EmbeddingProvider for DefaultEmbeddingProvider {
+    #[tracing::instrument(skip(self, texts), fields(text_count = texts.len(), elapsed_ms))]
     async fn embed_batch(&self, texts: &[&str]) -> EmbeddingResult<Vec<Vec<f32>>> {
+        let start = std::time::Instant::now();
+
         // Convert to owned strings for pool (required for async channel transfer)
         let owned_texts: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
 
         // Submit to pool - will be batched with other concurrent requests
-        self.pool.embed(owned_texts).await
+        let result = self.pool.embed(owned_texts).await;
+
+        tracing::Span::current().record("elapsed_ms", start.elapsed().as_millis() as u64);
+
+        result
     }
 
     fn embedding_dimension(&self) -> usize {
@@ -134,10 +138,10 @@ static SERVICE_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::Atom
 /// Default implementation of EmbeddingService
 ///
 /// Provider is Arc-shared to ensure pool stays alive across all users
+/// NO service-level batching - provider (pool) handles batching internally
 pub struct DefaultEmbeddingService {
     provider: Arc<dyn EmbeddingProvider>,
     stats: Arc<RwLock<EmbeddingStats>>,
-    batch_size: usize,
     service_id: String, // Unique ID for debugging
 }
 
@@ -148,9 +152,8 @@ impl DefaultEmbeddingService {
             "service-{}",
             SERVICE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
-        eprintln!("🏗️  Creating DefaultEmbeddingService {service_id}");
+        tracing::debug!("Creating DefaultEmbeddingService {service_id}");
 
-        let batch_size = config.performance.batch_size;
         let model_name = config.model.id.clone();
         let provider = Arc::new(DefaultEmbeddingProvider::new(config));
 
@@ -163,18 +166,17 @@ impl DefaultEmbeddingService {
         Self {
             provider,
             stats,
-            batch_size,
             service_id,
         }
     }
 
-    /// Create with a custom provider
-    pub fn with_provider(provider: Arc<dyn EmbeddingProvider>, batch_size: usize) -> Self {
+    /// Create with a custom provider (for testing)
+    pub fn with_provider(provider: Arc<dyn EmbeddingProvider>) -> Self {
         let service_id = format!(
             "service-{}",
             SERVICE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
-        eprintln!("🏗️  Creating DefaultEmbeddingService {service_id} (with_provider)");
+        tracing::debug!("Creating DefaultEmbeddingService {service_id} (with_provider)");
 
         let stats = Arc::new(RwLock::new(EmbeddingStats {
             model_name: provider.model_name().to_string(),
@@ -185,7 +187,6 @@ impl DefaultEmbeddingService {
         Self {
             provider,
             stats,
-            batch_size,
             service_id,
         }
     }
@@ -193,7 +194,7 @@ impl DefaultEmbeddingService {
 
 impl Drop for DefaultEmbeddingService {
     fn drop(&mut self) {
-        eprintln!("🗑️  Dropping DefaultEmbeddingService: {}", self.service_id);
+        tracing::debug!("Dropping DefaultEmbeddingService: {}", self.service_id);
     }
 }
 
@@ -202,32 +203,26 @@ impl EmbeddingService for DefaultEmbeddingService {
     async fn generate_embeddings(&self, texts: Vec<&str>) -> EmbeddingResult<Vec<Vec<f32>>> {
         use std::time::Instant;
 
-        // Ensure provider is ready
-        self.provider.ensure_ready().await?;
+        // NOTE: ensure_ready() is called ONCE at indexer startup, not on every batch!
+        // Calling it here would double our embedding count (warmup embed per batch).
+        // The pool handles lazy loading - first call will load models automatically.
 
-        let mut all_embeddings = Vec::with_capacity(texts.len());
+        // NO service-level batching! Just pass all texts to provider.
+        // The pool handles batching internally (see pool.rs worker task).
+        // This eliminates redundant batching overhead.
+        let start = Instant::now();
+        let embeddings = self.provider.embed_batch(&texts).await?;
 
-        // Process in batches - no need to clone strings!
-        for batch in texts.chunks(self.batch_size) {
-            let start = Instant::now();
+        // Update stats
+        let elapsed = start.elapsed().as_millis() as f64;
+        let mut stats = self.stats.write().await;
+        stats.total_embeddings += texts.len();
+        stats.total_batches += 1;
+        stats.avg_batch_time_ms = (stats.avg_batch_time_ms * (stats.total_batches as f64 - 1.0)
+            + elapsed)
+            / stats.total_batches as f64;
 
-            let embeddings = self.provider.embed_batch(batch).await?;
-
-            all_embeddings.extend(embeddings);
-
-            // Update stats
-            let elapsed = start.elapsed().as_millis() as f64;
-            let mut stats = self.stats.write().await;
-            stats.total_embeddings += batch.len();
-            stats.total_batches += 1;
-
-            // Update running average
-            let prev_avg = stats.avg_batch_time_ms;
-            let count = stats.total_batches as f64;
-            stats.avg_batch_time_ms = (prev_avg * (count - 1.0) + elapsed) / count;
-        }
-
-        Ok(all_embeddings)
+        Ok(embeddings)
     }
 
     fn provider(&self) -> &dyn EmbeddingProvider {
@@ -308,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedding_service_batching() {
         let provider = Arc::new(MockEmbeddingProvider::new(768));
-        let service = DefaultEmbeddingService::with_provider(provider, 2);
+        let service = DefaultEmbeddingService::with_provider(provider);
 
         let texts = vec!["text1", "text2", "text3", "text4", "text5"];
 
@@ -318,13 +313,13 @@ mod tests {
 
         let stats = service.get_stats().await;
         assert_eq!(stats.total_embeddings, 5);
-        assert_eq!(stats.total_batches, 3); // 5 texts with batch size 2 = 3 batches
+        assert_eq!(stats.total_batches, 1); // NO service-level batching - single provider call
     }
 
     #[tokio::test]
     async fn test_embedding_service_error_handling() {
         let provider = Arc::new(MockEmbeddingProvider::new(768).with_failure());
-        let service = DefaultEmbeddingService::with_provider(provider, 2);
+        let service = DefaultEmbeddingService::with_provider(provider);
 
         let texts = vec!["text1"];
         let result = service.generate_embeddings(texts).await;
