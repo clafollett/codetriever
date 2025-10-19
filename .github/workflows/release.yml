@@ -70,7 +70,7 @@ jobs:
       - name: Publish Draft Release
         run: |
           # Find and publish the draft release
-          DRAFT_RELEASE=$(gh release list --draft --limit 1 --json tagName -q '.[0].tagName // empty')
+          DRAFT_RELEASE=$(gh release list --limit 10 --json tagName,isDraft -q '.[] | select(.isDraft == true) | .tagName' | head -1)
 
           if [ -n "$DRAFT_RELEASE" ]; then
             echo "Publishing draft release: $DRAFT_RELEASE"

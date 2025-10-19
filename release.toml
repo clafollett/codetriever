@@ -1,0 +1,10 @@
+# cargo-release configuration
+# Prevents per-crate tagging - only create workspace-level tags
+
+# Don't tag individual crates
+[[crate."*"]]
+tag = false
+
+# Only tag at workspace level
+[workspace]
+tag-name = "v{{version}}"
