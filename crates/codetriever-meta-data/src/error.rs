@@ -115,6 +115,8 @@ pub enum DatabaseOperation {
     CountProjectBranches,
     CountIndexedFiles,
     CountChunks,
+    GetDatabaseSize,
+    GetLastIndexedTimestamp,
 
     /// Generic operations
     Query {
@@ -232,6 +234,8 @@ impl fmt::Display for DatabaseOperation {
             Self::CountProjectBranches => write!(f, "count_project_branches()"),
             Self::CountIndexedFiles => write!(f, "count_indexed_files()"),
             Self::CountChunks => write!(f, "count_chunks()"),
+            Self::GetDatabaseSize => write!(f, "get_database_size()"),
+            Self::GetLastIndexedTimestamp => write!(f, "get_last_indexed_timestamp()"),
 
             Self::Query { description } => write!(f, "query({description})"),
             Self::Transaction { description } => write!(f, "transaction({description})"),

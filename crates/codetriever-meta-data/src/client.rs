@@ -69,4 +69,26 @@ impl DataClient {
     pub async fn count_chunks(&self) -> Result<i64, crate::DatabaseError> {
         self.repository.count_chunks().await
     }
+
+    /// Get database size in megabytes
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn get_database_size_mb(&self) -> Result<f64, crate::DatabaseError> {
+        self.repository.get_database_size_mb().await
+    }
+
+    /// Get most recent indexed timestamp across all project branches
+    ///
+    /// Returns `None` if no branches have been indexed yet
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn get_last_indexed_timestamp(
+        &self,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, crate::DatabaseError> {
+        self.repository.get_last_indexed_timestamp().await
+    }
 }

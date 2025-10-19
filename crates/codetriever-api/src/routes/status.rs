@@ -22,6 +22,12 @@ pub trait DatabaseClient: Send + Sync {
     async fn count_indexed_files(&self) -> DatabaseResult<i64>;
     /// Count total chunks
     async fn count_chunks(&self) -> DatabaseResult<i64>;
+    /// Get database size in megabytes
+    async fn get_database_size_mb(&self) -> DatabaseResult<f64>;
+    /// Get most recent indexed timestamp
+    async fn get_last_indexed_timestamp(
+        &self,
+    ) -> DatabaseResult<Option<chrono::DateTime<chrono::Utc>>>;
 }
 
 #[async_trait]
@@ -36,6 +42,16 @@ impl DatabaseClient for DataClient {
 
     async fn count_chunks(&self) -> DatabaseResult<i64> {
         self.count_chunks().await
+    }
+
+    async fn get_database_size_mb(&self) -> DatabaseResult<f64> {
+        self.get_database_size_mb().await
+    }
+
+    async fn get_last_indexed_timestamp(
+        &self,
+    ) -> DatabaseResult<Option<chrono::DateTime<chrono::Utc>>> {
+        self.get_last_indexed_timestamp().await
     }
 }
 
@@ -52,6 +68,16 @@ impl DatabaseClient for codetriever_meta_data::MockDataClient {
     async fn count_chunks(&self) -> DatabaseResult<i64> {
         self.count_chunks()
     }
+
+    async fn get_database_size_mb(&self) -> DatabaseResult<f64> {
+        self.get_database_size_mb()
+    }
+
+    async fn get_last_indexed_timestamp(
+        &self,
+    ) -> DatabaseResult<Option<chrono::DateTime<chrono::Utc>>> {
+        self.get_last_indexed_timestamp()
+    }
 }
 
 /// Server status information
@@ -67,7 +93,9 @@ impl DatabaseClient for codetriever_meta_data::MockDataClient {
     },
     "index": {
         "total_files": 1234,
-        "total_chunks": 5678
+        "total_chunks": 5678,
+        "db_size_mb": 125.4,
+        "last_indexed_at": "2025-10-19T14:30:00Z"
     }
 }))]
 pub struct StatusResponse {
@@ -101,6 +129,10 @@ pub struct IndexInfo {
     pub total_files: i64,
     /// Total number of code chunks
     pub total_chunks: i64,
+    /// Database size in megabytes (`PostgreSQL` only)
+    pub db_size_mb: f64,
+    /// Most recent indexed timestamp (ISO 8601 format)
+    pub last_indexed_at: Option<String>,
 }
 
 /// GET /status - Comprehensive system health monitoring
@@ -134,7 +166,7 @@ where
     let qdrant_health = check_qdrant_health(vector_storage).await;
 
     // Get index statistics
-    let (total_files, total_chunks) = get_index_stats(db_client).await;
+    let (total_files, total_chunks, db_size_mb, last_indexed_at) = get_index_stats(db_client).await;
 
     StatusResponse {
         server: ServerInfo {
@@ -148,6 +180,8 @@ where
         index: IndexInfo {
             total_files,
             total_chunks,
+            db_size_mb,
+            last_indexed_at,
         },
     }
 }
@@ -169,10 +203,18 @@ async fn check_qdrant_health<T: VectorStorage + ?Sized>(storage: &T) -> String {
     }
 }
 
-async fn get_index_stats<C: DatabaseClient + ?Sized>(client: &C) -> (i64, i64) {
+async fn get_index_stats<C: DatabaseClient + ?Sized>(
+    client: &C,
+) -> (i64, i64, f64, Option<String>) {
     let files = client.count_indexed_files().await.unwrap_or(0);
     let chunks = client.count_chunks().await.unwrap_or(0);
-    (files, chunks)
+    let db_size_mb = client.get_database_size_mb().await.unwrap_or(0.0);
+    let last_indexed_at = client
+        .get_last_indexed_timestamp()
+        .await
+        .unwrap_or(None)
+        .map(|dt| dt.to_rfc3339());
+    (files, chunks, db_size_mb, last_indexed_at)
 }
 
 /// Axum handler for GET /status endpoint
@@ -181,7 +223,8 @@ async fn get_index_stats<C: DatabaseClient + ?Sized>(client: &C) -> (i64, i64) {
 pub async fn status_handler(State(state): State<AppState>) -> Json<StatusResponse> {
     // Check PostgreSQL health and get stats
     let postgres_status = check_postgres_health(state.db_client.as_ref()).await;
-    let (total_files, total_chunks) = get_index_stats(state.db_client.as_ref()).await;
+    let (total_files, total_chunks, db_size_mb, last_indexed_at) =
+        get_index_stats(state.db_client.as_ref()).await;
 
     // Check Qdrant health
     let qdrant_status = check_qdrant_health(state.vector_storage.as_ref()).await;
@@ -204,6 +247,8 @@ pub async fn status_handler(State(state): State<AppState>) -> Json<StatusRespons
         index: IndexInfo {
             total_files,
             total_chunks,
+            db_size_mb,
+            last_indexed_at,
         },
     })
 }
@@ -240,6 +285,8 @@ mod tests {
             index: IndexInfo {
                 total_files: 10,
                 total_chunks: 50,
+                db_size_mb: 125.4,
+                last_indexed_at: Some("2025-10-19T14:30:00Z".to_string()),
             },
         };
 
@@ -247,6 +294,8 @@ mod tests {
         assert!(json.contains("version"));
         assert!(json.contains("uptime_seconds"));
         assert!(json.contains("total_files"));
+        assert!(json.contains("db_size_mb"));
+        assert!(json.contains("last_indexed_at"));
         Ok(())
     }
 
@@ -270,6 +319,8 @@ mod tests {
         );
         assert_eq!(response.index.total_files, 0); // Empty mock
         assert_eq!(response.index.total_chunks, 0); // Empty mock
+        assert!((response.index.db_size_mb - 1.0).abs() < f64::EPSILON); // Mock returns 1.0 MB
+        assert_eq!(response.index.last_indexed_at, None); // No branches indexed yet
     }
 
     #[tokio::test]
@@ -301,5 +352,7 @@ mod tests {
         assert_eq!(response.services.postgres, "connected");
         assert_eq!(response.index.total_files, 0);
         assert_eq!(response.index.total_chunks, 0);
+        assert!((response.index.db_size_mb - 1.0).abs() < f64::EPSILON);
+        assert_eq!(response.index.last_indexed_at, None);
     }
 }

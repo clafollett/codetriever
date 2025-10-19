@@ -592,6 +592,36 @@ impl MockDataClient {
         #[allow(clippy::cast_possible_wrap)]
         Ok(self.repository.chunks.lock().unwrap().len() as i64)
     }
+
+    /// Get mock database size (always returns 1.0 MB for testing)
+    ///
+    /// # Errors
+    ///
+    /// Never returns error for mock implementation
+    pub const fn get_database_size_mb(&self) -> DatabaseResult<f64> {
+        // Mock implementation returns fixed size
+        Ok(1.0)
+    }
+
+    /// Get last indexed timestamp from mock data
+    ///
+    /// Returns most recent `last_indexed` across all project branches
+    ///
+    /// # Errors
+    ///
+    /// Never returns error for mock implementation
+    ///
+    /// # Panics
+    ///
+    /// Panics if mutex is poisoned (test code only)
+    #[allow(clippy::type_complexity)] // Return type mirrors production code signature
+    pub fn get_last_indexed_timestamp(
+        &self,
+    ) -> DatabaseResult<Option<chrono::DateTime<chrono::Utc>>> {
+        let branches = self.repository.project_branches.lock().unwrap();
+        let last_indexed = branches.values().filter_map(|b| b.last_indexed).max();
+        Ok(last_indexed)
+    }
 }
 
 impl Default for MockDataClient {

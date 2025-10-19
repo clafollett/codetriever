@@ -95,6 +95,52 @@ impl DbFileRepository {
 
         Ok(row.get("count"))
     }
+
+    /// Get database size in megabytes (`PostgreSQL` only)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn get_database_size_mb(&self) -> DatabaseResult<f64> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::GetDatabaseSize;
+
+        let row = sqlx::query("SELECT pg_database_size(current_database())::BIGINT as size_bytes")
+            .fetch_one(pool)
+            .await
+            .map_db_err(operation, correlation_id)?;
+
+        let size_bytes: i64 = row.get("size_bytes");
+        // Convert bytes to megabytes and round to 2 decimal places
+        #[allow(clippy::cast_precision_loss)]
+        let size_mb = size_bytes as f64 / 1_048_576.0;
+        Ok((size_mb * 100.0).round() / 100.0)
+    }
+
+    /// Get most recent indexed timestamp across all project branches
+    ///
+    /// Returns `None` if no branches have been indexed yet
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn get_last_indexed_timestamp(
+        &self,
+    ) -> DatabaseResult<Option<chrono::DateTime<chrono::Utc>>> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::GetLastIndexedTimestamp;
+
+        let row = sqlx::query("SELECT MAX(last_indexed) as last_indexed FROM project_branches")
+            .fetch_one(pool)
+            .await
+            .map_db_err(operation, correlation_id)?;
+
+        Ok(row.get("last_indexed"))
+    }
 }
 
 #[async_trait]

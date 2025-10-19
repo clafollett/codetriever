@@ -220,16 +220,16 @@ run *args:
 # Run API server (CPU-only by default)
 api:
     @echo "🚀 Starting API server..."
-    cargo run --bin codetriever-api
+    RUST_LOG=info cargo run --bin codetriever-api
 
 # Run API with GPU acceleration
 api-metal:
     @echo "🍎 Starting API with Metal GPU acceleration..."
-    cargo api-metal
+    RUST_LOG=info cargo api-metal
 
 api-cuda:
     @echo "🐧 Starting API with CUDA GPU acceleration..."
-    cargo api-cuda
+    RUST_LOG=info cargo api-cuda
 
 # Clean build artifacts
 clean:
