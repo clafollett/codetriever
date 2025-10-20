@@ -141,6 +141,43 @@ impl DbFileRepository {
 
         Ok(row.get("last_indexed"))
     }
+
+    /// Get full file content by path
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails or file not found
+    pub async fn get_file_content(
+        &self,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+    ) -> DatabaseResult<Option<String>> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::GetFileMetadata {
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+            file_path: file_path.to_string(),
+        };
+
+        let row = sqlx::query(
+            r"
+            SELECT file_content
+            FROM indexed_files
+            WHERE repository_id = $1 AND branch = $2 AND file_path = $3
+            ",
+        )
+        .bind(repository_id)
+        .bind(branch)
+        .bind(file_path)
+        .fetch_optional(pool)
+        .await
+        .map_db_err(operation, correlation_id)?;
+
+        Ok(row.and_then(|r| r.get("file_content")))
+    }
 }
 
 #[async_trait]
@@ -281,13 +318,16 @@ impl FileRepository for DbFileRepository {
         let row = sqlx::query(
             r"
             INSERT INTO indexed_files (
-                repository_id, branch, file_path, content_hash, generation,
+                repository_id, branch, file_path, file_content, content_hash, encoding, size_bytes, generation,
                 commit_sha, commit_message, commit_date, author, indexed_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
             ON CONFLICT (repository_id, branch, file_path)
             DO UPDATE SET
+                file_content = EXCLUDED.file_content,
                 content_hash = EXCLUDED.content_hash,
+                encoding = EXCLUDED.encoding,
+                size_bytes = EXCLUDED.size_bytes,
                 generation = EXCLUDED.generation,
                 commit_sha = EXCLUDED.commit_sha,
                 commit_message = EXCLUDED.commit_message,
@@ -300,7 +340,10 @@ impl FileRepository for DbFileRepository {
         .bind(repository_id)
         .bind(branch)
         .bind(&metadata.path)
+        .bind(&metadata.content)
         .bind(&metadata.content_hash)
+        .bind(&metadata.encoding)
+        .bind(metadata.size_bytes)
         .bind(metadata.generation)
         .bind(&metadata.commit_sha)
         .bind(&metadata.commit_message)
@@ -314,7 +357,10 @@ impl FileRepository for DbFileRepository {
             repository_id: row.get("repository_id"),
             branch: row.get("branch"),
             file_path: row.get("file_path"),
+            file_content: row.get("file_content"),
             content_hash: row.get("content_hash"),
+            encoding: row.get("encoding"),
+            size_bytes: row.get("size_bytes"),
             generation: row.get("generation"),
             commit_sha: row.get("commit_sha"),
             commit_message: row.get("commit_message"),
@@ -685,7 +731,10 @@ impl FileRepository for DbFileRepository {
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 file_path: row.get("file_path"),
+                file_content: row.get("file_content"),
                 content_hash: row.get("content_hash"),
+                encoding: row.get("encoding"),
+                size_bytes: row.get("size_bytes"),
                 generation: row.get("generation"),
                 commit_sha: row.get("commit_sha"),
                 commit_message: row.get("commit_message"),
@@ -762,7 +811,10 @@ impl FileRepository for DbFileRepository {
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 file_path: row.get("file_path"),
+                file_content: row.get("file_content"),
                 content_hash: row.get("content_hash"),
+                encoding: row.get("encoding"),
+                size_bytes: row.get("size_bytes"),
                 generation: row.get("generation"),
                 commit_sha: row.get("commit_sha"),
                 commit_message: row.get("commit_message"),
@@ -809,7 +861,10 @@ impl FileRepository for DbFileRepository {
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 file_path: row.get("file_path"),
+                file_content: row.get("file_content"),
                 content_hash: row.get("content_hash"),
+                encoding: row.get("encoding"),
+                size_bytes: row.get("size_bytes"),
                 generation: row.get("generation"),
                 commit_sha: row.get("commit_sha"),
                 commit_message: row.get("commit_message"),

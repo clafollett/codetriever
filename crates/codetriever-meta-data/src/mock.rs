@@ -151,7 +151,10 @@ impl FileRepository for MockFileRepository {
             repository_id: repository_id.to_string(),
             branch: branch.to_string(),
             file_path: metadata.path.clone(),
+            file_content: metadata.content.clone(),
             content_hash: metadata.content_hash.clone(),
+            encoding: metadata.encoding.clone(),
+            size_bytes: metadata.size_bytes,
             generation: metadata.generation,
             commit_sha: metadata.commit_sha.clone(),
             commit_message: metadata.commit_message.clone(),
@@ -424,7 +427,10 @@ mod tests {
         // Record the file
         let metadata = FileMetadata {
             path: "file.rs".to_string(),
+            content: "fn main() {}".to_string(),
             content_hash: "hash1".to_string(),
+            encoding: "UTF-8".to_string(),
+            size_bytes: 12,
             generation: 1,
             commit_sha: None,
             commit_message: None,

@@ -16,18 +16,23 @@ CREATE TABLE IF NOT EXISTS indexed_files (
     repository_id TEXT NOT NULL,
     branch TEXT NOT NULL,
     file_path TEXT NOT NULL,       -- Always relative: "src/main.rs"
+    file_content TEXT NOT NULL,    -- Full file content (converted to UTF-8)
     content_hash TEXT NOT NULL,    -- SHA256 of file content
+    encoding TEXT NOT NULL,        -- Original encoding ("UTF-8", "UTF-16LE", "Windows-1252", etc.)
+    size_bytes BIGINT NOT NULL,    -- Original file size in bytes (before UTF-8 conversion)
     generation BIGINT NOT NULL DEFAULT 1,
-    
-    -- Git metadata (not part of primary key)
+
+    -- Git metadata
     commit_sha TEXT,
     commit_message TEXT,
     commit_date TIMESTAMPTZ,
     author TEXT,
+
+    -- Timestamps
     indexed_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     PRIMARY KEY (repository_id, branch, file_path),
-    FOREIGN KEY (repository_id, branch) 
+    FOREIGN KEY (repository_id, branch)
         REFERENCES project_branches(repository_id, branch) ON DELETE CASCADE
 );
 
@@ -80,9 +85,37 @@ CREATE TABLE IF NOT EXISTS indexing_jobs (
     CONSTRAINT valid_status CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
     
     -- Foreign key to project
-    FOREIGN KEY (repository_id, branch) 
+    FOREIGN KEY (repository_id, branch)
         REFERENCES project_branches(repository_id, branch) ON DELETE CASCADE
 );
+
+-- Per-file indexing job queue (persistent, survives restarts)
+-- Uses UUID v7 for time-ordered primary keys (better insert performance than random UUIDs)
+CREATE TABLE IF NOT EXISTS indexing_job_file_queue (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),  -- Time-ordered UUID for sequential inserts (PG 18+)
+    job_id UUID NOT NULL,
+    repository_id TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_content TEXT NOT NULL,       -- Full file content to be indexed
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    priority INT DEFAULT 0,
+    retry_count INT DEFAULT 0,
+    error_message TEXT,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+
+    -- Foreign key to parent job
+    FOREIGN KEY (job_id) REFERENCES indexing_jobs(job_id) ON DELETE CASCADE
+);
+
+-- Index for efficient queue polling (SELECT ... FOR UPDATE SKIP LOCKED)
+CREATE INDEX IF NOT EXISTS idx_queue_status_priority
+    ON indexing_job_file_queue (status, priority DESC, created_at ASC);
 
 -- Track file moves/renames for cleanup
 CREATE TABLE IF NOT EXISTS file_moves (

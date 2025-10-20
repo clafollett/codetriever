@@ -20,13 +20,19 @@ pub struct IndexedFile {
     pub repository_id: String,
     pub branch: String,
     pub file_path: String,
+    pub file_content: String,
     pub content_hash: String,
+    pub encoding: String,
+    pub size_bytes: i64,
     pub generation: i64,
+
     // Git metadata
     pub commit_sha: Option<String>,
     pub commit_message: Option<String>,
     pub commit_date: Option<DateTime<Utc>>,
     pub author: Option<String>,
+
+    // Timestamps
     pub indexed_at: DateTime<Utc>,
 }
 
@@ -113,6 +119,27 @@ impl std::fmt::Display for JobStatus {
     }
 }
 
+/// Represents a file in the indexing job queue (persistent queue)
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct IndexingJobFile {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub repository_id: String,
+    pub branch: String,
+    pub file_path: String,
+    pub file_content: String,
+    pub content_hash: String,
+    pub status: String,
+    pub priority: i32,
+    pub retry_count: i32,
+    pub error_message: Option<String>,
+
+    // Timestamps
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
 /// State of a file when checking for re-indexing
 #[derive(Debug, Clone)]
 pub enum FileState {
@@ -144,8 +171,11 @@ pub struct RepositoryContext {
 /// File metadata for indexing
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FileMetadata {
-    pub path: String, // Relative path
+    pub path: String,
+    pub content: String, // Full file content (converted to UTF-8)
     pub content_hash: String,
+    pub encoding: String, // Original encoding detected ("UTF-8", "UTF-16LE", etc.)
+    pub size_bytes: i64,  // Original file size (before conversion)
     pub generation: i64,
     pub commit_sha: Option<String>,
     pub commit_message: Option<String>,

@@ -38,6 +38,7 @@ uuid = { workspace = true }
 
 # Text processing (minimal - parsing now handled by separate crate)
 regex = { workspace = true }
+encoding_rs = "0.8"  # Auto-detect and convert file encodings (UTF-16, Windows-1252, etc.)
 
 # Note: Vector storage and embeddings now handled by separate crates
 

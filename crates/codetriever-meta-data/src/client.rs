@@ -91,4 +91,22 @@ impl DataClient {
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, crate::DatabaseError> {
         self.repository.get_last_indexed_timestamp().await
     }
+
+    /// Get full file content by path
+    ///
+    /// Returns `None` if file is not in the index
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn get_file_content(
+        &self,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+    ) -> Result<Option<String>, crate::DatabaseError> {
+        self.repository
+            .get_file_content(repository_id, branch, file_path)
+            .await
+    }
 }

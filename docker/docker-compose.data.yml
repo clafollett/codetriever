@@ -2,7 +2,7 @@ name: codetriever-data
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: codetriever-postgres
     ports:
       - "5433:5432"
@@ -12,7 +12,7 @@ services:
       - POSTGRES_DB=${DB_NAME:-codetriever}
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --locale=C
     volumes:
-      - ${HOME}/.codetriever/postgres/data:/var/lib/postgresql/data:z
+      - ${HOME}/.codetriever/postgres:/var/lib/postgresql:z
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-codetriever} -d ${DB_NAME:-codetriever}"]

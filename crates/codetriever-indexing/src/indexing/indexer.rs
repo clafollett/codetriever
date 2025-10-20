@@ -15,6 +15,54 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // Type alias for the repository trait object
 type RepositoryRef = Arc<dyn codetriever_meta_data::traits::FileRepository>;
 
+/// Result of encoding detection and conversion
+struct EncodingResult {
+    content: String,
+    encoding_name: String,
+}
+
+/// Detect file encoding and convert to UTF-8
+///
+/// Returns None for binary files that can't be represented as text
+fn detect_and_convert_to_utf8(content: &str) -> Option<EncodingResult> {
+    let bytes = content.as_bytes();
+
+    // Check for NULL bytes (binary files)
+    if bytes.contains(&0) {
+        tracing::debug!("File contains NULL bytes - skipping as binary");
+        return None;
+    }
+
+    // Fast path: Check if already valid UTF-8
+    if std::str::from_utf8(bytes).is_ok() {
+        return Some(EncodingResult {
+            content: content.to_string(),
+            encoding_name: "UTF-8".to_string(),
+        });
+    }
+
+    // Try auto-detection with encoding_rs
+    let (encoding, _bom_length) =
+        encoding_rs::Encoding::for_bom(bytes).unwrap_or((encoding_rs::UTF_8, 0));
+
+    let (decoded, actual_encoding, malformed) = encoding.decode(bytes);
+
+    // If decoding had errors, it's likely binary - skip it
+    if malformed {
+        tracing::debug!(
+            "File appears to be binary (encoding errors detected with {})",
+            actual_encoding.name()
+        );
+        return None;
+    }
+
+    // Successfully decoded
+    Some(EncodingResult {
+        content: decoded.into_owned(),
+        encoding_name: actual_encoding.name().to_string(),
+    })
+}
+
 /// Convert from parsing CodeChunk to vector data CodeChunk
 fn convert_chunk(parsing_chunk: ParsingCodeChunk) -> CodeChunk {
     CodeChunk {
@@ -82,8 +130,25 @@ async fn parser_worker(
 
         tracing::debug!("Parser worker {worker_id}: processing {}", file.path);
 
+        // Detect encoding and convert to UTF-8 (skip binary files)
+        let encoding_result = match detect_and_convert_to_utf8(&file.content) {
+            Some(result) => result,
+            None => {
+                tracing::warn!(
+                    "Parser worker {worker_id}: skipping binary file {}",
+                    file.path
+                );
+                files_indexed.fetch_add(1, Ordering::Relaxed); // Count as processed
+                continue;
+            }
+        };
+
+        // Use converted UTF-8 content for hashing and indexing
+        let utf8_content = encoding_result.content;
+        let detected_encoding = encoding_result.encoding_name;
+
         // Check file state in database
-        let content_hash = codetriever_meta_data::hash_content(&file.content);
+        let content_hash = codetriever_meta_data::hash_content(&utf8_content);
         let state = repository
             .check_file_state(&repository_id, &branch, &file.path, &content_hash)
             .await?;
@@ -101,10 +166,15 @@ async fn parser_worker(
                 new_generation: generation,
                 ..
             } => {
-                // Record file indexing
+                // Record file indexing with detected encoding
+                #[allow(clippy::cast_possible_wrap)]
+                let size_bytes = file.content.len() as i64; // Original size before UTF-8 conversion
                 let metadata = codetriever_meta_data::models::FileMetadata {
                     path: file.path.clone(),
+                    content: utf8_content.clone(), // Converted to UTF-8
                     content_hash: content_hash.clone(),
+                    encoding: detected_encoding.clone(),
+                    size_bytes,
                     generation,
                     commit_sha: None,
                     commit_message: None,
@@ -133,10 +203,10 @@ async fn parser_worker(
             }
         };
 
-        // Parse file into chunks
+        // Parse file into chunks (use UTF-8 converted content)
         let ext = file.path.rsplit('.').next().unwrap_or("");
         let language = get_language_from_extension(ext).unwrap_or(ext);
-        let chunks = code_parser.parse(&file.content, language, &file.path)?;
+        let chunks = code_parser.parse(&utf8_content, language, &file.path)?;
 
         if !chunks.is_empty() {
             files_indexed.fetch_add(1, Ordering::Relaxed);
@@ -635,7 +705,10 @@ fn main() {
 
         let existing_file = FileMetadata {
             path: "src/lib.rs".to_string(),
+            content: content.to_string(),
             content_hash: content_hash.clone(),
+            encoding: "UTF-8".to_string(),
+            size_bytes: content.len() as i64,
             generation: 1,
             commit_sha: None,
             commit_message: None,
