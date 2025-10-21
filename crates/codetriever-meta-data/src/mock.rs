@@ -382,6 +382,34 @@ impl FileRepository for MockFileRepository {
             .collect();
         Ok(results)
     }
+
+    async fn enqueue_file(
+        &self,
+        _job_id: &Uuid,
+        _repository_id: &str,
+        _branch: &str,
+        _file_path: &str,
+        _file_content: &str,
+        _content_hash: &str,
+    ) -> DatabaseResult<()> {
+        self.check_fail()?;
+        // Mock doesn't implement queue - just succeed
+        Ok(())
+    }
+
+    async fn dequeue_file(
+        &self,
+        _job_id: &Uuid,
+    ) -> DatabaseResult<Option<(String, String, String)>> {
+        self.check_fail()?;
+        // Mock returns None (empty queue)
+        Ok(None)
+    }
+
+    async fn get_queue_depth(&self, _job_id: &Uuid) -> DatabaseResult<i64> {
+        self.check_fail()?;
+        Ok(0)
+    }
 }
 
 #[cfg(test)]

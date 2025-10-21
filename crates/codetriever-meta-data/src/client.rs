@@ -109,4 +109,53 @@ impl DataClient {
             .get_file_content(repository_id, branch, file_path)
             .await
     }
+
+    /// Enqueue a file for indexing (persistent queue)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database insert fails
+    pub async fn enqueue_file(
+        &self,
+        job_id: &uuid::Uuid,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+        file_content: &str,
+        content_hash: &str,
+    ) -> Result<(), crate::DatabaseError> {
+        self.repository
+            .enqueue_file(
+                job_id,
+                repository_id,
+                branch,
+                file_path,
+                file_content,
+                content_hash,
+            )
+            .await
+    }
+
+    /// Dequeue next file from queue (atomic operation)
+    ///
+    /// Returns `None` if no files available
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn dequeue_file(
+        &self,
+        job_id: &uuid::Uuid,
+    ) -> Result<Option<(String, String, String)>, crate::DatabaseError> {
+        self.repository.dequeue_file(job_id).await
+    }
+
+    /// Get queue depth for a job
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn get_queue_depth(&self, job_id: &uuid::Uuid) -> Result<i64, crate::DatabaseError> {
+        self.repository.get_queue_depth(job_id).await
+    }
 }

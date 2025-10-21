@@ -178,6 +178,121 @@ impl DbFileRepository {
 
         Ok(row.and_then(|r| r.get("file_content")))
     }
+
+    /// Enqueue a file for indexing (persistent queue)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database insert fails
+    pub async fn enqueue_file(
+        &self,
+        job_id: &uuid::Uuid,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+        file_content: &str,
+        content_hash: &str,
+    ) -> DatabaseResult<()> {
+        let pool = self.pools.write_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::Query {
+            description: "enqueue_file".to_string(),
+        };
+
+        sqlx::query(
+            r"
+            INSERT INTO indexing_job_file_queue
+            (job_id, repository_id, branch, file_path, file_content, content_hash, status, priority)
+            VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0)
+            ",
+        )
+        .bind(job_id)
+        .bind(repository_id)
+        .bind(branch)
+        .bind(file_path)
+        .bind(file_content)
+        .bind(content_hash)
+        .execute(pool)
+        .await
+        .map_db_err(operation, correlation_id)?;
+
+        Ok(())
+    }
+
+    /// Dequeue next file from queue (atomic with FOR UPDATE SKIP LOCKED)
+    ///
+    /// Returns None if no files available
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn dequeue_file(
+        &self,
+        job_id: &uuid::Uuid,
+    ) -> DatabaseResult<Option<(String, String, String)>> {
+        let pool = self.pools.write_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::Query {
+            description: "dequeue_file".to_string(),
+        };
+
+        let row = sqlx::query(
+            r"
+            UPDATE indexing_job_file_queue
+            SET status = 'processing', started_at = NOW()
+            WHERE id = (
+                SELECT id FROM indexing_job_file_queue
+                WHERE job_id = $1 AND status = 'queued'
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING file_path, file_content, content_hash
+            ",
+        )
+        .bind(job_id)
+        .fetch_optional(pool)
+        .await
+        .map_db_err(operation, correlation_id)?;
+
+        Ok(row.map(|r| {
+            (
+                r.get("file_path"),
+                r.get("file_content"),
+                r.get("content_hash"),
+            )
+        }))
+    }
+
+    /// Get queue depth for a job
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn get_queue_depth(&self, job_id: &uuid::Uuid) -> DatabaseResult<i64> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::Query {
+            description: "get_queue_depth".to_string(),
+        };
+
+        let row = sqlx::query(
+            r"
+            SELECT COUNT(*) as count
+            FROM indexing_job_file_queue
+            WHERE job_id = $1 AND status = 'queued'
+            ",
+        )
+        .bind(job_id)
+        .fetch_one(pool)
+        .await
+        .map_db_err(operation, correlation_id)?;
+
+        Ok(row.get("count"))
+    }
 }
 
 #[async_trait]
@@ -969,5 +1084,89 @@ impl FileRepository for DbFileRepository {
             .collect();
 
         Ok(branches)
+    }
+
+    async fn enqueue_file(
+        &self,
+        job_id: &Uuid,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+        file_content: &str,
+        content_hash: &str,
+    ) -> DatabaseResult<()> {
+        self.enqueue_file(
+            job_id,
+            repository_id,
+            branch,
+            file_path,
+            file_content,
+            content_hash,
+        )
+        .await
+    }
+
+    async fn dequeue_file(
+        &self,
+        job_id: &Uuid,
+    ) -> DatabaseResult<Option<(String, String, String)>> {
+        self.dequeue_file(job_id).await
+    }
+
+    async fn get_queue_depth(&self, job_id: &Uuid) -> DatabaseResult<i64> {
+        self.get_queue_depth(job_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[allow(clippy::expect_used)] // Tests can use expect
+    async fn test_enqueue_file() {
+        let job_id = Uuid::new_v4();
+        let mock_repo = crate::mock::MockFileRepository::new();
+
+        let result = mock_repo
+            .enqueue_file(
+                &job_id,
+                "test_repo",
+                "main",
+                "src/test.rs",
+                "fn test() {}",
+                "hash123",
+            )
+            .await;
+
+        assert!(result.is_ok(), "Should enqueue file successfully");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::expect_used)] // Tests can use expect
+    async fn test_dequeue_file_empty_queue() {
+        let job_id = Uuid::new_v4();
+        let mock_repo = crate::mock::MockFileRepository::new();
+
+        let result = mock_repo
+            .dequeue_file(&job_id)
+            .await
+            .expect("Should not error");
+
+        assert!(result.is_none(), "Empty queue should return None");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::expect_used)] // Tests can use expect
+    async fn test_get_queue_depth() {
+        let job_id = Uuid::new_v4();
+        let mock_repo = crate::mock::MockFileRepository::new();
+
+        let depth = mock_repo
+            .get_queue_depth(&job_id)
+            .await
+            .expect("Should not error");
+
+        assert_eq!(depth, 0, "Empty queue should have depth 0");
     }
 }

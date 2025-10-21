@@ -36,6 +36,7 @@ const DEFAULT_TOKENIZER_CONCURRENT_FILE_LIMIT: usize = 4; // Reasonable parallel
 const DEFAULT_TOKENIZER_MAX_CHUNK_TOKENS: usize = 512; // Matches model max_tokens
 const DEFAULT_TOKENIZER_SPLIT_LARGE_UNITS: bool = true; // Always split large functions
 const DEFAULT_CHUNK_QUEUE_CAPACITY: usize = 1000; // Bounded queue for back pressure
+const DEFAULT_USE_PERSISTENT_QUEUE: bool = true; // PostgreSQL queue for persistence and crash recovery
 
 // Database Configuration (safe local defaults)
 const DEFAULT_DB_HOST: &str = "localhost";
@@ -464,6 +465,9 @@ pub struct IndexingConfig {
 
     /// Chunk queue capacity (bounded for back pressure control)
     pub chunk_queue_capacity: usize,
+
+    /// Use PostgreSQL-backed persistent queue (true) or in-memory queue (false)
+    pub use_persistent_queue: bool,
 }
 
 impl IndexingConfig {
@@ -489,11 +493,17 @@ impl IndexingConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_CHUNK_QUEUE_CAPACITY);
 
+        let use_persistent_queue = std::env::var("CODETRIEVER_INDEXING_USE_PERSISTENT_QUEUE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_USE_PERSISTENT_QUEUE);
+
         Self {
             max_chunk_tokens,
             split_large_units,
             concurrency_limit,
             chunk_queue_capacity,
+            use_persistent_queue,
         }
     }
 }

@@ -439,11 +439,27 @@ impl Indexer {
         self.repository.ensure_project_branch(&ctx).await?;
 
         // Queue-based architecture: FileQueue → Parsers → ChunkQueue → Embedders → Storage
-        // This replaces the old batching approach and prepares for Issue #35 (Postgres queues)
-        use crate::queues::{InMemoryChunkQueue, InMemoryFileQueue};
+        use crate::queues::in_memory_queue::{InMemoryChunkQueue, InMemoryFileQueue};
+        use crate::queues::postgres_queue::PostgresFileQueue;
 
-        // Create queues
-        let file_queue: Arc<dyn FileContentQueue> = Arc::new(InMemoryFileQueue::new());
+        // Create file queue (PostgreSQL persistent or in-memory based on config)
+        let file_queue: Arc<dyn FileContentQueue> = if self.config.indexing.use_persistent_queue {
+            tracing::info!("Using PostgreSQL-backed persistent file queue");
+            // Create a job for this indexing operation
+            let job = self
+                .repository
+                .create_indexing_job(&repository_id, &branch, None)
+                .await?;
+            Arc::new(PostgresFileQueue::new(
+                Arc::clone(&self.repository),
+                job.job_id,
+                repository_id.clone(),
+                branch.clone(),
+            ))
+        } else {
+            tracing::info!("Using in-memory file queue");
+            Arc::new(InMemoryFileQueue::new())
+        };
         let chunk_queue: Arc<dyn ChunkQueue> = Arc::new(InMemoryChunkQueue::new(
             self.config.indexing.chunk_queue_capacity,
         ));
@@ -649,7 +665,8 @@ mod tests {
         let mock_repo = Arc::new(MockFileRepository::new()) as Arc<dyn FileRepository>;
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
-        let config = ApplicationConfig::from_env();
+        let mut config = ApplicationConfig::from_env();
+        config.indexing.use_persistent_queue = false; // Unit tests use in-memory queue
         let code_parser = CodeParser::default(); // No tokenizer for unit tests
 
         // Create indexer with all required dependencies
@@ -757,7 +774,8 @@ fn main() {
         let mock_repo = Arc::new(MockFileRepository::new()) as Arc<dyn FileRepository>;
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
-        let config = ApplicationConfig::from_env();
+        let mut config = ApplicationConfig::from_env();
+        config.indexing.use_persistent_queue = false; // Unit tests use in-memory queue
         let code_parser = CodeParser::default();
 
         // Create indexer with all required dependencies

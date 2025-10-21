@@ -115,4 +115,24 @@ pub trait FileRepository: Send + Sync {
         &self,
         repo_branches: &[(String, String)], // (repository_id, branch) pairs
     ) -> DatabaseResult<Vec<ProjectBranch>>;
+
+    /// Enqueue a file for persistent indexing (`PostgreSQL` queue)
+    async fn enqueue_file(
+        &self,
+        job_id: &Uuid,
+        repository_id: &str,
+        branch: &str,
+        file_path: &str,
+        file_content: &str,
+        content_hash: &str,
+    ) -> DatabaseResult<()>;
+
+    /// Dequeue next file from persistent queue (atomic with FOR UPDATE SKIP LOCKED)
+    ///
+    /// Returns None if no files available
+    async fn dequeue_file(&self, job_id: &Uuid)
+    -> DatabaseResult<Option<(String, String, String)>>;
+
+    /// Get queue depth for a job
+    async fn get_queue_depth(&self, job_id: &Uuid) -> DatabaseResult<i64>;
 }
