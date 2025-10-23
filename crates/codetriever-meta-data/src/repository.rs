@@ -147,36 +147,111 @@ impl DbFileRepository {
     /// # Errors
     ///
     /// Returns error if database query fails or file not found
+    /// Get file content with metadata (`repository_id`, branch, content)
+    ///
+    /// Returns tuple of (`repository_id`, branch, content) if found, None otherwise
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
     pub async fn get_file_content(
         &self,
-        repository_id: &str,
-        branch: &str,
+        repository_id: Option<&str>,
+        branch: Option<&str>,
         file_path: &str,
-    ) -> DatabaseResult<Option<String>> {
+    ) -> DatabaseResult<Option<(String, String, String)>> {
         let pool = self.pools.read_pool();
         let correlation_id = None;
 
         let operation = DatabaseOperation::GetFileMetadata {
-            repository_id: repository_id.to_string(),
-            branch: branch.to_string(),
+            repository_id: repository_id.unwrap_or("unknown").to_string(),
+            branch: branch.unwrap_or("unknown").to_string(),
             file_path: file_path.to_string(),
         };
 
-        let row = sqlx::query(
-            r"
-            SELECT file_content
-            FROM indexed_files
-            WHERE repository_id = $1 AND branch = $2 AND file_path = $3
-            ",
-        )
-        .bind(repository_id)
-        .bind(branch)
-        .bind(file_path)
-        .fetch_optional(pool)
-        .await
-        .map_db_err(operation, correlation_id)?;
+        // Build conditional WHERE clause based on which parameters are provided
+        let row = match (repository_id, branch) {
+            (Some(repo), Some(br)) => {
+                // Both provided - exact match
+                sqlx::query(
+                    r"
+                    SELECT repository_id, branch, file_content
+                    FROM indexed_files
+                    WHERE repository_id = $1 AND branch = $2 AND file_path = $3
+                    ",
+                )
+                .bind(repo)
+                .bind(br)
+                .bind(file_path)
+                .fetch_optional(pool)
+                .await
+                .map_db_err(operation, correlation_id)?
+            }
+            (Some(repo), None) => {
+                // Repository provided, branch not - find in any branch (prefer main/master)
+                sqlx::query(
+                    r"
+                    SELECT repository_id, branch, file_content
+                    FROM indexed_files
+                    WHERE repository_id = $1 AND file_path = $2
+                    ORDER BY
+                        CASE
+                            WHEN branch = 'main' THEN 1
+                            WHEN branch = 'master' THEN 2
+                            ELSE 3
+                        END,
+                        last_indexed DESC
+                    LIMIT 1
+                    ",
+                )
+                .bind(repo)
+                .bind(file_path)
+                .fetch_optional(pool)
+                .await
+                .map_db_err(operation, correlation_id)?
+            }
+            (None, Some(br)) => {
+                // Branch provided, repository not - find most recently indexed repository
+                sqlx::query(
+                    r"
+                    SELECT repository_id, branch, file_content
+                    FROM indexed_files
+                    WHERE branch = $1 AND file_path = $2
+                    ORDER BY last_indexed DESC
+                    LIMIT 1
+                    ",
+                )
+                .bind(br)
+                .bind(file_path)
+                .fetch_optional(pool)
+                .await
+                .map_db_err(operation, correlation_id)?
+            }
+            (None, None) => {
+                // Neither provided - find most recently indexed file across all repos/branches
+                sqlx::query(
+                    r"
+                    SELECT repository_id, branch, file_content
+                    FROM indexed_files
+                    WHERE file_path = $1
+                    ORDER BY last_indexed DESC
+                    LIMIT 1
+                    ",
+                )
+                .bind(file_path)
+                .fetch_optional(pool)
+                .await
+                .map_db_err(operation, correlation_id)?
+            }
+        };
 
-        Ok(row.and_then(|r| r.get("file_content")))
+        Ok(row.map(|r| {
+            (
+                r.get("repository_id"),
+                r.get("branch"),
+                r.get("file_content"),
+            )
+        }))
     }
 
     /// Enqueue a file for indexing (persistent queue)

@@ -7,10 +7,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use codetriever_indexing::IndexerService;
-use codetriever_search::SearchProvider;
+use codetriever_meta_data::DataClient;
+use codetriever_search::SearchService;
 use codetriever_vector_data::VectorStorage;
-
-use crate::routes::status::DatabaseClient;
 
 /// Type alias for indexer service handle to simplify complex Arc<Mutex<dyn>> type
 pub type IndexerServiceHandle = Arc<Mutex<dyn IndexerService>>;
@@ -30,11 +29,11 @@ pub type IndexerServiceHandle = Arc<Mutex<dyn IndexerService>>;
 #[derive(Clone)]
 pub struct AppState {
     /// Database client for `PostgreSQL` operations
-    pub db_client: Arc<dyn DatabaseClient>,
+    pub db_client: Arc<DataClient>,
     /// Vector storage client for Qdrant operations
     pub vector_storage: Arc<dyn VectorStorage>,
     /// Search service for semantic code search
-    pub search_service: Arc<dyn SearchProvider>,
+    pub search_service: Arc<dyn SearchService>,
     /// Indexing service for processing and storing code chunks
     pub indexer_service: IndexerServiceHandle,
 }
@@ -43,9 +42,9 @@ impl AppState {
     /// Create new application state with all services
     #[must_use]
     pub fn new(
-        db_client: Arc<dyn DatabaseClient>,
+        db_client: Arc<DataClient>,
         vector_storage: Arc<dyn VectorStorage>,
-        search_service: Arc<dyn SearchProvider>,
+        search_service: Arc<dyn SearchService>,
         indexer_service: IndexerServiceHandle,
     ) -> Self {
         Self {

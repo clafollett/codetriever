@@ -4,7 +4,7 @@
 mod test_utils;
 
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
-use codetriever_search::SearchProvider;
+use codetriever_search::SearchService;
 use std::{path::Path, sync::Arc};
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
@@ -144,7 +144,7 @@ fn test_indexer_stores_chunks_in_qdrant() {
         let db_client = std::sync::Arc::new(codetriever_meta_data::DataClient::new(pools));
 
         let search_service =
-            codetriever_search::SearchService::new(embedding_service, vector_storage, db_client);
+            codetriever_search::Search::new(embedding_service, vector_storage, db_client);
         let correlation_id = codetriever_common::CorrelationId::new();
         let search_results = search_service
             .search(query, 5, &correlation_id)

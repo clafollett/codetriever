@@ -1,23 +1,49 @@
 //! Search service implementation
 
+use super::service::SearchService;
+use crate::error::SearchError;
 use async_trait::async_trait;
-use std::sync::Arc;
-use tokio::time::{Duration, sleep};
-
-use super::{RepositoryMetadata, SearchMatch, SearchProvider, SearchResult};
+use chrono::{DateTime, Utc};
 use codetriever_common::CorrelationId;
 use codetriever_embeddings::EmbeddingService;
 use codetriever_meta_data::{DataClient, FileRepository, ProjectBranch};
+use codetriever_parsing::CodeChunk;
 use codetriever_vector_data::VectorStorage;
+use std::sync::Arc;
+use tokio::time::{Duration, sleep};
 
 // Type aliases to simplify complex types
 type RepoBranchPairs = Vec<(String, String)>;
 type ProjectBranchMap = std::collections::HashMap<(String, String), ProjectBranch>;
 type SearchCache = Arc<std::sync::Mutex<lru::LruCache<String, Vec<SearchMatch>>>>;
 
+/// Repository metadata for search results
+#[derive(Debug, Clone)]
+pub struct RepositoryMetadata {
+    pub repository_id: String,
+    pub repository_url: Option<String>,
+    pub branch: String,
+    pub commit_sha: Option<String>,
+    pub commit_message: Option<String>,
+    pub commit_date: Option<DateTime<Utc>>,
+    pub author: Option<String>,
+}
+
+/// Result from a search operation including similarity score and repository metadata
+#[derive(Debug, Clone)]
+pub struct SearchMatch {
+    pub chunk: CodeChunk,
+    pub similarity: f32,
+    /// Repository metadata populated from database
+    pub repository_metadata: Option<RepositoryMetadata>,
+}
+
+/// Result type for search operations
+pub type SearchResult<T> = std::result::Result<T, SearchError>;
+
 /// Search service that provides semantic code search with repository metadata.
 /// Includes built-in resilience with retry logic.
-pub struct SearchService {
+pub struct Search {
     embedding_service: Arc<dyn EmbeddingService>,
     vector_storage: Arc<dyn VectorStorage>,
     db_client: Arc<DataClient>,
@@ -28,7 +54,7 @@ pub struct SearchService {
     cache: SearchCache,
 }
 
-impl SearchService {
+impl Search {
     /// Create a search service with full dependency injection and database integration.
     pub fn new(
         embedding_service: Arc<dyn EmbeddingService>,
@@ -141,10 +167,76 @@ impl SearchService {
 
         Ok(results)
     }
+
+    /// Internal search attempt - can fail and be retried
+    #[tracing::instrument(skip(self), fields(correlation_id))]
+    async fn try_search(
+        &self,
+        query: &str,
+        limit: usize,
+        correlation_id: &CorrelationId,
+    ) -> SearchResult<Vec<SearchMatch>> {
+        tracing::Span::current().record("correlation_id", correlation_id.to_string());
+
+        // Wrap entire search operation in timeout for production resilience
+        tokio::time::timeout(self.search_timeout, async {
+            tracing::debug!("Generating embeddings for search query");
+            // Generate embedding for the query directly
+            let embeddings = self
+                .embedding_service
+                .generate_embeddings(vec![query])
+                .await?;
+
+            let query_embedding = embeddings.into_iter().next().ok_or_else(|| {
+                crate::SearchError::EmbeddingFailed {
+                    query: query.to_string(),
+                    correlation_id: correlation_id.clone(),
+                }
+            })?;
+
+            tracing::debug!("Performing vector search");
+            // Search in vector storage directly
+            let storage_results = self
+                .vector_storage
+                .search(query_embedding, limit, correlation_id)
+                .await?;
+
+            // Convert StorageSearchResult to SearchMatch
+            let results: Vec<SearchMatch> = storage_results
+                .into_iter()
+                .map(|r| SearchMatch {
+                    chunk: r.chunk,
+                    similarity: r.similarity,
+                    repository_metadata: None, // Will be enriched below
+                })
+                .collect();
+            tracing::debug!("Vector search returned {} results", results.len());
+
+            // Enrich with database metadata
+            tracing::debug!("Enriching with database metadata");
+            let enriched = self.enrich_with_metadata(results, correlation_id).await?;
+            tracing::debug!("Metadata enrichment complete");
+            Ok(enriched)
+        })
+        .await
+        .map_err(|_| {
+            tracing::error!(
+                "Search operation timed out after {:?} for query '{}' (correlation_id: {})",
+                self.search_timeout,
+                query,
+                correlation_id
+            );
+            crate::SearchError::SearchTimeout {
+                query: query.to_string(),
+                timeout_ms: self.search_timeout.as_millis() as u64,
+                correlation_id: correlation_id.clone(),
+            }
+        })?
+    }
 }
 
 #[async_trait]
-impl SearchProvider for SearchService {
+impl SearchService for Search {
     #[tracing::instrument(skip(self), fields(query, limit, correlation_id, cached = false))]
     async fn search(
         &self,
@@ -214,73 +306,65 @@ impl SearchProvider for SearchService {
 
         unreachable!() // Loop should always return or error
     }
-}
 
-impl SearchService {
-    /// Internal search attempt - can fail and be retried
-    #[tracing::instrument(skip(self), fields(correlation_id))]
-    async fn try_search(
+    #[tracing::instrument(skip(self), fields(file_path, correlation_id))]
+    async fn get_context(
         &self,
-        query: &str,
-        limit: usize,
+        repository_id: Option<&str>,
+        branch: Option<&str>,
+        file_path: &str,
         correlation_id: &CorrelationId,
-    ) -> SearchResult<Vec<SearchMatch>> {
+    ) -> SearchResult<super::service::ContextResult> {
+        use crate::error::SearchError;
+
         tracing::Span::current().record("correlation_id", correlation_id.to_string());
+        tracing::Span::current().record("file_path", file_path);
 
-        // Wrap entire search operation in timeout for production resilience
-        tokio::time::timeout(self.search_timeout, async {
-            tracing::debug!("Generating embeddings for search query");
-            // Generate embedding for the query directly
-            let embeddings = self
-                .embedding_service
-                .generate_embeddings(vec![query])
-                .await?;
+        tracing::info!(
+            correlation_id = %correlation_id,
+            repository_id = ?repository_id,
+            branch = ?branch,
+            file_path = %file_path,
+            "Retrieving file context"
+        );
 
-            let query_embedding = embeddings.into_iter().next().ok_or_else(|| {
-                crate::SearchError::EmbeddingFailed {
-                    query: query.to_string(),
-                    correlation_id: correlation_id.clone(),
-                }
-            })?;
+        // Fetch file content from database
+        let result = self
+            .db_client
+            .get_file_content(repository_id, branch, file_path)
+            .await
+            .map_err(SearchError::MetaDataError)?;
 
-            tracing::debug!("Performing vector search");
-            // Search in vector storage directly
-            let storage_results = self
-                .vector_storage
-                .search(query_embedding, limit, correlation_id)
-                .await?;
-
-            // Convert StorageSearchResult to SearchMatch
-            let results: Vec<SearchMatch> = storage_results
-                .into_iter()
-                .map(|r| SearchMatch {
-                    chunk: r.chunk,
-                    similarity: r.similarity,
-                    repository_metadata: None, // Will be enriched below
-                })
-                .collect();
-            tracing::debug!("Vector search returned {} results", results.len());
-
-            // Enrich with database metadata
-            tracing::debug!("Enriching with database metadata");
-            let enriched = self.enrich_with_metadata(results, correlation_id).await?;
-            tracing::debug!("Metadata enrichment complete");
-            Ok(enriched)
-        })
-        .await
-        .map_err(|_| {
-            tracing::error!(
-                "Search operation timed out after {:?} for query '{}' (correlation_id: {})",
-                self.search_timeout,
-                query,
-                correlation_id
-            );
-            crate::SearchError::SearchTimeout {
-                query: query.to_string(),
-                timeout_ms: self.search_timeout.as_millis() as u64,
-                correlation_id: correlation_id.clone(),
+        let (repo_id, br, content) = match result {
+            Some(data) => data,
+            None => {
+                tracing::warn!(
+                    correlation_id = %correlation_id,
+                    file_path = %file_path,
+                    "File not found in index"
+                );
+                // Return empty result for not found (API layer will handle as 404)
+                return Ok(super::service::ContextResult {
+                    repository_id: String::new(),
+                    branch: String::new(),
+                    file_content: String::new(),
+                });
             }
-        })?
+        };
+
+        tracing::info!(
+            correlation_id = %correlation_id,
+            repository_id = %repo_id,
+            branch = %br,
+            file_size = content.len(),
+            "File context retrieved successfully"
+        );
+
+        Ok(super::service::ContextResult {
+            repository_id: repo_id,
+            branch: br,
+            file_content: content,
+        })
     }
 }
 

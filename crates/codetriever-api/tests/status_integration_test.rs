@@ -3,7 +3,7 @@
 //! Run with: `cargo test --test status_integration_test --features metal`
 //! Requires: Docker services running (`PostgreSQL` + Qdrant)
 
-use codetriever_api::routes::status::get_status;
+use codetriever_api::routes::status::get_status_with_client;
 use codetriever_config::DatabaseConfig;
 use codetriever_meta_data::{DataClient, PoolConfig, PoolManager};
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
@@ -46,7 +46,7 @@ async fn test_status_with_real_postgres_and_qdrant() {
     let start_time = SystemTime::now();
 
     // Call get_status with real services
-    let response = get_status(&db_client, &vector_storage, start_time).await;
+    let response = get_status_with_client(&db_client, &vector_storage, start_time).await;
     drop(vector_storage); // Early drop
 
     // Verify response structure

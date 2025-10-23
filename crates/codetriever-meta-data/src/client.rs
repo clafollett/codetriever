@@ -99,12 +99,13 @@ impl DataClient {
     /// # Errors
     ///
     /// Returns error if database query fails
+    /// Returns tuple of (`repository_id`, branch, content) if found
     pub async fn get_file_content(
         &self,
-        repository_id: &str,
-        branch: &str,
+        repository_id: Option<&str>,
+        branch: Option<&str>,
         file_path: &str,
-    ) -> Result<Option<String>, crate::DatabaseError> {
+    ) -> Result<Option<(String, String, String)>, crate::DatabaseError> {
         self.repository
             .get_file_content(repository_id, branch, file_path)
             .await

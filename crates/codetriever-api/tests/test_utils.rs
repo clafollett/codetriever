@@ -17,11 +17,11 @@ use tokio::sync::{Mutex, OnceCell};
 
 use codetriever_api::AppState;
 use codetriever_config::ApplicationConfig;
-use codetriever_indexing::{ServiceConfig, ServiceFactory};
+use codetriever_indexing::IndexerService;
 use codetriever_meta_data::{
     DataClient, DbFileRepository, PoolConfig, PoolManager, traits::FileRepository,
 };
-use codetriever_search::SearchService;
+use codetriever_search::Search;
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
 
 /// Standard test result type for all test functions
@@ -171,29 +171,31 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
     let vector_storage_trait = Arc::clone(&vector_storage_concrete) as Arc<dyn VectorStorage>;
 
     // Create search service with shared DB/embedding, but unique vector storage
-    let search_service = Arc::new(SearchService::new(
+    let search_service = Arc::new(Search::new(
         Arc::clone(&shared.embedding_service),
         Arc::clone(&vector_storage_trait),
         Arc::clone(&shared.db_client),
-    )) as Arc<dyn codetriever_search::SearchProvider>;
+    )) as Arc<dyn codetriever_search::SearchService>;
 
-    // Create indexer service
-    let factory = ServiceFactory::new(ServiceConfig::from_env()?);
-    let indexer = factory
-        .indexer(
-            Arc::clone(&shared.embedding_service),
-            Arc::clone(&vector_storage_trait),
-            Arc::clone(&shared.file_repository),
-        )
-        .await?;
-    let indexer_service =
-        Arc::new(Mutex::new(indexer)) as Arc<Mutex<dyn codetriever_indexing::IndexerService>>;
+    // Create indexer service directly (no factory!)
+    let tokenizer = shared.embedding_service.provider().get_tokenizer().await;
+    let code_parser = codetriever_parsing::CodeParser::new(
+        tokenizer,
+        shared.config.indexing.split_large_units,
+        shared.config.indexing.max_chunk_tokens,
+    );
 
-    let db_client =
-        Arc::clone(&shared.db_client) as Arc<dyn codetriever_api::routes::status::DatabaseClient>;
+    let indexer = codetriever_indexing::indexing::Indexer::new(
+        Arc::clone(&shared.embedding_service),
+        Arc::clone(&vector_storage_trait),
+        Arc::clone(&shared.file_repository),
+        code_parser,
+        &shared.config,
+    );
+    let indexer_service = Arc::new(Mutex::new(indexer)) as Arc<Mutex<dyn IndexerService>>;
 
     let state = AppState::new(
-        db_client,
+        Arc::clone(&shared.db_client),
         vector_storage_trait,
         search_service,
         indexer_service,

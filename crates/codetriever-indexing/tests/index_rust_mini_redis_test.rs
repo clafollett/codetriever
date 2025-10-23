@@ -7,7 +7,7 @@
 mod test_utils;
 
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
-use codetriever_search::SearchProvider;
+use codetriever_search::SearchService;
 use codetriever_vector_data::VectorStorage;
 use std::{path::Path, sync::Arc};
 use test_utils::{
@@ -138,7 +138,7 @@ fn test_index_rust_mini_redis() {
         let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
 
         let search_service =
-            codetriever_search::SearchService::new(embedding_service, vector_storage, db_client);
+            codetriever_search::Search::new(embedding_service, vector_storage, db_client);
 
         // Check if already indexed
         let correlation_id = codetriever_common::CorrelationId::new();

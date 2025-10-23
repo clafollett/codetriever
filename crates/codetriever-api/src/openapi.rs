@@ -9,6 +9,7 @@ use utoipa_swagger_ui::SwaggerUi;
 #[openapi(
     paths(
         crate::routes::search::search_handler,
+        crate::routes::search::context_handler,
         crate::routes::index::index_handler,
         // Note: status endpoint path excluded from OpenAPI due to impl Trait limitation
         // Schemas are still documented for manual API documentation
@@ -24,6 +25,13 @@ use utoipa_swagger_ui::SwaggerUi;
             crate::routes::search::Context,
             crate::routes::search::Range,
             crate::routes::search::CommitInfo,
+
+            // Context schemas (now in search module)
+            crate::routes::search::ContextRequest,
+            crate::routes::search::ContextResponse,
+            crate::routes::search::LineInfo,
+            crate::routes::search::Symbol,
+            crate::routes::search::SymbolRange,
 
             // Index schemas
             crate::routes::index::IndexRequest,
@@ -41,7 +49,7 @@ use utoipa_swagger_ui::SwaggerUi;
         )
     ),
     tags(
-        (name = "search", description = "Code search operations"),
+        (name = "search", description = "Code search and context operations"),
         (name = "index", description = "Code indexing operations"),
         (name = "status", description = "System health and monitoring"),
     ),

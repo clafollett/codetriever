@@ -18,7 +18,7 @@ mod test_utils;
 
 use codetriever_common::CorrelationId;
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
-use codetriever_search::SearchProvider;
+use codetriever_search::SearchService;
 use std::sync::Arc;
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
@@ -254,7 +254,7 @@ impl PostgresConnection {
         let db_client = std::sync::Arc::new(codetriever_meta_data::DataClient::new(pools));
 
         let search_service =
-            codetriever_search::SearchService::new(embedding_service, vector_storage, db_client);
+            codetriever_search::Search::new(embedding_service, vector_storage, db_client);
         let correlation_id = CorrelationId::new();
         let results = search_service
             .search("postgres database query", 5, &correlation_id)
@@ -486,7 +486,10 @@ fn test_index_file_content_handles_empty_and_invalid_files() {
             return;
         }
 
-        let config = test_config();
+        let mut config = test_config();
+        // Use in-memory queue for edge case testing (binary files can't go to PostgreSQL TEXT columns)
+        config.indexing.use_persistent_queue = false;
+
         let storage = create_test_storage("edge_cases")
             .await
             .expect("Failed to create storage");
