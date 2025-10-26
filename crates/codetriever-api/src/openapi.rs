@@ -11,6 +11,7 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::routes::search::search_handler,
         crate::routes::search::context_handler,
         crate::routes::index::index_handler,
+        crate::routes::index::get_job_status_handler,
         // Note: status endpoint path excluded from OpenAPI due to impl Trait limitation
         // Schemas are still documented for manual API documentation
     ),
@@ -36,6 +37,7 @@ use utoipa_swagger_ui::SwaggerUi;
             // Index schemas
             crate::routes::index::IndexRequest,
             crate::routes::index::IndexResponse,
+            crate::routes::index::JobStatusResponse,
             crate::routes::index::FileContent,
 
             // Status schemas

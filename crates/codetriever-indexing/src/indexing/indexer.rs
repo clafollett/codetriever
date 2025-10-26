@@ -587,6 +587,51 @@ impl IndexerService for Indexer {
         self.index_file_content(project_id, files).await
     }
 
+    async fn start_indexing_job(
+        &mut self,
+        project_id: &str,
+        files: Vec<ServiceFileContent>,
+    ) -> crate::IndexerResult<uuid::Uuid> {
+        // Parse project_id as "repository_id:branch"
+        let (repository_id, branch) = project_id.split_once(':').unwrap_or((project_id, "main"));
+
+        // Create job in database
+        let job = self
+            .repository
+            .create_indexing_job(repository_id, branch, None)
+            .await?;
+
+        // Enqueue all files to persistent queue
+        for file in files {
+            self.repository
+                .enqueue_file(
+                    &job.job_id,
+                    repository_id,
+                    branch,
+                    &file.path,
+                    &file.content,
+                    &file.hash,
+                )
+                .await?;
+        }
+
+        Ok(job.job_id)
+    }
+
+    async fn get_job_status(
+        &mut self,
+        job_id: &uuid::Uuid,
+    ) -> crate::IndexerResult<Option<codetriever_meta_data::models::IndexingJob>> {
+        Ok(self.repository.get_indexing_job(job_id).await?)
+    }
+
+    async fn list_jobs(
+        &mut self,
+        project_id: Option<&str>,
+    ) -> crate::IndexerResult<Vec<codetriever_meta_data::models::IndexingJob>> {
+        Ok(self.repository.list_indexing_jobs(project_id).await?)
+    }
+
     async fn drop_collection(&mut self) -> crate::IndexerResult<bool> {
         self.drop_collection().await
     }

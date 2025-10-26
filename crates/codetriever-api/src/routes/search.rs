@@ -39,7 +39,7 @@ use axum::{
     routing::post,
 };
 use codetriever_common::CorrelationId;
-use codetriever_search::{Search, SearchError, SearchService};
+use codetriever_search::SearchService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -215,136 +215,14 @@ pub struct CommitInfo {
 /// ```
 /// Type for search service handle
 type SearchServiceHandle = Arc<dyn SearchService>;
-type LazySearchHandle = Arc<tokio::sync::Mutex<LazySearchService>>;
 
-// Type alias to simplify complex type
-type SearchServiceOption = Option<Arc<dyn SearchService>>;
-
-/// Lazy-initialized search service that creates real storage connection on first use
-pub struct LazySearchService {
-    service: SearchServiceOption,
-}
-
-impl LazySearchService {
-    const fn new() -> Self {
-        Self { service: None }
-    }
-
-    #[allow(clippy::expect_used)] // Safe: we guarantee initialization above
-    async fn get_or_init(&mut self) -> Result<Arc<dyn SearchService>, SearchError> {
-        if self.service.is_none() {
-            tracing::info!("Initializing search service with Qdrant storage on first use");
-            self.service = Some(create_configured_search_service().await?);
-        }
-        // Safe: we just ensured initialization above
-        Ok(Arc::clone(
-            self.service.as_ref().expect("Service must be initialized"),
-        ))
-    }
-}
-
-/// Create a properly configured search service with real Qdrant storage
-async fn create_configured_search_service() -> Result<Arc<dyn SearchService>, SearchError> {
-    use codetriever_config::ApplicationConfig;
-    use codetriever_meta_data::{PoolConfig, PoolManager};
-    use codetriever_vector_data::QdrantStorage;
-
-    // Load configuration
-    let config = ApplicationConfig::from_env();
-
-    // Set up embedding service first
-    let embedding_service = Arc::new(codetriever_embeddings::DefaultEmbeddingService::new(
-        config.embedding.clone(),
-    )) as Arc<dyn codetriever_embeddings::EmbeddingService>;
-
-    // Set up vector storage (Qdrant) - same as indexing service
-    let vector_storage = match QdrantStorage::new(
-        config.vector_storage.url.clone(),
-        config.vector_storage.collection_name.clone(),
-    )
-    .await
-    {
-        Ok(storage) => {
-            tracing::info!("Connected to Qdrant storage successfully for search");
-            Arc::new(storage) as Arc<dyn codetriever_vector_data::VectorStorage>
-        }
-        Err(e) => {
-            tracing::warn!("Could not connect to Qdrant for search: {e}");
-            tracing::warn!("Search will not work without vector storage!");
-            // Fall back to mock storage (searches will return empty)
-            Arc::new(codetriever_vector_data::MockStorage::new())
-                as Arc<dyn codetriever_vector_data::VectorStorage>
-        }
-    };
-
-    // Set up database client - REQUIRED for SearchService to function
-    let pools = PoolManager::new(&config.database, PoolConfig::default())
-        .await
-        .map_err(|e| SearchError::DatabaseConnectionFailed {
-            message: format!("Failed to connect to database: {e}"),
-        })?;
-    let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
-
-    Ok(Arc::new(Search::new(
-        embedding_service,
-        vector_storage,
-        db_client,
-    )))
-}
-
-/// Service factory for proper dependency injection
-pub struct ServiceFactory {
-    embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
-    vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
-    db_client: Arc<codetriever_meta_data::DataClient>,
-}
-
-impl ServiceFactory {
-    /// Create a new service factory with injected dependencies
-    pub fn new(
-        embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
-        vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
-        db_client: Arc<codetriever_meta_data::DataClient>,
-    ) -> Self {
-        Self {
-            embedding_service,
-            vector_storage,
-            db_client,
-        }
-    }
-
-    /// Create the search service with all dependencies
-    pub fn create_search_service(&self) -> Arc<dyn SearchService> {
-        Arc::new(Search::new(
-            Arc::clone(&self.embedding_service),
-            Arc::clone(&self.vector_storage),
-            Arc::clone(&self.db_client),
-        ))
-    }
-}
-
-/// Create routes with lazy-initialized search service that properly connects to Qdrant
-pub fn routes() -> Router {
-    // Create a lazy-initialized search wrapper
-    // Storage will be initialized on first use with proper Qdrant configuration
-    let search_wrapper = Arc::new(tokio::sync::Mutex::new(LazySearchService::new()));
-    routes_with_lazy_search(search_wrapper)
-}
-
-/// Create routes with injected search service (proper dependency injection)
+/// Create routes with injected search service
+///
+/// Handles both /search and /context endpoints with the same service
 pub fn routes_with_search_service(search_service: Arc<dyn SearchService>) -> Router {
     Router::new()
         .route("/search", post(search_handler))
         .route("/context", post(context_handler))
-        .with_state(search_service)
-}
-
-/// Create routes with lazy search service wrapper
-pub fn routes_with_lazy_search(
-    search_service: Arc<tokio::sync::Mutex<LazySearchService>>,
-) -> Router {
-    Router::new()
-        .route("/search", post(lazy_search_handler))
         .with_state(search_service)
 }
 
@@ -417,39 +295,6 @@ fn highlight_search_terms(content: &str, query: &str) -> Vec<Range> {
     }
 
     highlights
-}
-
-/// Handler for lazy-initialized search service
-///
-/// # Errors
-///
-/// Returns `ApiError` if:
-/// - Query is empty or invalid
-/// - Search service is unavailable
-/// - Database timeout occurs
-pub async fn lazy_search_handler(
-    State(search_service): State<LazySearchHandle>,
-    context: Option<Extension<RequestContext>>,
-    Json(req): Json<SearchRequest>,
-) -> ApiResult<Json<SearchResponse>> {
-    // Get or initialize the search service
-    let correlation_id = context
-        .as_ref()
-        .map_or_else(CorrelationId::new, |ctx| ctx.correlation_id.clone());
-
-    let mut service_guard = search_service.lock().await;
-    let service = service_guard.get_or_init().await.map_err(|e| {
-        // Database connection failure during initialization is a service unavailability issue
-        tracing::error!(correlation_id = %correlation_id, error = %e, "Failed to initialize search service");
-        ApiError::SearchServiceUnavailable {
-            correlation_id: correlation_id.clone(),
-            timeout_duration: Duration::from_secs(30),
-        }
-    })?;
-    drop(service_guard); // Release lock before doing the actual search
-
-    // Delegate to the regular search handler logic
-    search_handler_impl(service, context, req).await
 }
 
 /// Search for code in the indexed repository.
@@ -1164,14 +1009,8 @@ mod tests {
         assert_eq!(search_results.len(), 0);
     }
 
-    #[tokio::test]
-    async fn test_routes_default_creates_working_router() {
-        // Test that routes_default creates a working router
-        let _router = routes();
-
-        // Test passes if we can create routes without panicking
-        // This validates the dependency injection is working
-    }
+    // Removed test_routes_default_creates_working_router - routes() function deleted
+    // (lazy initialization removed, now use routes_with_search_service)
 
     #[tokio::test]
     async fn test_search_returns_matches_with_metadata() -> TestResult {

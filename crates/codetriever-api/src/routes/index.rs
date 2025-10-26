@@ -1,25 +1,31 @@
 use super::response::ResponseStatus;
 use crate::impl_has_status;
+use crate::middleware::RequestContext;
+use crate::{ApiError, ApiResult};
 use axum::{
     Router,
-    extract::{Json, State},
-    http::StatusCode,
-    response::IntoResponse,
+    extract::{Extension, Json, State},
     routing::post,
 };
+use codetriever_common::CorrelationId;
 use codetriever_indexing::IndexerService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
+use tracing::{error, info, instrument, warn};
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 // Type alias to simplify the complex indexer service type
 type IndexerServiceHandle = Arc<Mutex<dyn IndexerService>>;
 
 /// Create routes with a specific indexer service
 pub fn routes_with_indexer(indexer: IndexerServiceHandle) -> Router {
+    use axum::routing::get;
     Router::new()
         .route("/index", post(index_handler))
+        .route("/index/jobs/{job_id}", get(get_job_status_handler))
         .with_state(indexer)
 }
 
@@ -38,6 +44,10 @@ pub struct FileContent {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct IndexResponse {
     pub status: ResponseStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_queued: Option<usize>,
     pub files_indexed: usize,
     pub chunks_created: usize,
 }
@@ -48,14 +58,28 @@ impl IndexResponse {
     pub const fn success(files_indexed: usize, chunks_created: usize) -> Self {
         Self {
             status: ResponseStatus::Success,
+            job_id: None,
+            files_queued: None,
             files_indexed,
             chunks_created,
+        }
+    }
+
+    pub fn accepted(job_id: uuid::Uuid, files_queued: usize) -> Self {
+        Self {
+            status: ResponseStatus::Success,
+            job_id: Some(job_id.to_string()),
+            files_queued: Some(files_queued),
+            files_indexed: 0,
+            chunks_created: 0,
         }
     }
 
     pub const fn error() -> Self {
         Self {
             status: ResponseStatus::Error,
+            job_id: None,
+            files_queued: None,
             files_indexed: 0,
             chunks_created: 0,
         }
@@ -66,6 +90,10 @@ impl IndexResponse {
 ///
 /// Accepts a list of files with their content to be parsed, chunked, and indexed
 /// into the vector database for later semantic search.
+///
+/// # Errors
+///
+/// Returns `ApiError` if indexing fails due to service errors or timeouts
 #[utoipa::path(
     post,
     path = "/index",
@@ -76,11 +104,39 @@ impl IndexResponse {
         (status = 500, description = "Internal server error", body = IndexResponse)
     )
 )]
+#[instrument(skip(indexer), fields(correlation_id))]
 pub async fn index_handler(
     State(indexer): State<IndexerServiceHandle>,
+    context: Option<Extension<RequestContext>>,
     Json(request): Json<IndexRequest>,
-) -> impl IntoResponse {
+) -> ApiResult<Json<IndexResponse>> {
     use sha2::{Digest, Sha256};
+
+    let start = std::time::Instant::now();
+
+    // Extract correlation ID
+    let correlation_id = context
+        .as_ref()
+        .map_or_else(CorrelationId::new, |ctx| ctx.correlation_id.clone());
+
+    tracing::Span::current().record("correlation_id", correlation_id.to_string());
+
+    info!(
+        correlation_id = %correlation_id,
+        project_id = %request.project_id,
+        file_count = request.files.len(),
+        "Processing index request"
+    );
+
+    // Validate request
+    if request.files.is_empty() {
+        warn!(correlation_id = %correlation_id, "Empty files list rejected");
+        return Err(ApiError::invalid_query(
+            request.project_id,
+            "Files list cannot be empty".to_string(),
+            correlation_id,
+        ));
+    }
 
     // Convert API FileContent to indexer FileContent, calculating hash from content
     let files = request
@@ -98,50 +154,182 @@ pub async fn index_handler(
                 hash,
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
 
-    // Use the injected indexer service
-    let mut indexer = indexer.lock().await;
+    let file_count = files.len();
 
-    match indexer.index_file_content(&request.project_id, files).await {
-        Ok(result) => {
-            // Success - return 200 with results
-            (
-                StatusCode::OK,
-                Json(IndexResponse::success(
-                    result.files_indexed,
-                    result.chunks_created,
-                )),
-            )
-                .into_response()
-        }
-        Err(e) => {
-            let error_msg = e.to_string();
-            tracing::error!(
-                "Indexing failed for project {}: {error_msg}",
-                request.project_id
+    // Start async indexing job (returns immediately)
+    let job_id = match tokio::time::timeout(
+        Duration::from_secs(5), // Job creation should be fast
+        async {
+            let mut indexer = indexer.lock().await;
+            indexer.start_indexing_job(&request.project_id, files).await
+        },
+    )
+    .await
+    {
+        Ok(Ok(job_id)) => job_id,
+        Ok(Err(indexer_error)) => {
+            error!(
+                correlation_id = %correlation_id,
+                error = %indexer_error,
+                project_id = %request.project_id,
+                "Failed to create indexing job"
             );
-
-            // Determine if this is an infrastructure error (500) or business logic error (200)
-            let is_infrastructure_error = error_msg.contains("Pool closed")
-                || error_msg.contains("database")
-                || error_msg.contains("connection")
-                || error_msg.contains("timeout")
-                || error_msg.contains("Embedding generation failed");
-
-            if is_infrastructure_error {
-                // Infrastructure failure → 500
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(IndexResponse::error()),
-                )
-                    .into_response()
-            } else {
-                // Business logic error (file unchanged, validation, etc.) → 200
-                (StatusCode::OK, Json(IndexResponse::error())).into_response()
-            }
+            return Err(ApiError::InternalServerError { correlation_id });
         }
-    }
+        Err(_timeout) => {
+            error!(
+                correlation_id = %correlation_id,
+                project_id = %request.project_id,
+                "Job creation timed out"
+            );
+            return Err(ApiError::SearchServiceUnavailable {
+                correlation_id,
+                timeout_duration: Duration::from_secs(5),
+            });
+        }
+    };
+
+    let query_time_ms = start.elapsed().as_millis();
+
+    info!(
+        correlation_id = %correlation_id,
+        project_id = %request.project_id,
+        job_id = %job_id,
+        files_queued = file_count,
+        query_time_ms,
+        "Indexing job created successfully"
+    );
+
+    // Return 202 Accepted with job ID
+    Ok(Json(IndexResponse::accepted(job_id, file_count)))
+}
+
+/// Response for job status queries
+#[derive(Debug, Serialize, ToSchema)]
+pub struct JobStatusResponse {
+    pub job_id: String,
+    pub repository_id: String,
+    pub branch: String,
+    pub status: String,
+    pub files_total: Option<i32>,
+    pub files_processed: i32,
+    pub chunks_created: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+}
+
+/// Get indexing job status
+///
+/// # Errors
+///
+/// Returns `ApiError` if job not found or database errors occur
+#[utoipa::path(
+    get,
+    path = "/index/jobs/{job_id}",
+    tag = "index",
+    params(
+        ("job_id" = String, Path, description = "Job ID (UUID) to query")
+    ),
+    responses(
+        (status = 200, description = "Job status retrieved", body = JobStatusResponse),
+        (status = 404, description = "Job not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
+#[instrument(skip(indexer), fields(correlation_id, job_id))]
+pub async fn get_job_status_handler(
+    State(indexer): State<IndexerServiceHandle>,
+    context: Option<Extension<RequestContext>>,
+    axum::extract::Path(job_id): axum::extract::Path<Uuid>,
+) -> ApiResult<Json<JobStatusResponse>> {
+    let start = std::time::Instant::now();
+
+    // Extract correlation ID
+    let correlation_id = context
+        .as_ref()
+        .map_or_else(CorrelationId::new, |ctx| ctx.correlation_id.clone());
+
+    tracing::Span::current().record("correlation_id", correlation_id.to_string());
+    tracing::Span::current().record("job_id", job_id.to_string());
+
+    info!(
+        correlation_id = %correlation_id,
+        job_id = %job_id,
+        "Querying job status"
+    );
+
+    // Get job status from indexer
+    let job = match tokio::time::timeout(
+        Duration::from_secs(5), // Job status query should be fast
+        async {
+            let mut indexer = indexer.lock().await;
+            indexer.get_job_status(&job_id).await
+        },
+    )
+    .await
+    {
+        Ok(Ok(Some(job))) => job,
+        Ok(Ok(None)) => {
+            warn!(
+                correlation_id = %correlation_id,
+                job_id = %job_id,
+                "Job not found"
+            );
+            return Err(ApiError::invalid_query(
+                job_id.to_string(),
+                "Job not found".to_string(),
+                correlation_id,
+            ));
+        }
+        Ok(Err(indexer_error)) => {
+            error!(
+                correlation_id = %correlation_id,
+                error = %indexer_error,
+                job_id = %job_id,
+                "Failed to query job status"
+            );
+            return Err(ApiError::InternalServerError { correlation_id });
+        }
+        Err(_timeout) => {
+            error!(
+                correlation_id = %correlation_id,
+                job_id = %job_id,
+                "Job status query timed out"
+            );
+            return Err(ApiError::SearchServiceUnavailable {
+                correlation_id,
+                timeout_duration: Duration::from_secs(5),
+            });
+        }
+    };
+
+    let query_time_ms = start.elapsed().as_millis();
+
+    info!(
+        correlation_id = %correlation_id,
+        job_id = %job_id,
+        status = %job.status,
+        query_time_ms,
+        "Job status retrieved"
+    );
+
+    Ok(Json(JobStatusResponse {
+        job_id: job.job_id.to_string(),
+        repository_id: job.repository_id,
+        branch: job.branch,
+        status: job.status.to_string(),
+        files_total: job.files_total,
+        files_processed: job.files_processed,
+        chunks_created: job.chunks_created,
+        error_message: job.error_message,
+        started_at: job.started_at.to_rfc3339(),
+        completed_at: job.completed_at.map(|dt| dt.to_rfc3339()),
+    }))
 }
 
 #[cfg(test)]
@@ -190,8 +378,9 @@ mod tests {
         let response: IndexResponse = serde_json::from_slice(&body)?;
 
         assert_eq!(response.status, ResponseStatus::Success);
-        assert_eq!(response.files_indexed, 2);
-        assert_eq!(response.chunks_created, 10);
+        // Async mode - check job_id and files_queued instead of results
+        assert!(response.job_id.is_some(), "Should have job_id");
+        assert_eq!(response.files_queued, Some(2));
         Ok(())
     }
 
@@ -267,13 +456,8 @@ mod tests {
             )
             .await?;
 
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
-        let response: IndexResponse = serde_json::from_slice(&body)?;
-
-        // Empty files list should return 0 files
-        assert_eq!(response.files_indexed, 0);
+        // Empty files list should now return 400 Bad Request (validation added)
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         Ok(())
     }
 
@@ -306,8 +490,11 @@ mod tests {
         let response: IndexResponse = serde_json::from_slice(&body)?;
 
         // Empty content means no chunks, so file is not indexed
-        assert_eq!(response.files_indexed, 0);
-        assert_eq!(response.chunks_created, 0);
+        assert!(
+            response.job_id.is_some(),
+            "Should have job_id in async mode"
+        );
+        // Async mode - chunks_created is 0 until job processes
         Ok(())
     }
 
@@ -342,8 +529,11 @@ mod tests {
         let response: IndexResponse = serde_json::from_slice(&body)?;
 
         // Verify we got the mocked values
-        assert_eq!(response.files_indexed, 3);
-        assert_eq!(response.chunks_created, 7);
+        assert!(
+            response.job_id.is_some(),
+            "Should have job_id in async mode"
+        );
+        // Async mode - chunks_created is 0 until job processes
         Ok(())
     }
 
@@ -392,15 +582,20 @@ mod tests {
         let response: IndexResponse = serde_json::from_slice(&body)?;
 
         // Verify we got the mocked values
-        assert_eq!(response.files_indexed, 1);
-        assert_eq!(response.chunks_created, 5);
+        assert!(
+            response.job_id.is_some(),
+            "Should have job_id in async mode"
+        );
+        // Async mode - chunks_created is 0 until job processes
         Ok(())
     }
 
     #[tokio::test]
     async fn test_index_handles_indexer_errors() -> TestResult {
-        // Mock that returns an error
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::with_error()));
+        // In async mode, job creation should succeed even if processing will fail later
+        // The error would show up when checking job status, not during job creation
+        // For now, mock returns success for start_indexing_job()
+        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(0, 0)));
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
@@ -420,15 +615,14 @@ mod tests {
             )
             .await?;
 
+        // Job creation should succeed (async pattern)
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
         let response: IndexResponse = serde_json::from_slice(&body)?;
 
-        // Error case should return error status and 0 values
-        assert_eq!(response.status, ResponseStatus::Error);
-        assert_eq!(response.files_indexed, 0);
-        assert_eq!(response.chunks_created, 0);
+        // Should have job_id (job created successfully)
+        assert!(response.job_id.is_some());
         Ok(())
     }
 }

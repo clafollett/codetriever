@@ -410,6 +410,19 @@ impl FileRepository for MockFileRepository {
         self.check_fail()?;
         Ok(0)
     }
+
+    async fn get_indexing_job(&self, _job_id: &Uuid) -> DatabaseResult<Option<IndexingJob>> {
+        self.check_fail()?;
+        Ok(None)
+    }
+
+    async fn list_indexing_jobs(
+        &self,
+        _repository_id: Option<&str>,
+    ) -> DatabaseResult<Vec<IndexingJob>> {
+        self.check_fail()?;
+        Ok(vec![])
+    }
 }
 
 #[cfg(test)]

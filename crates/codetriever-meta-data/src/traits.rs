@@ -74,6 +74,15 @@ pub trait FileRepository: Send + Sync {
         error: Option<String>,
     ) -> DatabaseResult<()>;
 
+    /// Get indexing job by ID
+    async fn get_indexing_job(&self, job_id: &Uuid) -> DatabaseResult<Option<IndexingJob>>;
+
+    /// List indexing jobs, optionally filtered by repository
+    async fn list_indexing_jobs(
+        &self,
+        repository_id: Option<&str>,
+    ) -> DatabaseResult<Vec<IndexingJob>>;
+
     /// Get chunks for a specific file
     async fn get_file_chunks(
         &self,

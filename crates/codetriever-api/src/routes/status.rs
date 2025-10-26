@@ -1,12 +1,14 @@
-use axum::{Json, extract::State};
+use axum::{Extension, Json, extract::State};
+use codetriever_common::CorrelationId;
+use codetriever_meta_data::DataClient;
+use codetriever_vector_data::VectorStorage;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use std::time::SystemTime;
+use tracing::{info, instrument};
 use utoipa::ToSchema;
 
-use codetriever_meta_data::DataClient;
-use codetriever_vector_data::VectorStorage;
-
+use crate::middleware::RequestContext;
 use crate::state::AppState;
 
 /// Server start time (initialized once on first access)
@@ -151,7 +153,20 @@ async fn get_index_stats_client(client: &DataClient) -> (i64, i64, f64, Option<S
 /// Axum handler for GET /status endpoint
 ///
 /// Uses shared application state to avoid creating pools on every request
-pub async fn status_handler(State(state): State<AppState>) -> Json<StatusResponse> {
+#[instrument(skip(state), fields(correlation_id))]
+pub async fn status_handler(
+    State(state): State<AppState>,
+    context: Option<Extension<RequestContext>>,
+) -> Json<StatusResponse> {
+    // Extract correlation ID
+    let correlation_id = context
+        .as_ref()
+        .map_or_else(CorrelationId::new, |ctx| ctx.correlation_id.clone());
+
+    tracing::Span::current().record("correlation_id", correlation_id.to_string());
+
+    info!(correlation_id = %correlation_id, "Status request");
+
     // Check PostgreSQL health and get stats
     let postgres_status = check_postgres_health_client(&state.db_client).await;
     let (total_files, total_chunks, db_size_mb, last_indexed_at) =

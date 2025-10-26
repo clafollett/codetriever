@@ -368,6 +368,120 @@ impl DbFileRepository {
 
         Ok(row.get("count"))
     }
+
+    /// Get indexing job by ID
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn get_indexing_job(&self, job_id: &Uuid) -> DatabaseResult<Option<IndexingJob>> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::GetFileMetadata {
+            repository_id: "unknown".to_string(),
+            branch: "unknown".to_string(),
+            file_path: format!("job:{job_id}"),
+        };
+
+        let row = sqlx::query(
+            r"
+            SELECT job_id, repository_id, branch, status, files_total, files_processed,
+                   chunks_created, commit_sha, started_at, completed_at, error_message
+            FROM indexing_jobs
+            WHERE job_id = $1
+            ",
+        )
+        .bind(job_id)
+        .fetch_optional(pool)
+        .await
+        .map_db_err(operation, correlation_id)?;
+
+        Ok(row.map(|r| {
+            let status_str: String = r.get("status");
+            IndexingJob {
+                job_id: r.get("job_id"),
+                repository_id: r.get("repository_id"),
+                branch: r.get("branch"),
+                status: status_str.parse().unwrap_or(JobStatus::Failed),
+                files_total: r.get("files_total"),
+                files_processed: r.get("files_processed"),
+                chunks_created: r.get("chunks_created"),
+                commit_sha: r.get("commit_sha"),
+                started_at: r.get("started_at"),
+                completed_at: r.get("completed_at"),
+                error_message: r.get("error_message"),
+            }
+        }))
+    }
+
+    /// List indexing jobs, optionally filtered by repository
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn list_indexing_jobs(
+        &self,
+        repository_id: Option<&str>,
+    ) -> DatabaseResult<Vec<IndexingJob>> {
+        let pool = self.pools.read_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::GetFileMetadata {
+            repository_id: repository_id.unwrap_or("all").to_string(),
+            branch: "unknown".to_string(),
+            file_path: "jobs".to_string(),
+        };
+
+        let rows = match repository_id {
+            Some(repo) => sqlx::query(
+                r"
+                    SELECT job_id, repository_id, branch, status, files_total, files_processed,
+                           chunks_created, commit_sha, started_at, completed_at, error_message
+                    FROM indexing_jobs
+                    WHERE repository_id = $1
+                    ORDER BY started_at DESC
+                    LIMIT 100
+                    ",
+            )
+            .bind(repo)
+            .fetch_all(pool)
+            .await
+            .map_db_err(operation, correlation_id)?,
+            None => sqlx::query(
+                r"
+                    SELECT job_id, repository_id, branch, status, files_total, files_processed,
+                           chunks_created, commit_sha, started_at, completed_at, error_message
+                    FROM indexing_jobs
+                    ORDER BY started_at DESC
+                    LIMIT 100
+                    ",
+            )
+            .fetch_all(pool)
+            .await
+            .map_db_err(operation, correlation_id)?,
+        };
+
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let status_str: String = r.get("status");
+                IndexingJob {
+                    job_id: r.get("job_id"),
+                    repository_id: r.get("repository_id"),
+                    branch: r.get("branch"),
+                    status: status_str.parse().unwrap_or(JobStatus::Failed),
+                    files_total: r.get("files_total"),
+                    files_processed: r.get("files_processed"),
+                    chunks_created: r.get("chunks_created"),
+                    commit_sha: r.get("commit_sha"),
+                    started_at: r.get("started_at"),
+                    completed_at: r.get("completed_at"),
+                    error_message: r.get("error_message"),
+                }
+            })
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -1190,6 +1304,17 @@ impl FileRepository for DbFileRepository {
 
     async fn get_queue_depth(&self, job_id: &Uuid) -> DatabaseResult<i64> {
         self.get_queue_depth(job_id).await
+    }
+
+    async fn get_indexing_job(&self, job_id: &Uuid) -> DatabaseResult<Option<IndexingJob>> {
+        self.get_indexing_job(job_id).await
+    }
+
+    async fn list_indexing_jobs(
+        &self,
+        repository_id: Option<&str>,
+    ) -> DatabaseResult<Vec<IndexingJob>> {
+        self.list_indexing_jobs(repository_id).await
     }
 }
 
