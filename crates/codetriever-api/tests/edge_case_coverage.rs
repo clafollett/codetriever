@@ -315,7 +315,50 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
     // Test file: 5000 lines × 6 tokens/line ≈ 30,000 tokens total
     // At 512 tokens/chunk → expect ~58 chunks (30000/512)
     if status.is_success() {
-        let chunks_created = response["chunks_created"].as_u64().unwrap();
+        // With async pattern, response is 202 Accepted with job_id
+        let job_id = response["job_id"]
+            .as_str()
+            .expect("Response should include job_id");
+
+        // Poll for job completion
+        let app2 = create_router(test_state.state().clone());
+        let mut attempts = 0;
+        let chunks_created = loop {
+            attempts += 1;
+            let status_request = Request::builder()
+                .method("GET")
+                .uri(format!("/index/jobs/{job_id}"))
+                .body(Body::empty())
+                .unwrap();
+
+            let status_response = app2.clone().oneshot(status_request).await.unwrap();
+            let status_body = axum::body::to_bytes(status_response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let job_status: serde_json::Value =
+                serde_json::from_slice(&status_body).unwrap();
+
+            let status = job_status["status"].as_str().unwrap();
+            if status == "completed" {
+                #[allow(clippy::cast_sign_loss)]
+                let chunks = job_status["chunks_created"].as_i64().unwrap() as u64;
+                break chunks;
+            } else if status == "failed" {
+                panic!("Job failed: {:?}", job_status["error_message"]);
+            }
+
+            // Debug logging every 50 attempts
+            if attempts % 50 == 0 {
+                eprintln!("⏳ [Attempt {attempts}] Job status: {status}, files_processed: {}, chunks: {}",
+                    job_status["files_processed"], job_status["chunks_created"]);
+            }
+
+            assert!(
+                attempts <= 300,
+                "Job did not complete in time after {attempts} attempts. Last status: {job_status:?}"
+            );
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        };
         let file_size_bytes = large_content.len();
 
         eprintln!(

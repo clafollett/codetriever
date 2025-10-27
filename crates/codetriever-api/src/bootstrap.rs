@@ -5,12 +5,12 @@
 
 use codetriever_config::ApplicationConfig;
 use codetriever_embeddings::DefaultEmbeddingService;
-use codetriever_indexing::IndexerService;
+use codetriever_indexing::{BackgroundWorker, IndexerService, WorkerConfig};
 use codetriever_meta_data::{DataClient, DbFileRepository, PoolConfig, PoolManager};
 use codetriever_search::{Search, SearchService};
 use codetriever_vector_data::QdrantStorage;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use tracing::info;
 
 use crate::AppState;
@@ -95,38 +95,27 @@ pub fn setup_search_service(
 /// # Errors
 ///
 /// Returns error if indexer initialization or tokenizer loading fails
-pub async fn setup_indexer_service(
-    config: &ApplicationConfig,
-    embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
-    vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
+#[allow(clippy::type_complexity)]
+pub fn setup_indexer_service(
+    embedding_service: &Arc<dyn codetriever_embeddings::EmbeddingService>,
+    vector_storage: &Arc<dyn codetriever_vector_data::VectorStorage>,
     pools: &PoolManager,
-) -> BootstrapResult<Arc<Mutex<dyn IndexerService>>> {
+) -> BootstrapResult<Arc<dyn IndexerService>> {
     info!("Initializing indexer service...");
 
     // Create file repository for indexer
     let file_repository = Arc::new(DbFileRepository::new(pools.clone()))
         as Arc<dyn codetriever_meta_data::traits::FileRepository>;
 
-    // Load tokenizer from embedding service for accurate chunking
-    let tokenizer = embedding_service.provider().get_tokenizer().await;
-
-    // Create CodeParser with tokenizer
-    let code_parser = codetriever_parsing::CodeParser::new(
-        tokenizer,
-        config.indexing.split_large_units,
-        config.indexing.max_chunk_tokens,
-    );
-
-    // Create indexer directly (no factory!)
+    // Create indexer (handles job creation only, not file processing)
+    // File processing is done by BackgroundWorker which has its own CodeParser
     let indexer = codetriever_indexing::indexing::Indexer::new(
-        Arc::clone(&embedding_service),
-        Arc::clone(&vector_storage),
+        Arc::clone(embedding_service),
+        Arc::clone(vector_storage),
         Arc::clone(&file_repository),
-        code_parser,
-        config,
     );
 
-    let indexer_service = Arc::new(Mutex::new(indexer)) as Arc<Mutex<dyn IndexerService>>;
+    let indexer_service = Arc::new(indexer) as Arc<dyn IndexerService>;
     Ok(indexer_service)
 }
 
@@ -155,7 +144,10 @@ pub async fn initialize_app_state(config: &ApplicationConfig) -> BootstrapResult
     // Note: Indexer needs PoolManager, so we reconstruct it here
     // TODO: Refactor to avoid reconstructing pools
     let pools = PoolManager::new(&config.database, PoolConfig::default()).await?;
-    let indexer_service = setup_indexer_service(
+    let indexer_service = setup_indexer_service(&embedding_service, &vector_storage, &pools)?;
+
+    // 6. Spawn background worker for processing indexing jobs
+    let _shutdown_handle = spawn_background_worker(
         config,
         Arc::clone(&embedding_service),
         Arc::clone(&vector_storage),
@@ -163,9 +155,71 @@ pub async fn initialize_app_state(config: &ApplicationConfig) -> BootstrapResult
     )
     .await?;
 
-    // 6. Create application state
-    let state = AppState::new(db_client, vector_storage, search_service, indexer_service);
+    // 7. Create application state
+    let state = AppState::new(
+        Arc::clone(&db_client),
+        Arc::clone(&vector_storage),
+        Arc::clone(&search_service),
+        Arc::clone(&indexer_service),
+    );
 
     info!("Application state initialized successfully");
     Ok(state)
+}
+
+/// Spawn background worker for processing indexing jobs
+///
+/// Creates a background worker thread that continuously processes jobs from the
+/// `PostgreSQL` queue. The worker runs independently of HTTP requests and can be
+/// easily extracted into a separate daemon binary later.
+///
+/// # Returns
+///
+/// Returns a shutdown handle that can be used for graceful shutdown
+///
+/// # Errors
+///
+/// Returns error if tokenizer loading fails
+pub async fn spawn_background_worker(
+    config: &ApplicationConfig,
+    embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
+    vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
+    pools: &PoolManager,
+) -> BootstrapResult<Arc<AtomicBool>> {
+    info!("🚀 Spawning background indexing worker...");
+
+    // Create file repository for worker
+    let file_repository = Arc::new(DbFileRepository::new(pools.clone()))
+        as Arc<dyn codetriever_meta_data::traits::FileRepository>;
+
+    // Load tokenizer for worker's code parser
+    let tokenizer = embedding_service.provider().get_tokenizer().await;
+    let code_parser = Arc::new(codetriever_parsing::CodeParser::new(
+        tokenizer,
+        config.indexing.split_large_units,
+        config.indexing.max_chunk_tokens,
+    ));
+
+    // Create worker config
+    let worker_config = WorkerConfig::from_app_config(config);
+
+    // Create background worker
+    let worker = BackgroundWorker::new(
+        file_repository,
+        Arc::clone(&embedding_service),
+        Arc::clone(&vector_storage),
+        code_parser,
+        worker_config,
+    );
+
+    let shutdown_handle = worker.shutdown_handle();
+
+    // Spawn worker in background thread
+    tokio::spawn(async move {
+        worker.run().await;
+    });
+
+    info!("✅ Background indexing worker started");
+
+    Ok(shutdown_handle)
 }

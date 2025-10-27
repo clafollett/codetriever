@@ -12,13 +12,12 @@ use codetriever_indexing::IndexerService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tracing::{error, info, instrument, warn};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-// Type alias to simplify the complex indexer service type
-type IndexerServiceHandle = Arc<Mutex<dyn IndexerService>>;
+// Type alias for indexer service (no mutex needed!)
+type IndexerServiceHandle = Arc<dyn IndexerService>;
 
 /// Create routes with a specific indexer service
 pub fn routes_with_indexer(indexer: IndexerServiceHandle) -> Router {
@@ -158,13 +157,10 @@ pub async fn index_handler(
 
     let file_count = files.len();
 
-    // Start async indexing job (returns immediately)
+    // Start async indexing job (returns immediately - no lock needed!)
     let job_id = match tokio::time::timeout(
         Duration::from_secs(5), // Job creation should be fast
-        async {
-            let mut indexer = indexer.lock().await;
-            indexer.start_indexing_job(&request.project_id, files).await
-        },
+        indexer.start_indexing_job(&request.project_id, files),
     )
     .await
     {
@@ -266,10 +262,7 @@ pub async fn get_job_status_handler(
     // Get job status from indexer
     let job = match tokio::time::timeout(
         Duration::from_secs(5), // Job status query should be fast
-        async {
-            let mut indexer = indexer.lock().await;
-            indexer.get_job_status(&job_id).await
-        },
+        indexer.get_job_status(&job_id),
     )
     .await
     {
@@ -344,7 +337,7 @@ mod tests {
     #[tokio::test]
     async fn test_index_endpoint_accepts_content() -> TestResult {
         // Use mock indexer that returns predictable results
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(2, 10)));
+        let mock_indexer = Arc::new(MockIndexerService::new(2, 10)) as Arc<dyn IndexerService>;
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
@@ -387,7 +380,7 @@ mod tests {
     #[tokio::test]
     async fn test_index_with_recursive_flag() -> TestResult {
         // Mock returns 5 files and 10 chunks
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(5, 10)));
+        let mock_indexer = Arc::new(MockIndexerService::new(5, 10)) as Arc<dyn IndexerService>;
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
@@ -415,7 +408,7 @@ mod tests {
     #[tokio::test]
     async fn test_index_endpoint_validates_json() -> TestResult {
         // Use mock indexer (test validates JSON schema, not indexing logic)
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(0, 0)));
+        let mock_indexer = Arc::new(MockIndexerService::new(0, 0)) as Arc<dyn IndexerService>;
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{"invalid": "json_structure"}"#;
@@ -438,7 +431,7 @@ mod tests {
     #[tokio::test]
     async fn test_index_endpoint_handles_empty_files() -> TestResult {
         // Use mock indexer that returns predictable results
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(0, 0)));
+        let mock_indexer = Arc::new(MockIndexerService::new(0, 0)) as Arc<dyn IndexerService>;
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
@@ -464,7 +457,7 @@ mod tests {
     #[tokio::test]
     async fn test_index_endpoint_handles_no_content() -> TestResult {
         // Use mock indexer that returns predictable results
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(0, 0)));
+        let mock_indexer = Arc::new(MockIndexerService::new(0, 0)) as Arc<dyn IndexerService>;
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
@@ -501,7 +494,7 @@ mod tests {
     #[tokio::test]
     async fn test_index_returns_file_count() -> TestResult {
         // Mock returns 3 files and 7 chunks
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(3, 7)));
+        let mock_indexer = Arc::new(MockIndexerService::new(3, 7)) as Arc<dyn IndexerService>;
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
@@ -558,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn test_index_creates_chunks() -> TestResult {
         // Mock returns 1 file and 5 chunks
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(1, 5)));
+        let mock_indexer = Arc::new(MockIndexerService::new(1, 5)) as Arc<dyn IndexerService>;
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
@@ -595,7 +588,7 @@ mod tests {
         // In async mode, job creation should succeed even if processing will fail later
         // The error would show up when checking job status, not during job creation
         // For now, mock returns success for start_indexing_job()
-        let mock_indexer = Arc::new(Mutex::new(MockIndexerService::new(0, 0)));
+        let mock_indexer = Arc::new(MockIndexerService::new(0, 0)) as Arc<dyn IndexerService>;
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{

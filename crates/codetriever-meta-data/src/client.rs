@@ -146,9 +146,8 @@ impl DataClient {
     /// Returns error if database query fails
     pub async fn dequeue_file(
         &self,
-        job_id: &uuid::Uuid,
-    ) -> Result<Option<(String, String, String)>, crate::DatabaseError> {
-        self.repository.dequeue_file(job_id).await
+    ) -> Result<Option<crate::models::DequeuedFile>, crate::DatabaseError> {
+        self.repository.dequeue_file().await
     }
 
     /// Get queue depth for a job

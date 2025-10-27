@@ -6,10 +6,13 @@
 #[path = "test_utils.rs"]
 mod test_utils;
 
-use codetriever_indexing::indexing::{Indexer, service::FileContent};
+use codetriever_indexing::indexing::service::FileContent;
+use codetriever_indexing::{BackgroundWorker, Indexer, IndexerService, WorkerConfig};
+use codetriever_meta_data::models::JobStatus;
 use codetriever_search::SearchService;
 use codetriever_vector_data::VectorStorage;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
+use std::{path::Path, time::Duration};
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
     create_test_repository, create_test_storage, test_config,
@@ -102,15 +105,28 @@ fn test_index_rust_mini_redis() {
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
 
-        // Load tokenizer for accurate chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
+        let indexer = Arc::new(Indexer::new(
             embedding_service.clone(),
             Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
+            repository.clone(),
+        )) as Arc<dyn IndexerService>;
+
+        // Load tokenizer for accurate chunking (used by BackgroundWorker)
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        // Create background worker for processing (tests the real production flow!)
+        let worker = BackgroundWorker::new(
             repository,
+            embedding_service.clone(),
+            Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
             code_parser,
-            &config,
+            WorkerConfig::from_app_config(&config),
         );
+
+        // Spawn worker in background (simulates production daemon)
+        let _worker_handle = tokio::spawn(async move {
+            worker.run().await;
+        });
 
         // Test queries to verify search works
         let test_queries = vec![
@@ -163,7 +179,7 @@ fn test_index_rust_mini_redis() {
                 .expect("Failed to read directory");
 
             tracing::info!("📄 Read {} files from {:?}", files.len(), test_path);
-            tracing::info!("📝 Indexing using index_file_content() (real API)...");
+            tracing::info!("📝 Starting async indexing job (production flow)...");
 
             // Use unique project ID per run to avoid "Unchanged" detection from DB
             let timestamp = std::time::SystemTime::now()
@@ -172,18 +188,46 @@ fn test_index_rust_mini_redis() {
                 .as_millis();
             let unique_project_id = format!("mini-redis-{timestamp}:main");
 
-            // Index using the REAL API (not legacy index_directory)
-            let result = indexer
-                .index_file_content(&unique_project_id, files)
+            // Start indexing job (enqueues files, returns immediately - production API!)
+            let job_id = indexer
+                .start_indexing_job(&unique_project_id, files)
                 .await
-                .expect("Failed to index");
+                .expect("Failed to start indexing job");
 
-            tracing::info!(
-                "✅ Indexed {} files, {} chunks created, {} stored",
-                result.files_indexed,
-                result.chunks_created,
-                result.chunks_stored
-            );
+            tracing::info!(job_id = %job_id, "Job created, waiting for completion...");
+
+            // Wait for job completion by polling status
+            let mut attempts = 0;
+            loop {
+                let job_status = indexer
+                    .get_job_status(&job_id)
+                    .await
+                    .expect("Failed to get status")
+                    .expect("Job should exist");
+
+                match job_status.status {
+                    JobStatus::Completed => {
+                        tracing::info!(
+                            "✅ Job completed: {} files, {} chunks",
+                            job_status.files_processed,
+                            job_status.chunks_created
+                        );
+                        break;
+                    }
+                    JobStatus::Failed => {
+                        panic!("Job failed: {:?}", job_status.error_message);
+                    }
+                    _ => {
+                        // Still processing - wait
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        attempts += 1;
+                        if attempts > 600 {
+                            // 60 seconds timeout
+                            panic!("Job timed out after 60 seconds");
+                        }
+                    }
+                }
+            }
         }
 
         // Now run test queries to verify search works

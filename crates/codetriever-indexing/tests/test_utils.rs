@@ -17,6 +17,68 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 pub use codetriever_test_utils::{get_shared_embedding_service, get_test_runtime};
 
+use codetriever_indexing::{
+    BackgroundWorker, WorkerConfig,
+    indexing::{IndexerService, service::FileContent},
+};
+use codetriever_meta_data::models::JobStatus;
+use codetriever_parsing::CodeParser;
+use uuid::Uuid;
+
+/// Index files using async job pattern (production flow)
+///
+/// This helper manages the complete async indexing flow:
+/// 1. Creates BackgroundWorker
+/// 2. Starts indexing job
+/// 3. Polls until complete
+/// 4. Returns job result
+#[allow(dead_code)]
+pub async fn index_files_async(
+    indexer: &Arc<dyn IndexerService>,
+    repository: Arc<dyn FileRepository>,
+    embedding_service: Arc<dyn EmbeddingService>,
+    vector_storage: Arc<dyn VectorStorage>,
+    code_parser: Arc<CodeParser>,
+    config: &ApplicationConfig,
+    project_id: &str,
+    files: Vec<FileContent>,
+) -> (Uuid, codetriever_meta_data::models::IndexingJob) {
+    // Create background worker (clone Arcs so caller can reuse them)
+    let worker = BackgroundWorker::new(
+        Arc::clone(&repository),
+        Arc::clone(&embedding_service),
+        Arc::clone(&vector_storage),
+        Arc::clone(&code_parser),
+        WorkerConfig::from_app_config(config),
+    );
+
+    // Spawn worker in background
+    let _worker_handle = tokio::spawn(async move {
+        worker.run().await;
+    });
+
+    // Start indexing job
+    let job_id = indexer
+        .start_indexing_job(project_id, files)
+        .await
+        .expect("Failed to start indexing job");
+
+    // Poll for completion
+    loop {
+        let job_status = indexer
+            .get_job_status(&job_id)
+            .await
+            .expect("Failed to get status")
+            .expect("Job should exist");
+
+        match job_status.status {
+            JobStatus::Completed => return (job_id, job_status),
+            JobStatus::Failed => panic!("Job failed: {:?}", job_status.error_message),
+            _ => tokio::time::sleep(tokio::time::Duration::from_millis(100)).await,
+        }
+    }
+}
+
 /// Get the Qdrant URL for testing, defaulting to localhost
 /// Can be overridden with QDRANT_TEST_URL environment variable
 fn test_qdrant_url() -> String {
@@ -163,15 +225,10 @@ pub async fn create_test_indexer(
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
-    // Load tokenizer from embedding service for accurate chunking
-    let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-
     let indexer = codetriever_indexing::indexing::Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
         repository,
-        code_parser,
-        &config,
     );
 
     Ok((indexer, storage))

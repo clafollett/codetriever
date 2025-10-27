@@ -197,22 +197,6 @@ pub struct CommitInfo {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use axum::Router;
-/// use codetriever_api::routes::search;
-///
-/// // Mount search routes into main app
-/// let app = Router::new()
-///     .nest("/api/v1", search::routes());
-/// ```
-///
-/// # Usage with Main Router
-///
-/// Typically, this router is nested under a versioned API path:
-///
-/// ```text
-/// POST /api/v1/search
-/// ```
 /// Type for search service handle
 type SearchServiceHandle = Arc<dyn SearchService>;
 

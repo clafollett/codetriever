@@ -68,17 +68,18 @@ impl FileContentQueue for PostgresFileQueue {
     }
 
     async fn pop(&self) -> QueueResult<FileContent> {
+        // Use global dequeue - pulls from ANY job in FIFO order!
         let result = self
             .repository
-            .dequeue_file(&self.job_id)
+            .dequeue_file()
             .await
             .map_err(|e| QueueError::Operation(format!("Failed to pop from queue: {e}")))?;
 
         match result {
-            Some((path, content, hash)) => Ok(FileContent {
-                path,
-                content,
-                hash,
+            Some(dequeued) => Ok(FileContent {
+                path: dequeued.file_path,
+                content: dequeued.file_content,
+                hash: dequeued.content_hash,
             }),
             None => Err(QueueError::Closed), // No more files in queue
         }

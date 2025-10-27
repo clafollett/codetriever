@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::error::DatabaseResult;
 use crate::models::{
-    ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
-    RepositoryContext,
+    ChunkMetadata, DequeuedFile, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus,
+    ProjectBranch, RepositoryContext,
 };
 
 /// Database repository trait for all database operations
@@ -136,12 +136,26 @@ pub trait FileRepository: Send + Sync {
         content_hash: &str,
     ) -> DatabaseResult<()>;
 
-    /// Dequeue next file from persistent queue (atomic with FOR UPDATE SKIP LOCKED)
+    /// Dequeue next file from global queue (atomic with FOR UPDATE SKIP LOCKED)
     ///
-    /// Returns None if no files available
-    async fn dequeue_file(&self, job_id: &Uuid)
-    -> DatabaseResult<Option<(String, String, String)>>;
+    /// Pulls next file from ANY job in FIFO order for maximum concurrency.
+    /// Returns None if no files available.
+    async fn dequeue_file(&self) -> DatabaseResult<Option<DequeuedFile>>;
 
     /// Get queue depth for a job
     async fn get_queue_depth(&self, job_id: &Uuid) -> DatabaseResult<i64>;
+
+    /// Atomically increment job progress after processing a file
+    async fn increment_job_progress(
+        &self,
+        job_id: &Uuid,
+        files_delta: i32,
+        chunks_delta: i32,
+    ) -> DatabaseResult<()>;
+
+    /// Mark a file as completed in the queue
+    async fn mark_file_completed(&self, job_id: &Uuid, file_path: &str) -> DatabaseResult<()>;
+
+    /// Check if job is complete (no more queued or processing files)
+    async fn check_job_complete(&self, job_id: &Uuid) -> DatabaseResult<bool>;
 }

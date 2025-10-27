@@ -13,7 +13,7 @@
 #![allow(clippy::expect_used)] // Test code - expect is acceptable for setup
 
 use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::OnceCell;
 
 use codetriever_api::AppState;
 use codetriever_config::ApplicationConfig;
@@ -76,6 +76,10 @@ async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::
 }
 
 /// Test fixture that owns `AppState` and cleans up Qdrant collection
+///
+/// NOTE: BackgroundWorker is NOT spawned by default to avoid test isolation issues
+/// with the shared global queue. Tests that need async file processing should
+/// spawn their own worker (see index_rust_mini_redis_test.rs for pattern).
 pub struct TestAppState {
     state: AppState,
     collection_name: String,
@@ -177,22 +181,35 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
         Arc::clone(&shared.db_client),
     )) as Arc<dyn codetriever_search::SearchService>;
 
-    // Create indexer service directly (no factory!)
-    let tokenizer = shared.embedding_service.provider().get_tokenizer().await;
-    let code_parser = codetriever_parsing::CodeParser::new(
-        tokenizer,
-        shared.config.indexing.split_large_units,
-        shared.config.indexing.max_chunk_tokens,
-    );
-
+    // Create indexer service (handles job creation only)
+    // Background worker is spawned in bootstrap.rs for production
     let indexer = codetriever_indexing::indexing::Indexer::new(
         Arc::clone(&shared.embedding_service),
         Arc::clone(&vector_storage_trait),
         Arc::clone(&shared.file_repository),
-        code_parser,
-        &shared.config,
     );
-    let indexer_service = Arc::new(Mutex::new(indexer)) as Arc<Mutex<dyn IndexerService>>;
+    let indexer_service = Arc::new(indexer) as Arc<dyn IndexerService>;
+
+    // Spawn BackgroundWorker for processing jobs (tests need this!)
+    let tokenizer = shared.embedding_service.provider().get_tokenizer().await;
+    let code_parser = Arc::new(codetriever_parsing::CodeParser::new(
+        tokenizer,
+        shared.config.indexing.split_large_units,
+        shared.config.indexing.max_chunk_tokens,
+    ));
+
+    let worker = codetriever_indexing::BackgroundWorker::new(
+        Arc::clone(&shared.file_repository),
+        Arc::clone(&shared.embedding_service),
+        Arc::clone(&vector_storage_trait),
+        code_parser,
+        codetriever_indexing::WorkerConfig::from_app_config(&shared.config),
+    );
+
+    let worker_shutdown = worker.shutdown_handle();
+    tokio::spawn(async move {
+        worker.run().await;
+    });
 
     let state = AppState::new(
         Arc::clone(&shared.db_client),

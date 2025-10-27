@@ -4,6 +4,19 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Result from dequeuing a file from the global task queue
+#[derive(Debug, Clone)]
+pub struct DequeuedFile {
+    /// Job ID this file belongs to
+    pub job_id: Uuid,
+    /// File path within repository
+    pub file_path: String,
+    /// Full file content (UTF-8)
+    pub file_content: String,
+    /// SHA256 hash of content
+    pub content_hash: String,
+}
+
 /// Represents a repository/branch combination
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ProjectBranch {

@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::error::{DatabaseError, DatabaseErrorExt, DatabaseOperation, DatabaseResult};
 use crate::models::{
-    ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
-    RepositoryContext,
+    ChunkMetadata, DequeuedFile, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus,
+    ProjectBranch, RepositoryContext,
 };
 use crate::pool_manager::PoolManager;
 use crate::traits::FileRepository;
@@ -295,22 +295,22 @@ impl DbFileRepository {
         Ok(())
     }
 
-    /// Dequeue next file from queue (atomic with FOR UPDATE SKIP LOCKED)
+    /// Dequeue next file from global queue (atomic with FOR UPDATE SKIP LOCKED)
     ///
-    /// Returns None if no files available
+    /// Pulls the next file from ANY job in FIFO order (`created_at`). This enables
+    /// fair scheduling and maximum concurrency across multiple jobs - industry standard!
+    ///
+    /// Returns: (`job_id`, `file_path`, `file_content`, `content_hash`) or None if queue empty
     ///
     /// # Errors
     ///
     /// Returns error if database query fails
-    pub async fn dequeue_file(
-        &self,
-        job_id: &uuid::Uuid,
-    ) -> DatabaseResult<Option<(String, String, String)>> {
+    pub async fn dequeue_file(&self) -> DatabaseResult<Option<DequeuedFile>> {
         let pool = self.pools.write_pool();
         let correlation_id = None;
 
         let operation = DatabaseOperation::Query {
-            description: "dequeue_file".to_string(),
+            description: "dequeue_file_global".to_string(),
         };
 
         let row = sqlx::query(
@@ -319,29 +319,27 @@ impl DbFileRepository {
             SET status = 'processing', started_at = NOW()
             WHERE id = (
                 SELECT id FROM indexing_job_file_queue
-                WHERE job_id = $1 AND status = 'queued'
+                WHERE status = 'queued'
                 ORDER BY priority DESC, created_at ASC
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             )
-            RETURNING file_path, file_content, content_hash
+            RETURNING job_id, file_path, file_content, content_hash
             ",
         )
-        .bind(job_id)
         .fetch_optional(pool)
         .await
         .map_db_err(operation, correlation_id)?;
 
-        Ok(row.map(|r| {
-            (
-                r.get("file_path"),
-                r.get("file_content"),
-                r.get("content_hash"),
-            )
+        Ok(row.map(|r| DequeuedFile {
+            job_id: r.get("job_id"),
+            file_path: r.get("file_path"),
+            file_content: r.get("file_content"),
+            content_hash: r.get("content_hash"),
         }))
     }
 
-    /// Get queue depth for a job
+    /// Get queue depth for a job (count of queued + processing files)
     ///
     /// # Errors
     ///
@@ -358,7 +356,7 @@ impl DbFileRepository {
             r"
             SELECT COUNT(*) as count
             FROM indexing_job_file_queue
-            WHERE job_id = $1 AND status = 'queued'
+            WHERE job_id = $1 AND status IN ('queued', 'processing')
             ",
         )
         .bind(job_id)
@@ -367,6 +365,85 @@ impl DbFileRepository {
         .map_db_err(operation, correlation_id)?;
 
         Ok(row.get("count"))
+    }
+
+    /// Atomically increment job progress after processing a file
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database update fails
+    pub async fn increment_job_progress(
+        &self,
+        job_id: &uuid::Uuid,
+        files_delta: i32,
+        chunks_delta: i32,
+    ) -> DatabaseResult<()> {
+        let pool = self.pools.write_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::Query {
+            description: "increment_job_progress".to_string(),
+        };
+
+        sqlx::query(
+            r"
+            UPDATE indexing_jobs
+            SET files_processed = files_processed + $2,
+                chunks_created = chunks_created + $3
+            WHERE job_id = $1
+            ",
+        )
+        .bind(job_id)
+        .bind(files_delta)
+        .bind(chunks_delta)
+        .execute(pool)
+        .await
+        .map_db_err(operation, correlation_id)?;
+
+        Ok(())
+    }
+
+    /// Mark a file as completed in the queue after successful processing
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database update fails
+    pub async fn mark_file_completed(
+        &self,
+        job_id: &uuid::Uuid,
+        file_path: &str,
+    ) -> DatabaseResult<()> {
+        let pool = self.pools.write_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::Query {
+            description: "mark_file_completed".to_string(),
+        };
+
+        sqlx::query(
+            r"
+            UPDATE indexing_job_file_queue
+            SET status = 'completed', completed_at = NOW()
+            WHERE job_id = $1 AND file_path = $2 AND status = 'processing'
+            ",
+        )
+        .bind(job_id)
+        .bind(file_path)
+        .execute(pool)
+        .await
+        .map_db_err(operation, correlation_id)?;
+
+        Ok(())
+    }
+
+    /// Check if job is complete (no more queued or processing files)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database query fails
+    pub async fn check_job_complete(&self, job_id: &uuid::Uuid) -> DatabaseResult<bool> {
+        let depth = self.get_queue_depth(job_id).await?;
+        Ok(depth == 0)
     }
 
     /// Get indexing job by ID
@@ -1295,15 +1372,30 @@ impl FileRepository for DbFileRepository {
         .await
     }
 
-    async fn dequeue_file(
-        &self,
-        job_id: &Uuid,
-    ) -> DatabaseResult<Option<(String, String, String)>> {
-        self.dequeue_file(job_id).await
+    async fn dequeue_file(&self) -> DatabaseResult<Option<DequeuedFile>> {
+        self.dequeue_file().await
     }
 
     async fn get_queue_depth(&self, job_id: &Uuid) -> DatabaseResult<i64> {
         self.get_queue_depth(job_id).await
+    }
+
+    async fn increment_job_progress(
+        &self,
+        job_id: &Uuid,
+        files_delta: i32,
+        chunks_delta: i32,
+    ) -> DatabaseResult<()> {
+        self.increment_job_progress(job_id, files_delta, chunks_delta)
+            .await
+    }
+
+    async fn mark_file_completed(&self, job_id: &Uuid, file_path: &str) -> DatabaseResult<()> {
+        self.mark_file_completed(job_id, file_path).await
+    }
+
+    async fn check_job_complete(&self, job_id: &Uuid) -> DatabaseResult<bool> {
+        self.check_job_complete(job_id).await
     }
 
     async fn get_indexing_job(&self, job_id: &Uuid) -> DatabaseResult<Option<IndexingJob>> {
@@ -1345,13 +1437,10 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::expect_used)] // Tests can use expect
     async fn test_dequeue_file_empty_queue() {
-        let job_id = Uuid::new_v4();
         let mock_repo = crate::mock::MockFileRepository::new();
 
-        let result = mock_repo
-            .dequeue_file(&job_id)
-            .await
-            .expect("Should not error");
+        // Test global queue dequeue (no job_id filter)
+        let result = mock_repo.dequeue_file().await.expect("Should not error");
 
         assert!(result.is_none(), "Empty queue should return None");
     }

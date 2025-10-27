@@ -64,17 +64,17 @@ fn test_postgres_queue_push_and_pop() {
             .expect("Failed to get queue depth");
         assert_eq!(depth, 1, "Queue should have 1 file");
 
-        // Pop from queue
+        // Pop from queue (global FIFO, no job_id filter)
         let result = repository
-            .dequeue_file(&job_id)
+            .dequeue_file()
             .await
             .expect("Failed to dequeue file");
 
         assert!(result.is_some(), "Should dequeue a file");
-        let (path, content, hash) = result.unwrap();
-        assert_eq!(path, file.path);
-        assert_eq!(content, file.content);
-        assert_eq!(hash, file.hash);
+        let dequeued = result.unwrap();
+        assert_eq!(dequeued.file_path, file.path);
+        assert_eq!(dequeued.file_content, file.content);
+        assert_eq!(dequeued.content_hash, file.hash);
 
         // Queue should be empty now
         let depth = repository
@@ -85,7 +85,7 @@ fn test_postgres_queue_push_and_pop() {
 
         // Pop again should return None
         let result = repository
-            .dequeue_file(&job_id)
+            .dequeue_file()
             .await
             .expect("Failed to dequeue from empty queue");
         assert!(result.is_none(), "Empty queue should return None");
@@ -140,13 +140,12 @@ fn test_postgres_queue_concurrent_workers() {
         let mut handles = vec![];
         for worker_id in 0..3 {
             let repo = repository.clone();
-            let job = job_id;
             let handle = tokio::spawn(async move {
                 let mut processed = vec![];
                 loop {
-                    match repo.dequeue_file(&job).await {
-                        Ok(Some((path, _, _))) => {
-                            processed.push(path);
+                    match repo.dequeue_file().await {
+                        Ok(Some(dequeued)) => {
+                            processed.push(dequeued.file_path);
                         }
                         Ok(None) => break, // Queue empty
                         Err(e) => panic!("Worker {worker_id} failed: {e}"),
@@ -231,14 +230,8 @@ fn test_postgres_queue_crash_recovery() {
         assert_eq!(depth, 5, "Should have 5 queued files");
 
         // Process 2 files (simulate partial work before crash)
-        repository
-            .dequeue_file(&job_id)
-            .await
-            .expect("Should dequeue");
-        repository
-            .dequeue_file(&job_id)
-            .await
-            .expect("Should dequeue");
+        repository.dequeue_file().await.expect("Should dequeue");
+        repository.dequeue_file().await.expect("Should dequeue");
 
         // SIMULATE CRASH: Drop everything, create new repository instance
         drop(repository);
@@ -259,7 +252,7 @@ fn test_postgres_queue_crash_recovery() {
 
         // Process remaining files
         for _ in 0..3 {
-            let result = repository_after_crash.dequeue_file(&job_id).await;
+            let result = repository_after_crash.dequeue_file().await;
             assert!(
                 result.is_ok() && result.unwrap().is_some(),
                 "Should dequeue remaining files"

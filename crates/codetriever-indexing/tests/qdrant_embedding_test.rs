@@ -64,16 +64,14 @@ fn test_indexer_stores_chunks_in_qdrant() {
 
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
+        let vector_storage =
+            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
-        // Load tokenizer for accurate chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
-            embedding_service,
-            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
-            repository,
-            code_parser,
-            &config,
-        );
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn codetriever_indexing::indexing::IndexerService>;
 
         // Index a small test repo (mini-redis has ~30 Rust files)
         // Use CARGO_MANIFEST_DIR to find the workspace root reliably
@@ -104,34 +102,46 @@ fn test_indexer_stores_chunks_in_qdrant() {
             .as_millis();
         let project_id = format!("test-indexer-{timestamp}:main");
 
+        // Use async job pattern with BackgroundWorker
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
         let start = std::time::Instant::now();
-        let result = indexer
-            .index_file_content(&project_id, files)
-            .await
-            .expect("Failed to index files");
+        let (_job_id, job_status) = test_utils::index_files_async(
+            &indexer,
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            code_parser,
+            &config,
+            &project_id,
+            files,
+        )
+        .await;
         let duration = start.elapsed();
 
         println!("Indexing stats:");
-        println!("  Files indexed: {}", result.files_indexed);
-        println!("  Chunks created: {}", result.chunks_created);
-        println!("  Chunks stored: {}", result.chunks_stored);
+        println!("  Files indexed: {}", job_status.files_processed);
+        println!("  Chunks created: {}", job_status.chunks_created);
+        println!("  Chunks stored: {}", job_status.chunks_created);
         println!("  Time taken: {duration:.2?}");
         println!(
             "  Speed: {:.2} chunks/sec",
-            result.chunks_created as f64 / duration.as_secs_f64()
+            job_status.chunks_created as f64 / duration.as_secs_f64()
         );
 
-        assert!(result.files_indexed > 0, "Should index at least one file");
-        assert!(result.chunks_created > 0, "Should create chunks");
         assert!(
-            result.chunks_stored > 0,
+            job_status.files_processed > 0,
+            "Should index at least one file"
+        );
+        assert!(job_status.chunks_created > 0, "Should create chunks");
+        assert!(
+            job_status.chunks_created > 0,
             "Chunks should be stored in Qdrant"
         );
 
         // Verify we can search for the indexed content
         let query = "redis connection";
-        let embedding_service = indexer.embedding_service();
-        let vector_storage = indexer.vector_storage();
+        // Use the embedding_service and vector_storage from earlier
 
         // Create database client for search
         let db_config = codetriever_config::DatabaseConfig::from_env();

@@ -4,15 +4,14 @@
 //! that are initialized once at startup and passed to all handlers.
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use codetriever_indexing::IndexerService;
 use codetriever_meta_data::DataClient;
 use codetriever_search::SearchService;
 use codetriever_vector_data::VectorStorage;
 
-/// Type alias for indexer service handle to simplify complex Arc<Mutex<dyn>> type
-pub type IndexerServiceHandle = Arc<Mutex<dyn IndexerService>>;
+/// Type alias for indexer service handle (no mutex - API methods use &self!)
+pub type IndexerServiceHandle = Arc<dyn IndexerService>;
 
 /// Application state containing all shared services
 ///

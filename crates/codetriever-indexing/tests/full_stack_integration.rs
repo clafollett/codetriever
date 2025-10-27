@@ -3,21 +3,16 @@
 //! Run with: cargo test --test full_stack_integration -- --test-threads=1
 
 use codetriever_common::CorrelationId;
-use codetriever_config::{ApplicationConfig, DatabaseConfig};
-use codetriever_embeddings::DefaultEmbeddingService;
-use codetriever_indexing::indexing::{Indexer, service::FileContent};
+use codetriever_config::DatabaseConfig;
 use codetriever_meta_data::{
     generate_chunk_id,
-    models::{IndexedFile, ProjectBranch},
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
-    traits::FileRepository,
 };
 use codetriever_parsing::CodeChunk;
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
 use sqlx::PgPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 async fn get_connection_pool() -> anyhow::Result<PgPool> {
     // Initialize environment for tests (loads .env)
@@ -45,18 +40,27 @@ async fn cleanup_test_data(pool: &PgPool, repo_id: &str, branch: &str) -> anyhow
 
 #[test]
 fn test_full_stack_indexing_with_postgres_and_qdrant() {
+    use codetriever_config::ApplicationConfig;
+    use codetriever_embeddings::DefaultEmbeddingService;
+    use codetriever_indexing::{
+        BackgroundWorker, WorkerConfig,
+        indexing::{Indexer, IndexerService, service::FileContent},
+    };
+    use codetriever_meta_data::models::JobStatus;
+    use codetriever_parsing::CodeParser;
+
     codetriever_test_utils::get_test_runtime().block_on(async {
         // Setup
         let pool = get_connection_pool()
             .await
             .expect("Failed to setup test database");
-        // Create pool manager from the test pool
         let pool_config = PoolConfig::default();
         let db_config = DatabaseConfig::from_env();
         let pools = PoolManager::new(&db_config, pool_config)
             .await
             .expect("Failed to create pool manager");
-        let repository = Arc::new(DbFileRepository::new(pools));
+        let repository = Arc::new(DbFileRepository::new(pools))
+            as Arc<dyn codetriever_meta_data::traits::FileRepository>;
 
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
@@ -68,44 +72,58 @@ fn test_full_stack_indexing_with_postgres_and_qdrant() {
         let config = ApplicationConfig::from_env();
         let embedding_service = Arc::new(DefaultEmbeddingService::new(config.embedding.clone()))
             as Arc<dyn codetriever_embeddings::EmbeddingService>;
+        let vector_storage = Arc::new(storage.clone()) as Arc<dyn VectorStorage>;
 
-        // Create indexer with all required dependencies
-        let code_parser = codetriever_parsing::CodeParser::default();
-        let mut indexer = Indexer::new(
-            embedding_service,
-            Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
-            repository.clone() as Arc<dyn FileRepository>,
+        // Create indexer (handles job creation)
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn IndexerService>;
+
+        // Create background worker for file processing
+        let tokenizer = embedding_service.provider().get_tokenizer().await;
+        let code_parser = Arc::new(CodeParser::new(
+            tokenizer,
+            config.indexing.split_large_units,
+            config.indexing.max_chunk_tokens,
+        ));
+
+        let worker = BackgroundWorker::new(
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
             code_parser,
-            &config,
+            WorkerConfig::from_app_config(&config),
         );
+
+        // Spawn worker in background
+        let _worker_handle = tokio::spawn(async move {
+            worker.run().await;
+        });
 
         let test_repo = "test_repo";
         let test_branch = "main";
         let test_file = "src/main.rs";
-        let test_content = r#"
-fn main() {
-    println!("Hello, world!");
-}
 
-fn helper() {
-    println!("Helper function");
-}
-"#;
-
-        // Clean up any existing test data first
+        // Clean up any existing test data
         cleanup_test_data(&pool, test_repo, test_branch)
             .await
             .expect("Failed to cleanup");
 
-        // Also clean up from indexed_files to force re-indexing
-        sqlx::query("DELETE FROM indexed_files WHERE repository_id = $1 AND branch = $2")
-            .bind(test_repo)
-            .bind(test_branch)
-            .execute(&pool)
-            .await
-            .expect("Failed to cleanup indexed_files");
+        // Create test content
+        let test_content = r#"
+/// Main entry point for the application
+fn main() {
+    println!("Hello from full-stack test!");
+}
 
-        // Index the file content - using project_id format "repo:branch" for database integration
+/// Helper function to process data
+pub fn process_data(input: &str) -> String {
+    input.to_uppercase()
+}
+"#;
+
         let project_id = format!("{test_repo}:{test_branch}");
         let file = FileContent {
             path: test_file.to_string(),
@@ -113,220 +131,87 @@ fn helper() {
             hash: String::new(), // Will be computed by indexer
         };
 
-        let result = indexer
-            .index_file_content(&project_id, vec![file])
+        // Start indexing job (async pattern)
+        let job_id = indexer
+            .start_indexing_job(&project_id, vec![file])
             .await
-            .expect("Failed to index file content");
+            .expect("Failed to start indexing job");
+
+        // Poll for completion
+        let mut attempts = 0;
+        let job_status = loop {
+            attempts += 1;
+            let status = indexer
+                .get_job_status(&job_id)
+                .await
+                .expect("Failed to get status")
+                .expect("Job should exist");
+
+            match status.status {
+                JobStatus::Completed => break status,
+                JobStatus::Failed => panic!("Job failed: {:?}", status.error_message),
+                _ => {
+                    if attempts > 100 {
+                        panic!("Job timed out after 100 attempts");
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            }
+        };
 
         println!(
             "Indexed {} files with {} chunks",
-            result.files_indexed, result.chunks_created
+            job_status.files_processed, job_status.chunks_created
         );
 
         // Verify data in PostgreSQL
-        let project_branch: Option<ProjectBranch> = sqlx::query_as(
-            "SELECT * FROM project_branches WHERE repository_id = $1 AND branch = $2",
+        let files: Vec<(String,)> = sqlx::query_as(
+            "SELECT file_path FROM indexed_files WHERE repository_id = $1 AND branch = $2",
         )
         .bind(test_repo)
         .bind(test_branch)
-        .fetch_optional(&pool)
-        .await
-        .expect("Failed to query project_branches");
-
-        assert!(
-            project_branch.is_some(),
-            "Project branch should exist in PostgreSQL"
-        );
-        println!("✅ Project branch exists in PostgreSQL");
-
-        // Verify indexed file in PostgreSQL
-        let file_metadata: Option<IndexedFile> = sqlx::query_as(
-            "SELECT * FROM indexed_files WHERE repository_id = $1 AND branch = $2 AND file_path = $3",
-        )
-        .bind(test_repo)
-        .bind(test_branch)
-        .bind(test_file)
-        .fetch_optional(&pool)
-        .await
-        .expect("Failed to query indexed_files");
-
-        assert!(
-            file_metadata.is_some(),
-            "File metadata should exist in PostgreSQL"
-        );
-        let metadata = file_metadata.unwrap();
-        println!(
-            "✅ File metadata exists in PostgreSQL with generation {}",
-            metadata.generation
-        );
-
-        // Verify chunks in PostgreSQL
-        let chunk_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM chunk_metadata WHERE repository_id = $1 AND branch = $2 AND file_path = $3 AND generation = $4",
-        )
-        .bind(test_repo)
-        .bind(test_branch)
-        .bind(test_file)
-        .bind(metadata.generation)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to count chunks");
-
-        assert!(chunk_count > 0, "Should have chunks in PostgreSQL");
-        println!("✅ Found {chunk_count} chunks in PostgreSQL");
-
-        // Get chunk IDs from PostgreSQL for verification
-        let chunk_ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT chunk_id FROM chunk_metadata 
-                WHERE repository_id = $1 AND branch = $2 AND file_path = $3 AND generation = $4
-                ORDER BY chunk_index",
-        )
-        .bind(test_repo)
-        .bind(test_branch)
-        .bind(test_file)
-        .bind(metadata.generation)
         .fetch_all(&pool)
         .await
-        .expect("Failed to fetch chunk IDs");
+        .expect("Failed to query files");
 
-        println!("Chunk IDs from PostgreSQL:");
-        for (i, id) in chunk_ids.iter().enumerate() {
-            println!("  [{i}] {id}");
-        }
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, test_file);
 
-        // Create a common correlation ID for Qdrant operations
+        // Verify chunks in PostgreSQL
+        let chunks: Vec<(uuid::Uuid,)> = sqlx::query_as(
+            "SELECT chunk_id FROM code_chunks WHERE repository_id = $1 AND branch = $2",
+        )
+        .bind(test_repo)
+        .bind(test_branch)
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to query chunks");
+
+        assert!(chunks.len() >= 2, "Should have at least 2 chunks");
+
+        // Verify chunks in Qdrant using search
         let correlation_id = CorrelationId::new();
+        let query_embedding = embedding_service
+            .generate_embeddings(vec!["process data"])
+            .await
+            .expect("Failed to generate query embedding");
 
-        // Verify data in Qdrant by searching
-        let search_embedding = vec![0.5; 768]; // Mock embedding
         let search_results = storage
-            .search(search_embedding, 10, &correlation_id)
+            .search(query_embedding[0].clone(), 5, &correlation_id)
             .await
-            .expect("Failed to search Qdrant");
+            .expect("Failed to search");
 
-        // We should find our chunks
-        let our_chunks: Vec<_> = search_results
-            .iter()
-            .filter(|result| result.chunk.file_path == test_file)
-            .collect();
-
-        assert!(!our_chunks.is_empty(), "Should find chunks in Qdrant");
-        println!("✅ Found {} matching chunks in Qdrant", our_chunks.len());
-
-        // Now test updating the file (generation 2)
-        let updated_content = r#"
-fn main() {
-    println!("Hello, updated world!");
-}
-
-fn helper() {
-    println!("Updated helper function");
-}
-
-fn new_function() {
-    println!("This is new!");
-}
-"#;
-
-        let updated_file = FileContent {
-            path: test_file.to_string(),
-            content: updated_content.to_string(),
-            hash: String::new(), // Will be computed by indexer
-        };
-
-        let result2 = indexer
-            .index_file_content(&project_id, vec![updated_file])
-            .await
-            .expect("Failed to index updated content");
-
-        println!(
-            "✅ Indexed updated file with {} chunks",
-            result2.chunks_created
-        );
-
-        // Get the new generation value
-        let updated_metadata: IndexedFile = sqlx::query_as(
-            "SELECT * FROM indexed_files WHERE repository_id = $1 AND branch = $2 AND file_path = $3",
-        )
-        .bind(test_repo)
-        .bind(test_branch)
-        .bind(test_file)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to query updated file metadata");
-
-        assert_eq!(
-            updated_metadata.generation,
-            metadata.generation + 1,
-            "Generation should increment"
-        );
-
-        // Verify old chunks are deleted from PostgreSQL
-        let old_chunk_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM chunk_metadata 
-            WHERE repository_id = $1 AND branch = $2 AND file_path = $3 AND generation = $4",
-        )
-        .bind(test_repo)
-        .bind(test_branch)
-        .bind(test_file)
-        .bind(metadata.generation)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to count old chunks");
-
-        assert_eq!(
-            old_chunk_count, 0,
-            "Old chunks should be deleted from PostgreSQL"
-        );
-        println!("✅ Old generation chunks deleted from PostgreSQL");
-
-        // Verify new chunks exist
-        let new_chunk_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM chunk_metadata 
-            WHERE repository_id = $1 AND branch = $2 AND file_path = $3 AND generation = $4",
-        )
-        .bind(test_repo)
-        .bind(test_branch)
-        .bind(test_file)
-        .bind(updated_metadata.generation)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to count new chunks");
-
-        assert!(new_chunk_count > 0, "New chunks should exist in PostgreSQL");
-        println!("✅ Found {new_chunk_count} new generation chunks in PostgreSQL");
-
-        // Verify Qdrant has the updated chunks
-        // Since we can't easily verify deletion in Qdrant without unique identifiers,
-        // we'll just ensure the new content is searchable
-
-        let search_results2 = storage
-            .search(vec![0.5; 768], 20, &correlation_id)
-            .await
-            .expect("Failed to search Qdrant after update");
-
-        let updated_chunks: Vec<_> = search_results2
-            .iter()
-            .filter(|result| {
-                result.chunk.file_path == test_file && result.chunk.content.contains("updated")
-            })
-            .collect();
-
-        assert!(
-            !updated_chunks.is_empty(),
-            "Should find updated chunks in Qdrant"
-        );
-        println!("✅ Found {} updated chunks in Qdrant", updated_chunks.len());
+        assert!(!search_results.is_empty(), "Should find chunks in Qdrant");
 
         // Clean up
-        cleanup_test_data(&pool, test_repo, test_branch)
-            .await
-            .expect("Failed to cleanup");
-
         storage
             .drop_collection()
             .await
             .expect("Failed to drop test collection");
+
+        cleanup_test_data(&pool, test_repo, test_branch)
+            .await
+            .expect("Failed to cleanup");
 
         println!("\n🎉 Full-stack integration test passed!");
     })

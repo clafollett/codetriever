@@ -397,10 +397,7 @@ impl FileRepository for MockFileRepository {
         Ok(())
     }
 
-    async fn dequeue_file(
-        &self,
-        _job_id: &Uuid,
-    ) -> DatabaseResult<Option<(String, String, String)>> {
+    async fn dequeue_file(&self) -> DatabaseResult<Option<crate::models::DequeuedFile>> {
         self.check_fail()?;
         // Mock returns None (empty queue)
         Ok(None)
@@ -409,6 +406,21 @@ impl FileRepository for MockFileRepository {
     async fn get_queue_depth(&self, _job_id: &Uuid) -> DatabaseResult<i64> {
         self.check_fail()?;
         Ok(0)
+    }
+
+    async fn increment_job_progress(
+        &self,
+        _job_id: &Uuid,
+        _files_delta: i32,
+        _chunks_delta: i32,
+    ) -> DatabaseResult<()> {
+        self.check_fail()?;
+        Ok(())
+    }
+
+    async fn check_job_complete(&self, _job_id: &Uuid) -> DatabaseResult<bool> {
+        self.check_fail()?;
+        Ok(true) // Mock always returns complete
     }
 
     async fn get_indexing_job(&self, _job_id: &Uuid) -> DatabaseResult<Option<IndexingJob>> {
@@ -422,6 +434,15 @@ impl FileRepository for MockFileRepository {
     ) -> DatabaseResult<Vec<IndexingJob>> {
         self.check_fail()?;
         Ok(vec![])
+    }
+
+    async fn mark_file_completed(
+        &self,
+        _job_id: &uuid::Uuid,
+        _file_path: &str,
+    ) -> DatabaseResult<()> {
+        self.check_fail()?;
+        Ok(())
     }
 }
 

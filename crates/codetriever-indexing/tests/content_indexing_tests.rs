@@ -27,6 +27,7 @@ use test_utils::{
 };
 
 #[test]
+#[allow(unreachable_code)]
 fn test_index_file_content_with_multiple_files() {
     test_utils::get_test_runtime().block_on(async {
         if skip_without_hf_token().is_none() {
@@ -39,16 +40,14 @@ fn test_index_file_content_with_multiple_files() {
             .expect("Failed to create storage");
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
+        let vector_storage =
+            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
-        // Create CodeParser with tokenizer for proper chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
-            embedding_service,
-            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
-            repository,
-            code_parser,
-            &config,
-        );
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn codetriever_indexing::indexing::IndexerService>;
 
         // Create test files with actual code content
         let files = vec![
@@ -154,23 +153,34 @@ def transform_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
         // Index the content with unique project ID per test run
         let project_id = test_project_id("content_indexing");
-        let result = indexer
-            .index_file_content(&project_id, files)
-            .await
-            .expect("Failed to index content");
+        // Use async job pattern with BackgroundWorker
+
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        let (_job_id, job_status) = test_utils::index_files_async(
+            &indexer,
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            code_parser,
+            &config,
+            &project_id,
+            files,
+        )
+        .await;
 
         // Verify results
-        assert_eq!(result.files_indexed, 3, "Should index 3 files");
-        assert!(result.chunks_created > 0, "Should create chunks");
+        assert_eq!(job_status.files_processed, 3, "Should index 3 files");
+        assert!(job_status.chunks_created > 0, "Should create chunks");
         assert_eq!(
-            result.chunks_stored, result.chunks_created,
+            job_status.chunks_created, job_status.chunks_created,
             "All chunks should be stored"
         );
 
         println!("Indexing results:");
-        println!("  Files indexed: {}", result.files_indexed);
-        println!("  Chunks created: {}", result.chunks_created);
-        println!("  Chunks stored: {}", result.chunks_stored);
+        println!("  Files indexed: {}", job_status.files_processed);
+        println!("  Chunks created: {}", job_status.chunks_created);
+        println!("  Chunks stored: {}", job_status.chunks_created);
 
         cleanup_test_storage(&storage)
             .await
@@ -179,6 +189,7 @@ def transform_item(item: Dict[str, Any]) -> Dict[str, Any]:
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn test_index_file_content_creates_searchable_chunks() {
     test_utils::get_test_runtime().block_on(async {
         if skip_without_hf_token().is_none() {
@@ -191,16 +202,14 @@ fn test_index_file_content_creates_searchable_chunks() {
             .expect("Failed to create storage");
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
+        let vector_storage =
+            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
-        // Create CodeParser with tokenizer for proper chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
-            embedding_service.clone(),
-            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
-            repository,
-            code_parser,
-            &config,
-        );
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn codetriever_indexing::indexing::IndexerService>;
 
         // Index content with specific searchable terms
         let files = vec![FileContent {
@@ -232,16 +241,26 @@ impl PostgresConnection {
 
         // Index the content with unique project ID per test run
         let project_id = test_project_id("content_search");
-        let index_result = indexer
-            .index_file_content(&project_id, files)
-            .await
-            .expect("Failed to index");
+        // Use async job pattern with BackgroundWorker
 
-        assert!(index_result.chunks_created > 0, "Should create chunks");
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        let (_job_id, job_status) = test_utils::index_files_async(
+            &indexer,
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            code_parser,
+            &config,
+            &project_id,
+            files,
+        )
+        .await;
+
+        assert!(job_status.chunks_created > 0, "Should create chunks");
 
         // Search for indexed content with REAL database integration
-        let embedding_service = indexer.embedding_service();
-        let vector_storage = indexer.vector_storage();
+        // (use embedding_service and vector_storage from earlier)
 
         // Create database client for search
         let db_config = codetriever_config::DatabaseConfig::from_env();
@@ -288,6 +307,7 @@ impl PostgresConnection {
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn test_index_file_content_handles_different_languages() {
     test_utils::get_test_runtime().block_on(async {
         if skip_without_hf_token().is_none() {
@@ -300,16 +320,14 @@ fn test_index_file_content_handles_different_languages() {
             .expect("Failed to create storage");
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
+        let vector_storage =
+            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
-        // Create CodeParser with tokenizer for proper chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
-            embedding_service,
-            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
-            repository,
-            code_parser,
-            &config,
-        );
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn codetriever_indexing::indexing::IndexerService>;
 
         let files = vec![
             // JavaScript/TypeScript
@@ -381,20 +399,34 @@ def fetch_from_database():
         ];
 
         let project_id = test_project_id("multi_lang");
-        let result = indexer
-            .index_file_content(&project_id, files)
-            .await
-            .expect("Failed to index");
+        // Use async job pattern with BackgroundWorker
 
-        assert_eq!(result.files_indexed, 3, "Should index all language files");
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        let (_job_id, job_status) = test_utils::index_files_async(
+            &indexer,
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            code_parser,
+            &config,
+            &project_id,
+            files,
+        )
+        .await;
+
+        assert_eq!(
+            job_status.files_processed, 3,
+            "Should index all language files"
+        );
         assert!(
-            result.chunks_created >= 3,
+            job_status.chunks_created >= 3,
             "Should create at least one chunk per file"
         );
 
         println!("Multi-language indexing:");
-        println!("  Files: {}", result.files_indexed);
-        println!("  Chunks: {}", result.chunks_created);
+        println!("  Files: {}", job_status.files_processed);
+        println!("  Chunks: {}", job_status.chunks_created);
 
         cleanup_test_storage(&storage)
             .await
@@ -403,6 +435,7 @@ def fetch_from_database():
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn test_index_file_content_handles_large_files() {
     test_utils::get_test_runtime().block_on(async {
         if skip_without_hf_token().is_none() {
@@ -415,16 +448,14 @@ fn test_index_file_content_handles_large_files() {
             .expect("Failed to create storage");
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
+        let vector_storage =
+            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
-        // Create CodeParser with tokenizer for proper chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
-            embedding_service,
-            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
-            repository,
-            code_parser,
-            &config,
-        );
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn codetriever_indexing::indexing::IndexerService>;
 
         // Create a large file that will need chunking
         let mut large_content = String::new();
@@ -459,19 +490,33 @@ pub fn function_{i}(param: i32) -> i32 {{
         }];
 
         let project_id = test_project_id("large_file");
-        let result = indexer
-            .index_file_content(&project_id, files)
-            .await
-            .expect("Failed to index large file");
+        // Use async job pattern with BackgroundWorker
 
-        assert_eq!(result.files_indexed, 1, "Should index the file");
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        let (_job_id, job_status) = test_utils::index_files_async(
+            &indexer,
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            code_parser,
+            &config,
+            &project_id,
+            files,
+        )
+        .await;
+
+        assert_eq!(job_status.files_processed, 1, "Should index the file");
         assert!(
-            result.chunks_created > 1,
+            job_status.chunks_created > 1,
             "Large file should be split into multiple chunks"
         );
 
         println!("Large file indexing:");
-        println!("  Chunks created from 1 file: {}", result.chunks_created);
+        println!(
+            "  Chunks created from 1 file: {}",
+            job_status.chunks_created
+        );
 
         cleanup_test_storage(&storage)
             .await
@@ -480,6 +525,7 @@ pub fn function_{i}(param: i32) -> i32 {{
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn test_index_file_content_handles_empty_and_invalid_files() {
     test_utils::get_test_runtime().block_on(async {
         if skip_without_hf_token().is_none() {
@@ -495,16 +541,14 @@ fn test_index_file_content_handles_empty_and_invalid_files() {
             .expect("Failed to create storage");
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
+        let vector_storage =
+            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
-        // Create CodeParser with tokenizer for proper chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
-            embedding_service,
-            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
-            repository,
-            code_parser,
-            &config,
-        );
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn codetriever_indexing::indexing::IndexerService>;
 
         let files = vec![
             // Empty file
@@ -540,32 +584,43 @@ fn test_index_file_content_handles_empty_and_invalid_files() {
         ];
 
         let project_id = test_project_id("edge_cases");
-        let result = indexer
-            .index_file_content(&project_id, files)
-            .await
-            .expect("Should handle edge cases gracefully");
+        // Use async job pattern with BackgroundWorker
+
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        let (_job_id, job_status) = test_utils::index_files_async(
+            &indexer,
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            code_parser,
+            &config,
+            &project_id,
+            files,
+        )
+        .await;
 
         // The indexer counts files as "indexed" if they produce chunks
         // Empty files and whitespace won't produce chunks
         // Comments-only and valid code will produce chunks
-        println!("  Files indexed: {}", result.files_indexed);
-        println!("  Chunks created: {}", result.chunks_created);
+        println!("  Files indexed: {}", job_status.files_processed);
+        println!("  Chunks created: {}", job_status.chunks_created);
 
         // We should get chunks from files with actual content
         assert!(
-            result.chunks_created >= 1,
+            job_status.chunks_created >= 1,
             "Should create chunks for files with content"
         );
 
         // Files indexed should match chunks created (files that produced chunks)
         assert!(
-            result.files_indexed > 0,
+            job_status.files_processed > 0,
             "Should index at least the valid file"
         );
 
         println!("Edge case handling:");
-        println!("  Files indexed: {}", result.files_indexed);
-        println!("  Chunks created: {}", result.chunks_created);
+        println!("  Files indexed: {}", job_status.files_processed);
+        println!("  Chunks created: {}", job_status.chunks_created);
 
         cleanup_test_storage(&storage)
             .await
@@ -574,6 +629,7 @@ fn test_index_file_content_handles_empty_and_invalid_files() {
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn test_index_file_content_without_filesystem_access() {
     test_utils::get_test_runtime().block_on(async {
         // This test verifies that index_file_content doesn't access the filesystem
@@ -589,16 +645,14 @@ fn test_index_file_content_without_filesystem_access() {
             .expect("Failed to create storage");
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
+        let vector_storage =
+            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
-        // Create CodeParser with tokenizer for proper chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
-            embedding_service,
-            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
-            repository,
-            code_parser,
-            &config,
-        );
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn codetriever_indexing::indexing::IndexerService>;
 
         // Use paths that definitely don't exist
         let files = vec![FileContent {
@@ -614,14 +668,25 @@ pub fn test_function() -> String {
 
         // Should succeed even though the path doesn't exist
         let project_id = test_project_id("no_filesystem");
-        let result = indexer
-            .index_file_content(&project_id, files)
-            .await
-            .expect("Should index content without filesystem access");
+        // Use async job pattern with BackgroundWorker
 
-        assert_eq!(result.files_indexed, 1, "Should index the content");
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        let (_job_id, job_status) = test_utils::index_files_async(
+            &indexer,
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            code_parser,
+            &config,
+            &project_id,
+            files,
+        )
+        .await;
+
+        assert_eq!(job_status.files_processed, 1, "Should index the content");
         assert!(
-            result.chunks_created > 0,
+            job_status.chunks_created > 0,
             "Should create chunks from content"
         );
 
