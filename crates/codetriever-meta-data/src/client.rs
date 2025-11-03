@@ -119,6 +119,7 @@ impl DataClient {
     pub async fn enqueue_file(
         &self,
         job_id: &uuid::Uuid,
+        tenant_id: &uuid::Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -128,6 +129,7 @@ impl DataClient {
         self.repository
             .enqueue_file(
                 job_id,
+                tenant_id,
                 repository_id,
                 branch,
                 file_path,
@@ -137,9 +139,10 @@ impl DataClient {
             .await
     }
 
-    /// Dequeue next file from queue (atomic operation)
+    /// Dequeue next file from global queue (atomic operation)
     ///
-    /// Returns `None` if no files available
+    /// Returns file from ANY tenant - `tenant_id` is in the returned file payload.
+    /// Returns `None` if no files available in queue.
     ///
     /// # Errors
     ///

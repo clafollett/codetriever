@@ -52,12 +52,8 @@ async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::
     eprintln!("🔧 Creating database pools...");
     let pools = PoolManager::new(&config.database, PoolConfig::default()).await?;
     let db_client = Arc::new(DataClient::new(pools.clone()));
-    eprintln!("✅ Database pools created");
-
-    // Create shared file repository (uses same pools)
-    eprintln!("🔧 Creating file repository...");
     let file_repository = Arc::new(DbFileRepository::new(pools)) as Arc<dyn FileRepository>;
-    eprintln!("✅ File repository created");
+    eprintln!("✅ Database pools and file repository created");
 
     // Get SHARED embedding service from codetriever-test-utils
     // This is initialized ONCE across ALL test crates (prevents 28GB+ RAM usage)
@@ -75,13 +71,62 @@ async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::
     })
 }
 
+/// Spawn a `BackgroundWorker` for a test that needs async file processing
+///
+/// Returns shutdown handle for graceful cleanup
+///
+/// # Errors
+///
+/// Returns error if worker initialization fails (embedding service, tokenizer, etc.)
+#[allow(dead_code)]
+pub async fn spawn_test_worker(
+    test_state: &TestAppState,
+) -> Result<std::sync::Arc<std::sync::atomic::AtomicBool>, Box<dyn std::error::Error>> {
+    use codetriever_config::ApplicationConfig;
+    use codetriever_indexing::{BackgroundWorker, WorkerConfig};
+
+    let shared = SHARED_RESOURCES
+        .get_or_try_init(|| async { init_shared_resources().await })
+        .await?;
+
+    let config = ApplicationConfig::from_env();
+    let tokenizer = shared.embedding_service.provider().get_tokenizer().await;
+    let code_parser = std::sync::Arc::new(codetriever_parsing::CodeParser::new(
+        tokenizer,
+        config.indexing.split_large_units,
+        config.indexing.max_chunk_tokens,
+    ));
+
+    let worker = BackgroundWorker::new(
+        std::sync::Arc::clone(&shared.file_repository),
+        std::sync::Arc::clone(&shared.embedding_service),
+        Arc::<dyn codetriever_vector_data::VectorStorage>::clone(
+            &test_state.state().vector_storage,
+        ),
+        code_parser,
+        WorkerConfig::from_app_config(&config),
+    );
+
+    let shutdown = worker.shutdown_handle();
+    tokio::spawn(async move {
+        worker.run().await;
+    });
+
+    Ok(shutdown)
+}
+
 /// Test fixture that owns `AppState` and cleans up Qdrant collection
 ///
-/// NOTE: BackgroundWorker is NOT spawned by default to avoid test isolation issues
+/// Each test gets a unique tenant for perfect isolation (no race conditions!)
+///
+/// NOTE: `BackgroundWorker` is NOT spawned by default to avoid test isolation issues
 /// with the shared global queue. Tests that need async file processing should
-/// spawn their own worker (see index_rust_mini_redis_test.rs for pattern).
+/// spawn their own worker (see `index_rust_mini_redis_test.rs` for pattern).
 pub struct TestAppState {
     state: AppState,
+    // Unique tenant per test for perfect isolation
+    // Used by tests that need tenant-scoped operations (index requests, delete_by_filter in Phase 2)
+    tenant_id: uuid::Uuid,
     collection_name: String,
     vector_storage: Arc<QdrantStorage>,
     created_at: std::time::Instant, // Track lifetime for debugging
@@ -92,6 +137,15 @@ impl TestAppState {
     #[must_use]
     pub const fn state(&self) -> &AppState {
         &self.state
+    }
+
+    /// Get the tenant ID for this test
+    ///
+    /// Used by tests that send index requests or will use `delete_by_filter` cleanup
+    #[must_use]
+    #[allow(dead_code)] // Used by test files that import test_utils
+    pub const fn tenant_id(&self) -> uuid::Uuid {
+        self.tenant_id
     }
 }
 
@@ -159,9 +213,15 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
 
     // Example: test_search_with_unicode_1760197451942_0
     let collection_name = format!("{test_name}_{timestamp}_{counter}");
+    let tenant_name = format!("tenant_{test_name}_{timestamp}_{counter}");
     eprintln!(
-        "🔢 [DEBUG] Creating collection: name={test_name}, ts={timestamp}, counter={counter} → {collection_name}"
+        "🔢 [DEBUG] Creating tenant: name={test_name}, ts={timestamp}, counter={counter} → {tenant_name}"
     );
+
+    // Create unique tenant for this test (perfect isolation!)
+    let tenant_id = shared.file_repository.create_tenant(&tenant_name).await?;
+
+    eprintln!("🏢 [TENANT] Created tenant: {tenant_id} ({tenant_name})");
 
     // Create per-test Qdrant collection
     let vector_storage_concrete = Arc::new(
@@ -190,26 +250,9 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
     );
     let indexer_service = Arc::new(indexer) as Arc<dyn IndexerService>;
 
-    // Spawn BackgroundWorker for processing jobs (tests need this!)
-    let tokenizer = shared.embedding_service.provider().get_tokenizer().await;
-    let code_parser = Arc::new(codetriever_parsing::CodeParser::new(
-        tokenizer,
-        shared.config.indexing.split_large_units,
-        shared.config.indexing.max_chunk_tokens,
-    ));
-
-    let worker = codetriever_indexing::BackgroundWorker::new(
-        Arc::clone(&shared.file_repository),
-        Arc::clone(&shared.embedding_service),
-        Arc::clone(&vector_storage_trait),
-        code_parser,
-        codetriever_indexing::WorkerConfig::from_app_config(&shared.config),
-    );
-
-    let worker_shutdown = worker.shutdown_handle();
-    tokio::spawn(async move {
-        worker.run().await;
-    });
+    // NOTE: BackgroundWorker is NOT spawned here to avoid test isolation issues.
+    // Tests that need async file processing should spawn their own worker with
+    // their own VectorStorage instance (see index_rust_mini_redis_test.rs pattern).
 
     let state = AppState::new(
         Arc::clone(&shared.db_client),
@@ -220,11 +263,12 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
 
     let test_state = Arc::new(TestAppState {
         state,
+        tenant_id,
         collection_name: collection_name.clone(),
         vector_storage: vector_storage_concrete,
         created_at: std::time::Instant::now(),
     });
 
-    eprintln!("🏗️  [CREATED] TestAppState with collection: {collection_name}");
+    eprintln!("🏗️  [CREATED] TestAppState with tenant: {tenant_id}, collection: {collection_name}");
     Ok(test_state)
 }

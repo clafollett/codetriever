@@ -262,6 +262,7 @@ impl DbFileRepository {
     pub async fn enqueue_file(
         &self,
         job_id: &uuid::Uuid,
+        tenant_id: &uuid::Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -278,11 +279,12 @@ impl DbFileRepository {
         sqlx::query(
             r"
             INSERT INTO indexing_job_file_queue
-            (job_id, repository_id, branch, file_path, file_content, content_hash, status, priority)
-            VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0)
+            (job_id, tenant_id, repository_id, branch, file_path, file_content, content_hash, status, priority)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', 0)
             ",
         )
         .bind(job_id)
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .bind(file_path)
@@ -297,10 +299,10 @@ impl DbFileRepository {
 
     /// Dequeue next file from global queue (atomic with FOR UPDATE SKIP LOCKED)
     ///
-    /// Pulls the next file from ANY job in FIFO order (`created_at`). This enables
-    /// fair scheduling and maximum concurrency across multiple jobs - industry standard!
+    /// Pulls the next file from ANY tenant's jobs in FIFO order (`created_at`).
+    /// This enables fair scheduling and maximum concurrency across all jobs/tenants.
     ///
-    /// Returns: (`job_id`, `file_path`, `file_content`, `content_hash`) or None if queue empty
+    /// Returns file with `tenant_id` in payload for downstream isolation.
     ///
     /// # Errors
     ///
@@ -324,7 +326,7 @@ impl DbFileRepository {
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             )
-            RETURNING job_id, file_path, file_content, content_hash
+            RETURNING tenant_id, job_id, file_path, file_content, content_hash
             ",
         )
         .fetch_optional(pool)
@@ -332,6 +334,7 @@ impl DbFileRepository {
         .map_db_err(operation, correlation_id)?;
 
         Ok(row.map(|r| DequeuedFile {
+            tenant_id: r.get("tenant_id"),
             job_id: r.get("job_id"),
             file_path: r.get("file_path"),
             file_content: r.get("file_content"),
@@ -463,7 +466,7 @@ impl DbFileRepository {
 
         let row = sqlx::query(
             r"
-            SELECT job_id, repository_id, branch, status, files_total, files_processed,
+            SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                    chunks_created, commit_sha, started_at, completed_at, error_message
             FROM indexing_jobs
             WHERE job_id = $1
@@ -478,6 +481,7 @@ impl DbFileRepository {
             let status_str: String = r.get("status");
             IndexingJob {
                 job_id: r.get("job_id"),
+                tenant_id: r.get("tenant_id"),
                 repository_id: r.get("repository_id"),
                 branch: r.get("branch"),
                 status: status_str.parse().unwrap_or(JobStatus::Failed),
@@ -499,6 +503,7 @@ impl DbFileRepository {
     /// Returns error if database query fails
     pub async fn list_indexing_jobs(
         &self,
+        tenant_id: Option<&Uuid>,
         repository_id: Option<&str>,
     ) -> DatabaseResult<Vec<IndexingJob>> {
         let pool = self.pools.read_pool();
@@ -510,24 +515,39 @@ impl DbFileRepository {
             file_path: "jobs".to_string(),
         };
 
-        let rows = match repository_id {
-            Some(repo) => sqlx::query(
+        let rows = match (tenant_id, repository_id) {
+            (Some(tid), Some(repo)) => sqlx::query(
                 r"
-                    SELECT job_id, repository_id, branch, status, files_total, files_processed,
+                    SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                            chunks_created, commit_sha, started_at, completed_at, error_message
                     FROM indexing_jobs
-                    WHERE repository_id = $1
+                    WHERE tenant_id = $1 AND repository_id = $2
                     ORDER BY started_at DESC
                     LIMIT 100
                     ",
             )
+            .bind(tid)
             .bind(repo)
             .fetch_all(pool)
             .await
             .map_db_err(operation, correlation_id)?,
-            None => sqlx::query(
+            (Some(tid), None) => sqlx::query(
                 r"
-                    SELECT job_id, repository_id, branch, status, files_total, files_processed,
+                    SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
+                           chunks_created, commit_sha, started_at, completed_at, error_message
+                    FROM indexing_jobs
+                    WHERE tenant_id = $1
+                    ORDER BY started_at DESC
+                    LIMIT 100
+                    ",
+            )
+            .bind(tid)
+            .fetch_all(pool)
+            .await
+            .map_db_err(operation, correlation_id)?,
+            (None, _) => sqlx::query(
+                r"
+                    SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                            chunks_created, commit_sha, started_at, completed_at, error_message
                     FROM indexing_jobs
                     ORDER BY started_at DESC
@@ -545,6 +565,7 @@ impl DbFileRepository {
                 let status_str: String = r.get("status");
                 IndexingJob {
                     job_id: r.get("job_id"),
+                    tenant_id: r.get("tenant_id"),
                     repository_id: r.get("repository_id"),
                     branch: r.get("branch"),
                     status: status_str.parse().unwrap_or(JobStatus::Failed),
@@ -563,6 +584,24 @@ impl DbFileRepository {
 
 #[async_trait]
 impl FileRepository for DbFileRepository {
+    async fn create_tenant(&self, name: &str) -> DatabaseResult<Uuid> {
+        let pool = self.pools.write_pool();
+        let correlation_id = None; // TODO: Wire through from upper layers
+
+        let operation = DatabaseOperation::Query {
+            description: "create_tenant".to_string(),
+        };
+
+        let tenant_id: Uuid =
+            sqlx::query_scalar("INSERT INTO tenants (name) VALUES ($1) RETURNING tenant_id")
+                .bind(name)
+                .fetch_one(pool)
+                .await
+                .map_db_err(operation, correlation_id)?;
+
+        Ok(tenant_id)
+    }
+
     async fn ensure_project_branch(
         &self,
         ctx: &RepositoryContext,
@@ -578,11 +617,12 @@ impl FileRepository for DbFileRepository {
 
         let row = sqlx::query(
             r"
-            INSERT INTO project_branches (repository_id, branch, repository_url)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (repository_id, branch)
+            INSERT INTO project_branches (tenant_id, repository_id, branch, repository_url)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (tenant_id, repository_id, branch)
             DO UPDATE SET repository_url = EXCLUDED.repository_url
             RETURNING
+                tenant_id,
                 repository_id,
                 branch,
                 repository_url,
@@ -590,6 +630,7 @@ impl FileRepository for DbFileRepository {
                 last_indexed
             ",
         )
+        .bind(ctx.tenant_id)
         .bind(&ctx.repository_id)
         .bind(&ctx.branch)
         .bind(&ctx.repository_url)
@@ -598,6 +639,7 @@ impl FileRepository for DbFileRepository {
         .map_db_err(operation, correlation_id)?;
 
         Ok(ProjectBranch {
+            tenant_id: row.get("tenant_id"),
             repository_id: row.get("repository_id"),
             branch: row.get("branch"),
             repository_url: row.get("repository_url"),
@@ -609,6 +651,7 @@ impl FileRepository for DbFileRepository {
     #[tracing::instrument(skip(self), fields(elapsed_ms))]
     async fn check_file_state(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -630,9 +673,10 @@ impl FileRepository for DbFileRepository {
             r"
             SELECT content_hash, generation
             FROM indexed_files
-            WHERE repository_id = $1 AND branch = $2 AND file_path = $3
+            WHERE tenant_id = $1 AND repository_id = $2 AND branch = $3 AND file_path = $4
             ",
         )
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .bind(file_path)
@@ -680,6 +724,7 @@ impl FileRepository for DbFileRepository {
     #[tracing::instrument(skip(self, metadata), fields(elapsed_ms))]
     async fn record_file_indexing(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         metadata: &FileMetadata,
@@ -699,11 +744,11 @@ impl FileRepository for DbFileRepository {
         let row = sqlx::query(
             r"
             INSERT INTO indexed_files (
-                repository_id, branch, file_path, file_content, content_hash, encoding, size_bytes, generation,
+                tenant_id, repository_id, branch, file_path, file_content, content_hash, encoding, size_bytes, generation,
                 commit_sha, commit_message, commit_date, author, indexed_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
-            ON CONFLICT (repository_id, branch, file_path)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+            ON CONFLICT (tenant_id, repository_id, branch, file_path)
             DO UPDATE SET
                 file_content = EXCLUDED.file_content,
                 content_hash = EXCLUDED.content_hash,
@@ -718,6 +763,7 @@ impl FileRepository for DbFileRepository {
             RETURNING *
             ",
         )
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .bind(&metadata.path)
@@ -735,6 +781,7 @@ impl FileRepository for DbFileRepository {
         .map_db_err(operation, correlation_id)?;
 
         let result = Ok(IndexedFile {
+            tenant_id: row.get("tenant_id"),
             repository_id: row.get("repository_id"),
             branch: row.get("branch"),
             file_path: row.get("file_path"),
@@ -760,6 +807,7 @@ impl FileRepository for DbFileRepository {
     #[tracing::instrument(skip(self, chunks), fields(chunk_count = chunks.len(), elapsed_ms))]
     async fn insert_chunks(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         chunks: Vec<ChunkMetadata>,
@@ -811,27 +859,29 @@ impl FileRepository for DbFileRepository {
         sqlx::query(
             r"
             INSERT INTO chunk_metadata (
-                chunk_id, repository_id, branch, file_path, chunk_index, generation,
+                chunk_id, tenant_id, repository_id, branch, file_path, chunk_index, generation,
                 start_line, end_line, byte_start, byte_end, kind, name, created_at
             )
-            SELECT 
+            SELECT
                 unnest($1::uuid[]),
                 $2,
                 $3,
-                unnest($4::text[]),
-                unnest($5::int[]),
-                unnest($6::bigint[]),
-                unnest($7::int[]),
+                $4,
+                unnest($5::text[]),
+                unnest($6::int[]),
+                unnest($7::bigint[]),
                 unnest($8::int[]),
-                unnest($9::bigint[]),
+                unnest($9::int[]),
                 unnest($10::bigint[]),
-                unnest($11::text[]),
+                unnest($11::bigint[]),
                 unnest($12::text[]),
+                unnest($13::text[]),
                 NOW()
             ON CONFLICT (chunk_id) DO NOTHING
             ",
         )
         .bind(&chunk_ids)
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .bind(&file_paths)
@@ -858,6 +908,7 @@ impl FileRepository for DbFileRepository {
 
     async fn replace_file_chunks(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -874,7 +925,8 @@ impl FileRepository for DbFileRepository {
             new_generation,
         };
 
-        let rows = sqlx::query("SELECT * FROM replace_file_chunks($1, $2, $3, $4)")
+        let rows = sqlx::query("SELECT * FROM replace_file_chunks($1, $2, $3, $4, $5)")
+            .bind(tenant_id)
             .bind(repository_id)
             .bind(branch)
             .bind(file_path)
@@ -893,6 +945,7 @@ impl FileRepository for DbFileRepository {
 
     async fn create_indexing_job(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         commit_sha: Option<&str>,
@@ -910,14 +963,15 @@ impl FileRepository for DbFileRepository {
         let row = sqlx::query(
             r"
             INSERT INTO indexing_jobs (
-                job_id, repository_id, branch, status,
+                job_id, tenant_id, repository_id, branch, status,
                 files_processed, chunks_created, commit_sha, started_at
             )
-            VALUES ($1, $2, $3, $4, 0, 0, $5, NOW())
+            VALUES ($1, $2, $3, $4, $5, 0, 0, $6, NOW())
             RETURNING *
             ",
         )
         .bind(job_id)
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .bind(JobStatus::Running.to_string())
@@ -928,6 +982,7 @@ impl FileRepository for DbFileRepository {
 
         Ok(IndexingJob {
             job_id: row.get("job_id"),
+            tenant_id: row.get("tenant_id"),
             repository_id: row.get("repository_id"),
             branch: row.get("branch"),
             status: JobStatus::from(row.get::<String, _>("status")),
@@ -1024,6 +1079,7 @@ impl FileRepository for DbFileRepository {
 
     async fn get_file_chunks(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -1041,14 +1097,15 @@ impl FileRepository for DbFileRepository {
         let rows = sqlx::query(
             r"
             SELECT
-                chunk_id, repository_id, branch, file_path,
+                chunk_id, tenant_id, repository_id, branch, file_path,
                 chunk_index, generation, start_line, end_line,
                 byte_start, byte_end, kind, name, created_at
             FROM chunk_metadata
-            WHERE repository_id = $1 AND branch = $2 AND file_path = $3
+            WHERE tenant_id = $1 AND repository_id = $2 AND branch = $3 AND file_path = $4
             ORDER BY chunk_index
             ",
         )
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .bind(file_path)
@@ -1060,6 +1117,7 @@ impl FileRepository for DbFileRepository {
             .into_iter()
             .map(|row| ChunkMetadata {
                 chunk_id: row.get("chunk_id"),
+                tenant_id: row.get("tenant_id"),
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 file_path: row.get("file_path"),
@@ -1080,6 +1138,7 @@ impl FileRepository for DbFileRepository {
 
     async fn get_indexed_files(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
     ) -> DatabaseResult<Vec<IndexedFile>> {
@@ -1096,10 +1155,11 @@ impl FileRepository for DbFileRepository {
             r"
             SELECT *
             FROM indexed_files
-            WHERE repository_id = $1 AND branch = $2
+            WHERE tenant_id = $1 AND repository_id = $2 AND branch = $3
             ORDER BY file_path
             ",
         )
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .fetch_all(pool)
@@ -1109,6 +1169,7 @@ impl FileRepository for DbFileRepository {
         let files = rows
             .into_iter()
             .map(|row| IndexedFile {
+                tenant_id: row.get("tenant_id"),
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 file_path: row.get("file_path"),
@@ -1128,7 +1189,12 @@ impl FileRepository for DbFileRepository {
         Ok(files)
     }
 
-    async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> DatabaseResult<bool> {
+    async fn has_running_jobs(
+        &self,
+        tenant_id: &Uuid,
+        repository_id: &str,
+        branch: &str,
+    ) -> DatabaseResult<bool> {
         // Use read pool for quick SELECT operations
         let pool = self.pools.read_pool();
         let correlation_id = None; // Will be passed from upper layers in future
@@ -1142,11 +1208,13 @@ impl FileRepository for DbFileRepository {
             r"
             SELECT COUNT(*) as count
             FROM indexing_jobs
-            WHERE repository_id = $1
-              AND branch = $2
+            WHERE tenant_id = $1
+              AND repository_id = $2
+              AND branch = $3
               AND status IN ('pending', 'running')
             ",
         )
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .fetch_one(pool)
@@ -1159,6 +1227,7 @@ impl FileRepository for DbFileRepository {
 
     async fn get_file_metadata(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -1177,9 +1246,10 @@ impl FileRepository for DbFileRepository {
             r"
             SELECT *
             FROM indexed_files
-            WHERE repository_id = $1 AND branch = $2 AND file_path = $3
+            WHERE tenant_id = $1 AND repository_id = $2 AND branch = $3 AND file_path = $4
             ",
         )
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .bind(file_path)
@@ -1189,6 +1259,7 @@ impl FileRepository for DbFileRepository {
 
         row.map_or(Ok(None), |row| {
             Ok(Some(IndexedFile {
+                tenant_id: row.get("tenant_id"),
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 file_path: row.get("file_path"),
@@ -1207,7 +1278,11 @@ impl FileRepository for DbFileRepository {
     }
 
     #[tracing::instrument(skip(self), fields(file_count = file_paths.len()))]
-    async fn get_files_metadata(&self, file_paths: &[&str]) -> DatabaseResult<Vec<IndexedFile>> {
+    async fn get_files_metadata(
+        &self,
+        tenant_id: &Uuid,
+        file_paths: &[&str],
+    ) -> DatabaseResult<Vec<IndexedFile>> {
         if file_paths.is_empty() {
             return Ok(vec![]);
         }
@@ -1227,10 +1302,11 @@ impl FileRepository for DbFileRepository {
             r"
             SELECT if.*
             FROM indexed_files if
-            WHERE if.file_path = ANY($1)
+            WHERE if.tenant_id = $1 AND if.file_path = ANY($2)
             ORDER BY if.file_path
             ",
         )
+        .bind(tenant_id)
         .bind(&file_paths_vec)
         .fetch_all(pool)
         .await
@@ -1239,6 +1315,7 @@ impl FileRepository for DbFileRepository {
         let files = rows
             .into_iter()
             .map(|row| IndexedFile {
+                tenant_id: row.get("tenant_id"),
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 file_path: row.get("file_path"),
@@ -1260,6 +1337,7 @@ impl FileRepository for DbFileRepository {
 
     async fn get_project_branch(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
     ) -> DatabaseResult<Option<ProjectBranch>> {
@@ -1276,9 +1354,10 @@ impl FileRepository for DbFileRepository {
             r"
             SELECT *
             FROM project_branches
-            WHERE repository_id = $1 AND branch = $2
+            WHERE tenant_id = $1 AND repository_id = $2 AND branch = $3
             ",
         )
+        .bind(tenant_id)
         .bind(repository_id)
         .bind(branch)
         .fetch_optional(pool)
@@ -1287,6 +1366,7 @@ impl FileRepository for DbFileRepository {
 
         row.map_or(Ok(None), |row| {
             Ok(Some(ProjectBranch {
+                tenant_id: row.get("tenant_id"),
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 repository_url: row.get("repository_url"),
@@ -1299,6 +1379,7 @@ impl FileRepository for DbFileRepository {
     #[tracing::instrument(skip(self), fields(repo_branch_count = repo_branches.len()))]
     async fn get_project_branches(
         &self,
+        tenant_id: &Uuid,
         repo_branches: &[(String, String)],
     ) -> DatabaseResult<Vec<ProjectBranch>> {
         if repo_branches.is_empty() {
@@ -1314,10 +1395,12 @@ impl FileRepository for DbFileRepository {
 
         // Build parameterized query - manually construct to avoid sqlx separator issues
         let mut query_builder = sqlx::QueryBuilder::new(
-            "SELECT repository_id, branch, repository_url, first_seen, last_indexed
+            "SELECT tenant_id, repository_id, branch, repository_url, first_seen, last_indexed
              FROM project_branches
-             WHERE (repository_id, branch) IN (",
+             WHERE tenant_id = ",
         );
+        query_builder.push_bind(tenant_id);
+        query_builder.push(" AND (repository_id, branch) IN (");
 
         // Manually build tuple list with proper separation
         for (idx, (repo_id, branch)) in repo_branches.iter().enumerate() {
@@ -1341,6 +1424,7 @@ impl FileRepository for DbFileRepository {
         let branches = rows
             .into_iter()
             .map(|row| ProjectBranch {
+                tenant_id: row.get("tenant_id"),
                 repository_id: row.get("repository_id"),
                 branch: row.get("branch"),
                 repository_url: row.get("repository_url"),
@@ -1355,6 +1439,7 @@ impl FileRepository for DbFileRepository {
     async fn enqueue_file(
         &self,
         job_id: &Uuid,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -1363,6 +1448,7 @@ impl FileRepository for DbFileRepository {
     ) -> DatabaseResult<()> {
         self.enqueue_file(
             job_id,
+            tenant_id,
             repository_id,
             branch,
             file_path,
@@ -1404,15 +1490,19 @@ impl FileRepository for DbFileRepository {
 
     async fn list_indexing_jobs(
         &self,
+        tenant_id: Option<&Uuid>,
         repository_id: Option<&str>,
     ) -> DatabaseResult<Vec<IndexingJob>> {
-        self.list_indexing_jobs(repository_id).await
+        self.list_indexing_jobs(tenant_id, repository_id).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Test tenant for all unit tests
+    const TEST_TENANT: Uuid = Uuid::nil();
 
     #[tokio::test]
     #[allow(clippy::expect_used)] // Tests can use expect
@@ -1423,6 +1513,7 @@ mod tests {
         let result = mock_repo
             .enqueue_file(
                 &job_id,
+                &TEST_TENANT,
                 "test_repo",
                 "main",
                 "src/test.rs",

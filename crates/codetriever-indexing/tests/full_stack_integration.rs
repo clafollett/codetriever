@@ -10,9 +10,11 @@ use codetriever_meta_data::{
     repository::DbFileRepository,
 };
 use codetriever_parsing::CodeChunk;
-use codetriever_vector_data::{QdrantStorage, VectorStorage};
+use codetriever_vector_data::{ChunkStorageContext, QdrantStorage, VectorStorage};
 use sqlx::PgPool;
 use std::sync::Arc;
+
+const TEST_TENANT: uuid::Uuid = uuid::Uuid::nil();
 
 async fn get_connection_pool() -> anyhow::Result<PgPool> {
     // Initialize environment for tests (loads .env)
@@ -97,8 +99,11 @@ fn test_full_stack_indexing_with_postgres_and_qdrant() {
             WorkerConfig::from_app_config(&config),
         );
 
+        // Get shutdown handle before moving worker
+        let shutdown = worker.shutdown_handle();
+
         // Spawn worker in background
-        let _worker_handle = tokio::spawn(async move {
+        let worker_handle = tokio::spawn(async move {
             worker.run().await;
         });
 
@@ -131,9 +136,20 @@ pub fn process_data(input: &str) -> String {
             hash: String::new(), // Will be computed by indexer
         };
 
+        // Create unique tenant for this test
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let tenant_name = format!("test_tenant_{timestamp}");
+        let tenant_id = repository
+            .create_tenant(&tenant_name)
+            .await
+            .expect("Failed to create tenant");
+
         // Start indexing job (async pattern)
         let job_id = indexer
-            .start_indexing_job(&project_id, vec![file])
+            .start_indexing_job(tenant_id, &project_id, vec![file])
             .await
             .expect("Failed to start indexing job");
 
@@ -202,6 +218,10 @@ pub fn process_data(input: &str) -> String {
             .expect("Failed to search");
 
         assert!(!search_results.is_empty(), "Should find chunks in Qdrant");
+
+        // Shutdown worker gracefully before cleanup
+        shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), worker_handle).await;
 
         // Clean up
         storage
@@ -288,8 +308,21 @@ fn test_uuid_based_chunk_deletion() {
 
         let correlation_id = CorrelationId::new();
 
+        // Build storage context with full metadata
+        let context = ChunkStorageContext {
+            tenant_id: TEST_TENANT,
+            repository_id: test_repo.to_string(),
+            branch: test_branch.to_string(),
+            generation,
+            repository_url: None,
+            commit_sha: None,
+            commit_message: None,
+            commit_date: None,
+            author: None,
+        };
+
         let stored_ids = storage
-            .store_chunks(test_repo, test_branch, &chunks, generation, &correlation_id)
+            .store_chunks(&context, &chunks, &correlation_id)
             .await
             .expect("Failed to store chunks with IDs");
 

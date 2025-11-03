@@ -5,7 +5,10 @@
 
 use codetriever_common::CorrelationId;
 use codetriever_parsing::CodeChunk;
-use codetriever_vector_data::{QdrantStorage, VectorStorage};
+use codetriever_vector_data::{ChunkStorageContext, QdrantStorage, VectorStorage};
+use uuid::Uuid;
+
+const TEST_TENANT: Uuid = Uuid::nil();
 
 #[test]
 fn test_delete_chunks_removes_points_from_collection() {
@@ -54,9 +57,21 @@ fn test_delete_chunks_removes_points_from_collection() {
 
         let correlation_id = CorrelationId::new();
 
-        // Store chunks with deterministic IDs
+        // Store chunks with context
+        let context = ChunkStorageContext {
+            tenant_id: TEST_TENANT,
+            repository_id: "test_repo".to_string(),
+            branch: "main".to_string(),
+            generation: 1,
+            repository_url: None,
+            commit_sha: None,
+            commit_message: None,
+            commit_date: None,
+            author: None,
+        };
+
         let chunk_ids = storage
-            .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
+            .store_chunks(&context, &chunks, &correlation_id)
             .await
             .expect("Failed to store chunks with IDs");
 
@@ -122,9 +137,21 @@ fn test_store_and_search_chunks() {
 
         let correlation_id = CorrelationId::new();
 
-        // Store chunk
+        // Store chunk with context
+        let context = ChunkStorageContext {
+            tenant_id: TEST_TENANT,
+            repository_id: "test_repo".to_string(),
+            branch: "main".to_string(),
+            generation: 1,
+            repository_url: None,
+            commit_sha: None,
+            commit_message: None,
+            commit_date: None,
+            author: None,
+        };
+
         let chunk_ids = storage
-            .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
+            .store_chunks(&context, &chunks, &correlation_id)
             .await
             .expect("Failed to store chunks");
         assert_eq!(chunk_ids.len(), 1);

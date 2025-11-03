@@ -105,6 +105,9 @@ fn test_index_rust_mini_redis() {
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
 
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let indexer = Arc::new(Indexer::new(
             embedding_service.clone(),
             Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
@@ -123,8 +126,11 @@ fn test_index_rust_mini_redis() {
             WorkerConfig::from_app_config(&config),
         );
 
+        // Get shutdown handle before moving worker
+        let shutdown = worker.shutdown_handle();
+
         // Spawn worker in background (simulates production daemon)
-        let _worker_handle = tokio::spawn(async move {
+        let worker_handle = tokio::spawn(async move {
             worker.run().await;
         });
 
@@ -190,7 +196,7 @@ fn test_index_rust_mini_redis() {
 
             // Start indexing job (enqueues files, returns immediately - production API!)
             let job_id = indexer
-                .start_indexing_job(&unique_project_id, files)
+                .start_indexing_job(tenant_id, &unique_project_id, files)
                 .await
                 .expect("Failed to start indexing job");
 
@@ -266,6 +272,11 @@ fn test_index_rust_mini_redis() {
                 }
             }
         }
+
+        // Shutdown worker before cleanup
+        tracing::info!("🛑 Shutting down worker...");
+        shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), worker_handle).await;
 
         cleanup_test_storage(&storage)
             .await

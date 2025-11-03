@@ -34,6 +34,7 @@
 
 use crate::{
     VectorDataError, VectorDataResult,
+    storage::traits::ChunkStorageContext,
     storage::{CodeChunk, StorageSearchResult, VectorStorage},
 };
 use anyhow::Context;
@@ -429,6 +430,45 @@ impl VectorStorage for QdrantStorage {
                 .and_then(|v| v.as_integer())
                 .map(|v| v as usize);
 
+            // Extract repository and commit metadata from payload
+            let repository_id = payload
+                .get("repository_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
+            let branch = payload
+                .get("branch")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
+            let repository_url = payload
+                .get("repository_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let commit_sha = payload
+                .get("commit_sha")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let commit_message = payload
+                .get("commit_message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let commit_date = payload
+                .get("commit_date")
+                .and_then(|v| v.as_str())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+
+            let author = payload
+                .get("author")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             results.push(StorageSearchResult {
                 chunk: CodeChunk {
                     file_path: file_path.clone(),
@@ -443,21 +483,35 @@ impl VectorStorage for QdrantStorage {
                     token_count,
                     embedding: None, // Don't return embeddings to save memory
                 },
-                similarity, // Use the actual score from Qdrant!
+                similarity,
+                metadata: crate::storage::traits::RepositoryMetadata {
+                    repository_id,
+                    repository_url,
+                    branch,
+                    commit_sha,
+                    commit_message,
+                    commit_date,
+                    author,
+                },
             });
         }
 
         Ok(results)
     }
 
-    /// Store chunks with deterministic IDs based on repository, branch, file, and generation
-    #[tracing::instrument(skip(self, chunks), fields(repository_id, branch, chunk_count = chunks.len(), generation, elapsed_ms))]
+    /// Store chunks with full metadata context (tenant, repository, commit info)
+    #[tracing::instrument(skip(self, chunks, context), fields(
+        tenant_id = %context.tenant_id,
+        repository_id = %context.repository_id,
+        branch = %context.branch,
+        chunk_count = chunks.len(),
+        generation = context.generation,
+        elapsed_ms
+    ))]
     async fn store_chunks(
         &self,
-        repository_id: &str,
-        branch: &str,
+        context: &ChunkStorageContext,
         chunks: &[CodeChunk],
-        generation: i64,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<uuid::Uuid>> {
         let start = std::time::Instant::now();
@@ -470,10 +524,10 @@ impl VectorStorage for QdrantStorage {
             if let Some(ref embedding) = chunk.embedding {
                 // Use proper chunk ID generation from meta-data crate
                 let chunk_id = generate_chunk_id(
-                    repository_id,
-                    branch,
+                    &context.repository_id,
+                    &context.branch,
                     &chunk.file_path,
-                    generation,
+                    context.generation,
                     chunk.byte_start,
                     chunk.byte_end,
                 );
@@ -481,35 +535,58 @@ impl VectorStorage for QdrantStorage {
                 chunk_ids.push(chunk_id);
 
                 let mut payload = HashMap::new();
-                payload.insert("chunk_id".to_string(), Value::from(chunk_id.to_string()));
+
+                // === MULTI-TENANCY & REPOSITORY METADATA ===
+                // tenant_id is the PRIMARY isolation key (will have is_tenant: true index)
+                payload.insert(
+                    "tenant_id".to_string(),
+                    Value::from(context.tenant_id.to_string()),
+                );
                 payload.insert(
                     "repository_id".to_string(),
-                    Value::from(repository_id.to_string()),
+                    Value::from(context.repository_id.clone()),
                 );
-                payload.insert("branch".to_string(), Value::from(branch.to_string()));
-                payload.insert("generation".to_string(), Value::from(generation));
-                payload.insert("chunk_index".to_string(), Value::from(chunk_index as i64));
+                payload.insert("branch".to_string(), Value::from(context.branch.clone()));
                 payload.insert(
                     "file_path".to_string(),
                     Value::from(chunk.file_path.clone()),
                 );
+
+                // === GIT COMMIT METADATA (eliminates need for PostgreSQL enrichment!) ===
+                if let Some(ref url) = context.repository_url {
+                    payload.insert("repository_url".to_string(), Value::from(url.clone()));
+                }
+                if let Some(ref sha) = context.commit_sha {
+                    payload.insert("commit_sha".to_string(), Value::from(sha.clone()));
+                }
+                if let Some(ref msg) = context.commit_message {
+                    payload.insert("commit_message".to_string(), Value::from(msg.clone()));
+                }
+                if let Some(date) = context.commit_date {
+                    payload.insert("commit_date".to_string(), Value::from(date.to_rfc3339()));
+                }
+                if let Some(ref author) = context.author {
+                    payload.insert("author".to_string(), Value::from(author.clone()));
+                }
+
+                // === CHUNK METADATA ===
+                payload.insert("chunk_id".to_string(), Value::from(chunk_id.to_string()));
+                payload.insert("generation".to_string(), Value::from(context.generation));
+                payload.insert("chunk_index".to_string(), Value::from(chunk_index as i64));
                 payload.insert("content".to_string(), Value::from(chunk.content.clone()));
                 payload.insert(
                     "start_line".to_string(),
                     Value::from(chunk.start_line as i64),
                 );
                 payload.insert("end_line".to_string(), Value::from(chunk.end_line as i64));
-
-                // Add byte range information
                 payload.insert(
                     "byte_start".to_string(),
                     Value::from(chunk.byte_start as i64),
                 );
                 payload.insert("byte_end".to_string(), Value::from(chunk.byte_end as i64));
-
                 payload.insert("language".to_string(), Value::from(chunk.language.clone()));
 
-                // Store optional fields
+                // Optional chunk metadata
                 if let Some(ref kind) = chunk.kind {
                     payload.insert("kind".to_string(), Value::from(kind.clone()));
                 }
@@ -536,11 +613,12 @@ impl VectorStorage for QdrantStorage {
         // Log operation with correlation ID for tracing
         tracing::info!(
             correlation_id = %correlation_id,
-            repository_id = %repository_id,
-            branch = %branch,
-            generation = %generation,
+            tenant_id = %context.tenant_id,
+            repository_id = %context.repository_id,
+            branch = %context.branch,
+            generation = %context.generation,
             chunk_count = chunks.len(),
-            "Storing chunks with deterministic IDs"
+            "Storing chunks with full metadata context"
         );
 
         // Batch upsert points using new API

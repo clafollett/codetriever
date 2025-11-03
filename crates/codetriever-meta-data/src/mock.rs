@@ -21,8 +21,8 @@ use crate::models::{
 use crate::traits::FileRepository;
 
 // Type aliases to simplify complex types
-type ProjectBranchMap = Arc<Mutex<HashMap<(String, String), ProjectBranch>>>;
-type IndexedFileMap = Arc<Mutex<HashMap<(String, String, String), IndexedFile>>>;
+type ProjectBranchMap = Arc<Mutex<HashMap<(Uuid, String, String), ProjectBranch>>>;
+type IndexedFileMap = Arc<Mutex<HashMap<(Uuid, String, String, String), IndexedFile>>>;
 type ChunkList = Arc<Mutex<Vec<ChunkMetadata>>>;
 type JobMap = Arc<Mutex<HashMap<Uuid, IndexingJob>>>;
 
@@ -88,16 +88,23 @@ impl MockFileRepository {
 
 #[async_trait]
 impl FileRepository for MockFileRepository {
+    async fn create_tenant(&self, _name: &str) -> DatabaseResult<Uuid> {
+        self.check_fail()?;
+        // Mock just returns a new UUID (doesn't actually store tenants)
+        Ok(Uuid::new_v4())
+    }
+
     async fn ensure_project_branch(
         &self,
         ctx: &RepositoryContext,
     ) -> DatabaseResult<ProjectBranch> {
         self.check_fail()?;
 
-        let key = (ctx.repository_id.clone(), ctx.branch.clone());
+        let key = (ctx.tenant_id, ctx.repository_id.clone(), ctx.branch.clone());
         let mut branches = self.project_branches.lock().unwrap();
 
         let branch = branches.entry(key).or_insert_with(|| ProjectBranch {
+            tenant_id: ctx.tenant_id,
             repository_id: ctx.repository_id.clone(),
             branch: ctx.branch.clone(),
             repository_url: ctx.repository_url.clone(),
@@ -110,6 +117,7 @@ impl FileRepository for MockFileRepository {
 
     async fn check_file_state(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -118,6 +126,7 @@ impl FileRepository for MockFileRepository {
         self.check_fail()?;
 
         let key = (
+            *tenant_id,
             repository_id.to_string(),
             branch.to_string(),
             file_path.to_string(),
@@ -136,6 +145,7 @@ impl FileRepository for MockFileRepository {
 
     async fn record_file_indexing(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         metadata: &FileMetadata,
@@ -143,11 +153,13 @@ impl FileRepository for MockFileRepository {
         self.check_fail()?;
 
         let key = (
+            *tenant_id,
             repository_id.to_string(),
             branch.to_string(),
             metadata.path.clone(),
         );
         let file = IndexedFile {
+            tenant_id: *tenant_id,
             repository_id: repository_id.to_string(),
             branch: branch.to_string(),
             file_path: metadata.path.clone(),
@@ -169,6 +181,7 @@ impl FileRepository for MockFileRepository {
 
     async fn insert_chunks(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         chunks: Vec<ChunkMetadata>,
@@ -177,6 +190,7 @@ impl FileRepository for MockFileRepository {
 
         let mut stored_chunks = self.chunks.lock().unwrap();
         for mut chunk in chunks {
+            chunk.tenant_id = *tenant_id;
             chunk.repository_id = repository_id.to_string();
             chunk.branch = branch.to_string();
             stored_chunks.push(chunk);
@@ -186,6 +200,7 @@ impl FileRepository for MockFileRepository {
 
     async fn replace_file_chunks(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -197,7 +212,8 @@ impl FileRepository for MockFileRepository {
         let deleted_ids: Vec<Uuid> = chunks
             .iter()
             .filter(|c| {
-                c.repository_id == repository_id
+                c.tenant_id == *tenant_id
+                    && c.repository_id == repository_id
                     && c.branch == branch
                     && c.file_path == file_path
                     && c.generation < new_generation
@@ -206,7 +222,8 @@ impl FileRepository for MockFileRepository {
             .collect();
 
         chunks.retain(|c| {
-            !(c.repository_id == repository_id
+            !(c.tenant_id == *tenant_id
+                && c.repository_id == repository_id
                 && c.branch == branch
                 && c.file_path == file_path
                 && c.generation < new_generation)
@@ -217,6 +234,7 @@ impl FileRepository for MockFileRepository {
 
     async fn create_indexing_job(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         commit_sha: Option<&str>,
@@ -226,6 +244,7 @@ impl FileRepository for MockFileRepository {
         let job_id = Uuid::new_v4();
         let job = IndexingJob {
             job_id,
+            tenant_id: *tenant_id,
             repository_id: repository_id.to_string(),
             branch: branch.to_string(),
             status: JobStatus::Running,
@@ -277,6 +296,7 @@ impl FileRepository for MockFileRepository {
 
     async fn get_file_chunks(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -287,7 +307,10 @@ impl FileRepository for MockFileRepository {
         Ok(chunks
             .iter()
             .filter(|c| {
-                c.repository_id == repository_id && c.branch == branch && c.file_path == file_path
+                c.tenant_id == *tenant_id
+                    && c.repository_id == repository_id
+                    && c.branch == branch
+                    && c.file_path == file_path
             })
             .cloned()
             .collect())
@@ -295,6 +318,7 @@ impl FileRepository for MockFileRepository {
 
     async fn get_indexed_files(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
     ) -> DatabaseResult<Vec<IndexedFile>> {
@@ -303,17 +327,25 @@ impl FileRepository for MockFileRepository {
         let files = self.indexed_files.lock().unwrap();
         Ok(files
             .values()
-            .filter(|f| f.repository_id == repository_id && f.branch == branch)
+            .filter(|f| {
+                f.tenant_id == *tenant_id && f.repository_id == repository_id && f.branch == branch
+            })
             .cloned()
             .collect())
     }
 
-    async fn has_running_jobs(&self, repository_id: &str, branch: &str) -> DatabaseResult<bool> {
+    async fn has_running_jobs(
+        &self,
+        tenant_id: &Uuid,
+        repository_id: &str,
+        branch: &str,
+    ) -> DatabaseResult<bool> {
         self.check_fail()?;
 
         let jobs = self.jobs.lock().unwrap();
         Ok(jobs.values().any(|j| {
-            j.repository_id == repository_id
+            j.tenant_id == *tenant_id
+                && j.repository_id == repository_id
                 && j.branch == branch
                 && matches!(j.status, JobStatus::Running | JobStatus::Pending)
         }))
@@ -321,6 +353,7 @@ impl FileRepository for MockFileRepository {
 
     async fn get_file_metadata(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -328,6 +361,7 @@ impl FileRepository for MockFileRepository {
         self.check_fail()?;
 
         let key = (
+            *tenant_id,
             repository_id.to_string(),
             branch.to_string(),
             file_path.to_string(),
@@ -336,16 +370,20 @@ impl FileRepository for MockFileRepository {
         Ok(files.get(&key).cloned())
     }
 
-    async fn get_files_metadata(&self, file_paths: &[&str]) -> DatabaseResult<Vec<IndexedFile>> {
+    async fn get_files_metadata(
+        &self,
+        tenant_id: &Uuid,
+        file_paths: &[&str],
+    ) -> DatabaseResult<Vec<IndexedFile>> {
         self.check_fail()?;
 
         let files = self.indexed_files.lock().unwrap();
         let mut results = Vec::new();
 
         for &file_path in file_paths {
-            // Search across all repository/branch combinations for this file path
-            for ((_, _, stored_path), file) in files.iter() {
-                if stored_path == file_path {
+            // Search across all repository/branch combinations for this tenant + file path
+            for ((tid, _, _, stored_path), file) in files.iter() {
+                if tid == tenant_id && stored_path == file_path {
                     results.push(file.clone());
                 }
             }
@@ -356,18 +394,20 @@ impl FileRepository for MockFileRepository {
 
     async fn get_project_branch(
         &self,
+        tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
     ) -> DatabaseResult<Option<ProjectBranch>> {
         self.check_fail()?;
 
-        let key = (repository_id.to_string(), branch.to_string());
+        let key = (*tenant_id, repository_id.to_string(), branch.to_string());
         let branches = self.project_branches.lock().unwrap();
         Ok(branches.get(&key).cloned())
     }
 
     async fn get_project_branches(
         &self,
+        tenant_id: &Uuid,
         repo_branches: &[(String, String)],
     ) -> DatabaseResult<Vec<ProjectBranch>> {
         self.check_fail()?;
@@ -376,7 +416,7 @@ impl FileRepository for MockFileRepository {
         let results = repo_branches
             .iter()
             .filter_map(|(repo_id, branch)| {
-                let key = (repo_id.clone(), branch.clone());
+                let key = (*tenant_id, repo_id.clone(), branch.clone());
                 branches.get(&key).cloned()
             })
             .collect();
@@ -386,6 +426,7 @@ impl FileRepository for MockFileRepository {
     async fn enqueue_file(
         &self,
         _job_id: &Uuid,
+        _tenant_id: &Uuid,
         _repository_id: &str,
         _branch: &str,
         _file_path: &str,
@@ -423,13 +464,14 @@ impl FileRepository for MockFileRepository {
         Ok(true) // Mock always returns complete
     }
 
-    async fn get_indexing_job(&self, _job_id: &Uuid) -> DatabaseResult<Option<IndexingJob>> {
+    async fn get_indexing_job(&self, job_id: &Uuid) -> DatabaseResult<Option<IndexingJob>> {
         self.check_fail()?;
-        Ok(None)
+        Ok(self.jobs.lock().unwrap().get(job_id).cloned())
     }
 
     async fn list_indexing_jobs(
         &self,
+        _tenant_id: Option<&Uuid>,
         _repository_id: Option<&str>,
     ) -> DatabaseResult<Vec<IndexingJob>> {
         self.check_fail()?;
@@ -450,10 +492,14 @@ impl FileRepository for MockFileRepository {
 mod tests {
     use super::*;
 
+    // Test tenant for all unit tests
+    const TEST_TENANT: Uuid = Uuid::nil();
+
     #[tokio::test]
     async fn test_mock_project_branch() {
         let mock = MockFileRepository::new();
         let ctx = RepositoryContext {
+            tenant_id: TEST_TENANT,
             repository_id: "github.com/user/repo".to_string(),
             repository_url: Some("https://github.com/user/repo".to_string()),
             branch: "main".to_string(),
@@ -481,7 +527,7 @@ mod tests {
 
         // New file
         let state = mock
-            .check_file_state("repo", "main", "file.rs", "hash1")
+            .check_file_state(&TEST_TENANT, "repo", "main", "file.rs", "hash1")
             .await
             .unwrap();
         assert!(matches!(state, FileState::New { generation: 1 }));
@@ -499,20 +545,20 @@ mod tests {
             commit_date: None,
             author: None,
         };
-        mock.record_file_indexing("repo", "main", &metadata)
+        mock.record_file_indexing(&TEST_TENANT, "repo", "main", &metadata)
             .await
             .unwrap();
 
         // Same hash = unchanged
         let state = mock
-            .check_file_state("repo", "main", "file.rs", "hash1")
+            .check_file_state(&TEST_TENANT, "repo", "main", "file.rs", "hash1")
             .await
             .unwrap();
         assert!(matches!(state, FileState::Unchanged));
 
         // Different hash = updated
         let state = mock
-            .check_file_state("repo", "main", "file.rs", "hash2")
+            .check_file_state(&TEST_TENANT, "repo", "main", "file.rs", "hash2")
             .await
             .unwrap();
         assert!(matches!(
@@ -529,13 +575,13 @@ mod tests {
         let mock = MockFileRepository::new();
         mock.fail_next("Expected test error");
 
-        let result = mock.has_running_jobs("repo", "main").await;
+        let result = mock.has_running_jobs(&TEST_TENANT, "repo", "main").await;
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("Expected test error"));
 
         // Should work after error is consumed
-        let result = mock.has_running_jobs("repo", "main").await;
+        let result = mock.has_running_jobs(&TEST_TENANT, "repo", "main").await;
         assert!(result.is_ok());
     }
 
@@ -550,6 +596,7 @@ mod tests {
         let chunks = vec![
             ChunkMetadata {
                 chunk_id: chunk_id1,
+                tenant_id: TEST_TENANT,
                 repository_id: "repo".to_string(),
                 branch: "main".to_string(),
                 file_path: "file.rs".to_string(),
@@ -565,6 +612,7 @@ mod tests {
             },
             ChunkMetadata {
                 chunk_id: chunk_id2,
+                tenant_id: TEST_TENANT,
                 repository_id: "repo".to_string(),
                 branch: "main".to_string(),
                 file_path: "file.rs".to_string(),
@@ -580,17 +628,19 @@ mod tests {
             },
         ];
 
-        mock.insert_chunks("repo", "main", chunks).await.unwrap();
+        mock.insert_chunks(&TEST_TENANT, "repo", "main", chunks)
+            .await
+            .unwrap();
 
         let retrieved = mock
-            .get_file_chunks("repo", "main", "file.rs")
+            .get_file_chunks(&TEST_TENANT, "repo", "main", "file.rs")
             .await
             .unwrap();
         assert_eq!(retrieved.len(), 2);
 
         // Replace with new generation
         let deleted = mock
-            .replace_file_chunks("repo", "main", "file.rs", 2)
+            .replace_file_chunks(&TEST_TENANT, "repo", "main", "file.rs", 2)
             .await
             .unwrap();
         assert_eq!(deleted.len(), 2);
@@ -598,7 +648,7 @@ mod tests {
         assert!(deleted.contains(&chunk_id2));
 
         let remaining = mock
-            .get_file_chunks("repo", "main", "file.rs")
+            .get_file_chunks(&TEST_TENANT, "repo", "main", "file.rs")
             .await
             .unwrap();
         assert_eq!(remaining.len(), 0);

@@ -7,14 +7,33 @@ mod test_utils;
 
 use codetriever_indexing::indexing::service::FileContent;
 use test_utils::create_test_repository;
+use uuid::Uuid;
+
+/// Create a unique test tenant in the database
+async fn create_test_tenant(
+    repository: &std::sync::Arc<dyn codetriever_meta_data::traits::FileRepository>,
+) -> Uuid {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let tenant_name = format!("test_tenant_{timestamp}");
+
+    repository
+        .create_tenant(&tenant_name)
+        .await
+        .expect("Failed to create tenant")
+}
 
 #[test]
 fn test_postgres_queue_push_and_pop() {
     test_utils::get_test_runtime().block_on(async {
         let repository = create_test_repository().await;
+        let tenant_id = create_test_tenant(&repository).await;
 
         // Create project branch first (required for jobs foreign key)
         let ctx = codetriever_meta_data::models::RepositoryContext {
+            tenant_id,
             repository_id: "test_repo".to_string(),
             repository_url: None,
             branch: "main".to_string(),
@@ -32,7 +51,7 @@ fn test_postgres_queue_push_and_pop() {
 
         // Create parent job (required for queue foreign key)
         let job = repository
-            .create_indexing_job("test_repo", "main", None)
+            .create_indexing_job(&tenant_id, "test_repo", "main", None)
             .await
             .expect("Failed to create job");
         let job_id = job.job_id;
@@ -48,6 +67,7 @@ fn test_postgres_queue_push_and_pop() {
         repository
             .enqueue_file(
                 &job_id,
+                &tenant_id,
                 "test_repo",
                 "main",
                 &file.path,
@@ -96,9 +116,11 @@ fn test_postgres_queue_push_and_pop() {
 fn test_postgres_queue_concurrent_workers() {
     test_utils::get_test_runtime().block_on(async {
         let repository = create_test_repository().await;
+        let tenant_id = create_test_tenant(&repository).await;
 
         // Create project branch first (required for jobs foreign key)
         let ctx = codetriever_meta_data::models::RepositoryContext {
+            tenant_id,
             repository_id: "test_repo".to_string(),
             repository_url: None,
             branch: "main".to_string(),
@@ -116,7 +138,7 @@ fn test_postgres_queue_concurrent_workers() {
 
         // Create parent job (required for queue foreign key)
         let job = repository
-            .create_indexing_job("test_repo", "main", None)
+            .create_indexing_job(&tenant_id, "test_repo", "main", None)
             .await
             .expect("Failed to create job");
         let job_id = job.job_id;
@@ -126,6 +148,7 @@ fn test_postgres_queue_concurrent_workers() {
             repository
                 .enqueue_file(
                     &job_id,
+                    &tenant_id,
                     "test_repo",
                     "main",
                     &format!("file_{i}.rs"),
@@ -183,9 +206,11 @@ fn test_postgres_queue_concurrent_workers() {
 fn test_postgres_queue_crash_recovery() {
     test_utils::get_test_runtime().block_on(async {
         let repository = create_test_repository().await;
+        let tenant_id = create_test_tenant(&repository).await;
 
         // Create project branch and job
         let ctx = codetriever_meta_data::models::RepositoryContext {
+            tenant_id,
             repository_id: "test_repo".to_string(),
             repository_url: None,
             branch: "main".to_string(),
@@ -202,7 +227,7 @@ fn test_postgres_queue_crash_recovery() {
             .expect("Failed to create project branch");
 
         let job = repository
-            .create_indexing_job("test_repo", "main", None)
+            .create_indexing_job(&tenant_id, "test_repo", "main", None)
             .await
             .expect("Failed to create job");
         let job_id = job.job_id;
@@ -212,6 +237,7 @@ fn test_postgres_queue_crash_recovery() {
             repository
                 .enqueue_file(
                     &job_id,
+                    &tenant_id,
                     "test_repo",
                     "main",
                     &format!("file_{i}.rs"),

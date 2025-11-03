@@ -76,6 +76,7 @@ codetriever-search = { path = "../codetriever-search", features = [
     "test-utils",
 ] }
 tower = { workspace = true }
+sqlx = { workspace = true }
 
 [lints]
 workspace = true

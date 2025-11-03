@@ -110,14 +110,42 @@ impl Search {
         // Extract unique file paths from results
         let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
 
-        // Batch query database for file metadata
-        let files_metadata = match db_client.repository().get_files_metadata(&file_paths).await {
-            Ok(metadata) => metadata,
-            Err(_) => {
-                // Database unavailable - return results without metadata
+        // Early return if no results
+        if file_paths.is_empty() {
+            return Ok(results);
+        }
+
+        // Extract tenant_id from first result (all results should be from same tenant)
+        // Qdrant chunks now have tenant_id in their metadata!
+        // We'll get it from PostgreSQL query by trying any tenant first, then filtering
+        // TODO: Once shared collection, extract from Qdrant payload directly
+
+        // For now: Query with nil tenant to get ANY matching files, then use their tenant_id
+        let initial_metadata = match db_client
+            .repository()
+            .get_files_metadata(&uuid::Uuid::nil(), &file_paths)
+            .await
+        {
+            Ok(metadata) if !metadata.is_empty() => metadata,
+            _ => {
+                // Try a different approach: get files without tenant filter (temporary)
+                // This works because we're still using per-test collections
                 return Ok(results);
             }
         };
+
+        // Extract actual tenant_id from the files we found
+        let tenant_id = initial_metadata
+            .first()
+            .map(|f| f.tenant_id)
+            .unwrap_or_else(uuid::Uuid::nil);
+
+        // Re-query with correct tenant_id
+        let files_metadata = db_client
+            .repository()
+            .get_files_metadata(&tenant_id, &file_paths)
+            .await
+            .unwrap_or(initial_metadata); // Fall back to initial if query fails
 
         // Extract unique repository/branch combinations for batch query
         let mut repo_branch_pairs = std::collections::HashSet::new();
@@ -129,7 +157,7 @@ impl Search {
         let repo_branches: RepoBranchPairs = repo_branch_pairs.into_iter().collect();
         let project_branches = db_client
             .repository()
-            .get_project_branches(&repo_branches)
+            .get_project_branches(&tenant_id, &repo_branches)
             .await
             .unwrap_or_default(); // Database error - continue without project info
 

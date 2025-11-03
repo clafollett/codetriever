@@ -17,6 +17,7 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 lru = { workspace = true }
+uuid = { workspace = true }
 
 # Internal dependencies
 codetriever-common = { path = "../codetriever-common" }

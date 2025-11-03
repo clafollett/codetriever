@@ -34,6 +34,7 @@ fn test_search_performance_baseline() -> test_utils::TestResult {
 
         // Index some test content first
         let index_request = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "perf-test",
             "files": [
                 {
@@ -225,6 +226,7 @@ fn test_index_large_batch_performance() -> test_utils::TestResult {
         }
 
         let request_body = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "perf-batch-test",
             "files": files
         });

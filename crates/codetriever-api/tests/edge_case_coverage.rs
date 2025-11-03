@@ -220,6 +220,7 @@ fn test_index_with_special_characters_in_path() -> test_utils::TestResult {
 
         // Test with special characters in file paths
         let request_body = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "test-project",
             "files": [
                 {
@@ -259,6 +260,11 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
         eprintln!("\n📦 [Large File Test] Starting...");
         let test_state = test_utils::app_state().await?;
         eprintln!("📦 [Large File Test] App state created");
+
+        // Spawn BackgroundWorker for this test (async job pattern requires it!)
+        let _worker_shutdown = test_utils::spawn_test_worker(&test_state).await?;
+        eprintln!("📦 [Large File Test] BackgroundWorker spawned");
+
         let app = create_router(test_state.state().clone());
 
     // Test with large file content (boundary condition)
@@ -277,6 +283,7 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
     let unique_path = format!("src/large_file_{timestamp}.rs");
 
     let request_body = json!({
+        "tenant_id": test_state.tenant_id(),
         "project_id": "test-project",
         "files": [
             {

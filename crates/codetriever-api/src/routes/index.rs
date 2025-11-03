@@ -30,8 +30,19 @@ pub fn routes_with_indexer(indexer: IndexerServiceHandle) -> Router {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct IndexRequest {
+    /// Tenant ID for multi-tenancy isolation
+    /// Defaults to nil UUID (00000000-...) for single-tenant deployments
+    /// TODO: Extract from JWT/auth headers once authentication is implemented
+    #[serde(default = "default_tenant_id")]
+    #[schema(value_type = String, example = "00000000-0000-0000-0000-000000000000")]
+    pub tenant_id: uuid::Uuid,
     pub project_id: String,
     pub files: Vec<FileContent>,
+}
+
+/// Default tenant ID for requests that don't specify one
+const fn default_tenant_id() -> uuid::Uuid {
+    uuid::Uuid::nil()
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -157,10 +168,14 @@ pub async fn index_handler(
 
     let file_count = files.len();
 
+    // Use tenant_id from request (defaults to nil UUID if not provided)
+    // TODO: In future, extract from JWT/auth headers and validate against request.tenant_id
+    let tenant_id = request.tenant_id;
+
     // Start async indexing job (returns immediately - no lock needed!)
     let job_id = match tokio::time::timeout(
         Duration::from_secs(5), // Job creation should be fast
-        indexer.start_indexing_job(&request.project_id, files),
+        indexer.start_indexing_job(tenant_id, &request.project_id, files),
     )
     .await
     {

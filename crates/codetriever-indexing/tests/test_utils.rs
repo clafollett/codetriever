@@ -17,6 +17,25 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 pub use codetriever_test_utils::{get_shared_embedding_service, get_test_runtime};
 
+/// Create a unique tenant in the database
+///
+/// Returns the tenant_id for use in tests
+#[allow(dead_code)]
+pub async fn create_test_tenant(
+    repository: &std::sync::Arc<dyn codetriever_meta_data::traits::FileRepository>,
+) -> uuid::Uuid {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let tenant_name = format!("test_tenant_{timestamp}");
+
+    repository
+        .create_tenant(&tenant_name)
+        .await
+        .expect("Failed to create tenant")
+}
+
 use codetriever_indexing::{
     BackgroundWorker, WorkerConfig,
     indexing::{IndexerService, service::FileContent},
@@ -32,7 +51,10 @@ use uuid::Uuid;
 /// 2. Starts indexing job
 /// 3. Polls until complete
 /// 4. Returns job result
-#[allow(dead_code)]
+///
+/// Note: Some test files don't use this helper, causing dead_code warnings.
+/// This is expected for shared test utilities.
+#[allow(dead_code, clippy::too_many_arguments)]
 pub async fn index_files_async(
     indexer: &Arc<dyn IndexerService>,
     repository: Arc<dyn FileRepository>,
@@ -40,6 +62,7 @@ pub async fn index_files_async(
     vector_storage: Arc<dyn VectorStorage>,
     code_parser: Arc<CodeParser>,
     config: &ApplicationConfig,
+    tenant_id: Uuid,
     project_id: &str,
     files: Vec<FileContent>,
 ) -> (Uuid, codetriever_meta_data::models::IndexingJob) {
@@ -52,19 +75,22 @@ pub async fn index_files_async(
         WorkerConfig::from_app_config(config),
     );
 
+    // Get shutdown handle before moving worker
+    let shutdown = worker.shutdown_handle();
+
     // Spawn worker in background
-    let _worker_handle = tokio::spawn(async move {
+    let worker_handle = tokio::spawn(async move {
         worker.run().await;
     });
 
     // Start indexing job
     let job_id = indexer
-        .start_indexing_job(project_id, files)
+        .start_indexing_job(tenant_id, project_id, files)
         .await
         .expect("Failed to start indexing job");
 
     // Poll for completion
-    loop {
+    let result = loop {
         let job_status = indexer
             .get_job_status(&job_id)
             .await
@@ -72,11 +98,17 @@ pub async fn index_files_async(
             .expect("Job should exist");
 
         match job_status.status {
-            JobStatus::Completed => return (job_id, job_status),
+            JobStatus::Completed => break (job_id, job_status),
             JobStatus::Failed => panic!("Job failed: {:?}", job_status.error_message),
             _ => tokio::time::sleep(tokio::time::Duration::from_millis(100)).await,
         }
-    }
+    };
+
+    // Shutdown worker gracefully after job completes
+    shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), worker_handle).await;
+
+    result
 }
 
 /// Get the Qdrant URL for testing, defaulting to localhost

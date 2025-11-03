@@ -7,6 +7,8 @@ use uuid::Uuid;
 /// Result from dequeuing a file from the global task queue
 #[derive(Debug, Clone)]
 pub struct DequeuedFile {
+    /// Tenant ID (multi-tenancy support)
+    pub tenant_id: Uuid,
     /// Job ID this file belongs to
     pub job_id: Uuid,
     /// File path within repository
@@ -17,9 +19,10 @@ pub struct DequeuedFile {
     pub content_hash: String,
 }
 
-/// Represents a repository/branch combination
+/// Represents a repository/branch combination (per tenant)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ProjectBranch {
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub repository_url: Option<String>,
@@ -30,6 +33,7 @@ pub struct ProjectBranch {
 /// Represents an indexed file in the database
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct IndexedFile {
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub file_path: String,
@@ -53,6 +57,7 @@ pub struct IndexedFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkMetadata {
     pub chunk_id: Uuid,
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub file_path: String,
@@ -75,6 +80,7 @@ pub struct ChunkMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexingJob {
     pub job_id: Uuid,
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub status: JobStatus,
@@ -137,6 +143,7 @@ impl std::fmt::Display for JobStatus {
 pub struct IndexingJobFile {
     pub id: Uuid,
     pub job_id: Uuid,
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub file_path: String,
@@ -170,6 +177,7 @@ pub enum FileState {
 /// Repository context from Git
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryContext {
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub repository_url: Option<String>,
     pub branch: String,

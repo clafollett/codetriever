@@ -13,10 +13,16 @@ pub trait IndexerService: Send + Sync {
     /// The job is processed asynchronously by background workers.
     /// Use this for API endpoints to avoid blocking HTTP requests.
     ///
+    /// # Parameters
+    /// - `tenant_id`: Tenant identifier for multi-tenancy isolation
+    /// - `project_id`: Project identifier (format: "repository_id:branch")
+    /// - `files`: Files to index
+    ///
     /// # Returns
     /// - `Uuid`: Job ID for tracking progress via `get_job_status()`
     async fn start_indexing_job(
         &self,
+        tenant_id: Uuid,
         project_id: &str,
         files: Vec<FileContent>,
     ) -> crate::IndexerResult<Uuid>;
@@ -27,8 +33,12 @@ pub trait IndexerService: Send + Sync {
     /// - `IndexingJob`: Job metadata including status, progress, and any errors
     async fn get_job_status(&self, job_id: &Uuid) -> crate::IndexerResult<Option<IndexingJob>>;
 
-    /// List all indexing jobs, optionally filtered by project
-    async fn list_jobs(&self, project_id: Option<&str>) -> crate::IndexerResult<Vec<IndexingJob>>;
+    /// List all indexing jobs, optionally filtered by tenant and/or project
+    async fn list_jobs(
+        &self,
+        tenant_id: Option<Uuid>,
+        project_id: Option<&str>,
+    ) -> crate::IndexerResult<Vec<IndexingJob>>;
 
     /// Drop the collection from storage
     async fn drop_collection(&mut self) -> crate::IndexerResult<bool>;
@@ -76,6 +86,7 @@ pub mod test_utils {
     impl IndexerService for MockIndexerService {
         async fn start_indexing_job(
             &self,
+            _tenant_id: Uuid,
             _project_id: &str,
             _files: Vec<FileContent>,
         ) -> crate::IndexerResult<Uuid> {
@@ -93,6 +104,7 @@ pub mod test_utils {
 
         async fn list_jobs(
             &self,
+            _tenant_id: Option<Uuid>,
             _project_id: Option<&str>,
         ) -> crate::IndexerResult<Vec<IndexingJob>> {
             // Mock returns empty list

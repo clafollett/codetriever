@@ -157,6 +157,9 @@ def transform_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
 
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let (_job_id, job_status) = test_utils::index_files_async(
             &indexer,
             Arc::clone(&repository),
@@ -164,6 +167,7 @@ def transform_item(item: Dict[str, Any]) -> Dict[str, Any]:
             Arc::clone(&vector_storage),
             code_parser,
             &config,
+            tenant_id,
             &project_id,
             files,
         )
@@ -245,6 +249,9 @@ impl PostgresConnection {
 
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
 
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let (_job_id, job_status) = test_utils::index_files_async(
             &indexer,
             Arc::clone(&repository),
@@ -252,6 +259,7 @@ impl PostgresConnection {
             Arc::clone(&vector_storage),
             code_parser,
             &config,
+            tenant_id,
             &project_id,
             files,
         )
@@ -403,6 +411,9 @@ def fetch_from_database():
 
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
 
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let (_job_id, job_status) = test_utils::index_files_async(
             &indexer,
             Arc::clone(&repository),
@@ -410,6 +421,7 @@ def fetch_from_database():
             Arc::clone(&vector_storage),
             code_parser,
             &config,
+            tenant_id,
             &project_id,
             files,
         )
@@ -494,6 +506,9 @@ pub fn function_{i}(param: i32) -> i32 {{
 
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
 
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let (_job_id, job_status) = test_utils::index_files_async(
             &indexer,
             Arc::clone(&repository),
@@ -501,6 +516,7 @@ pub fn function_{i}(param: i32) -> i32 {{
             Arc::clone(&vector_storage),
             code_parser,
             &config,
+            tenant_id,
             &project_id,
             files,
         )
@@ -588,6 +604,9 @@ fn test_index_file_content_handles_empty_and_invalid_files() {
 
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
 
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let (_job_id, job_status) = test_utils::index_files_async(
             &indexer,
             Arc::clone(&repository),
@@ -595,6 +614,7 @@ fn test_index_file_content_handles_empty_and_invalid_files() {
             Arc::clone(&vector_storage),
             code_parser,
             &config,
+            tenant_id,
             &project_id,
             files,
         )
@@ -672,6 +692,9 @@ pub fn test_function() -> String {
 
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
 
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let (_job_id, job_status) = test_utils::index_files_async(
             &indexer,
             Arc::clone(&repository),
@@ -679,6 +702,7 @@ pub fn test_function() -> String {
             Arc::clone(&vector_storage),
             code_parser,
             &config,
+            tenant_id,
             &project_id,
             files,
         )

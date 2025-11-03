@@ -105,6 +105,9 @@ fn test_indexer_stores_chunks_in_qdrant() {
         // Use async job pattern with BackgroundWorker
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
 
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let start = std::time::Instant::now();
         let (_job_id, job_status) = test_utils::index_files_async(
             &indexer,
@@ -113,6 +116,7 @@ fn test_indexer_stores_chunks_in_qdrant() {
             Arc::clone(&vector_storage),
             code_parser,
             &config,
+            tenant_id,
             &project_id,
             files,
         )

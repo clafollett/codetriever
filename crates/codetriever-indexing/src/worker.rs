@@ -304,6 +304,7 @@ impl BackgroundWorker {
         let state = self
             .repository
             .check_file_state(
+                &job.tenant_id,
                 &job.repository_id,
                 &job.branch,
                 &dequeued.file_path,
@@ -337,7 +338,12 @@ impl BackgroundWorker {
                     author: None,
                 };
                 self.repository
-                    .record_file_indexing(&job.repository_id, &job.branch, &metadata)
+                    .record_file_indexing(
+                        &job.tenant_id,
+                        &job.repository_id,
+                        &job.branch,
+                        &metadata,
+                    )
                     .await?;
 
                 // For updated files, delete old chunks from both Qdrant and PostgreSQL
@@ -348,6 +354,7 @@ impl BackgroundWorker {
                     let deleted_ids = self
                         .repository
                         .replace_file_chunks(
+                            &job.tenant_id,
                             &job.repository_id,
                             &job.branch,
                             &dequeued.file_path,
@@ -405,17 +412,26 @@ impl BackgroundWorker {
             )
             .collect();
 
-        // 6. Store chunks in Qdrant
+        // 6. Store chunks in Qdrant with full metadata context
+        // Build storage context with available metadata
+        // Note: commit_sha comes from job level (one commit per indexing job)
+        // For per-file commit tracking, we'd need to enhance the queue schema
+        let storage_context = codetriever_vector_data::ChunkStorageContext {
+            tenant_id: job.tenant_id,
+            repository_id: job.repository_id.clone(),
+            branch: job.branch.clone(),
+            generation,
+            repository_url: None, // Not currently tracked in jobs
+            commit_sha: job.commit_sha.clone(),
+            commit_message: None, // Not currently tracked in jobs
+            commit_date: None,    // Not currently tracked in jobs
+            author: None,         // Not currently tracked in jobs
+        };
+
         let correlation_id = CorrelationId::new();
         let chunk_ids = self
             .vector_storage
-            .store_chunks(
-                &job.repository_id,
-                &job.branch,
-                &vector_chunks,
-                generation,
-                &correlation_id,
-            )
+            .store_chunks(&storage_context, &vector_chunks, &correlation_id)
             .await?;
 
         // 7. Store chunk metadata in PostgreSQL
@@ -426,6 +442,7 @@ impl BackgroundWorker {
             .map(
                 |(idx, (parsing_chunk, chunk_id))| codetriever_meta_data::models::ChunkMetadata {
                     chunk_id: *chunk_id,
+                    tenant_id: job.tenant_id,
                     repository_id: job.repository_id.clone(),
                     branch: job.branch.clone(),
                     file_path: parsing_chunk.file_path.clone(),
@@ -443,7 +460,12 @@ impl BackgroundWorker {
             .collect();
 
         self.repository
-            .insert_chunks(&job.repository_id, &job.branch, chunk_metadata)
+            .insert_chunks(
+                &job.tenant_id,
+                &job.repository_id,
+                &job.branch,
+                chunk_metadata,
+            )
             .await?;
 
         tracing::info!("Stored {} chunks for {}", chunk_count, dequeued.file_path);

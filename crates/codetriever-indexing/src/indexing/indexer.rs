@@ -99,6 +99,7 @@ pub async fn parser_worker(
     chunk_queue: Arc<dyn ChunkQueue>,
     code_parser: Arc<CodeParser>,
     repository: RepositoryRef,
+    tenant_id: uuid::Uuid,
     repository_id: String,
     branch: String,
     files_indexed: Arc<AtomicUsize>,
@@ -137,7 +138,13 @@ pub async fn parser_worker(
         // Check file state in database
         let content_hash = codetriever_meta_data::hash_content(&utf8_content);
         let state = repository
-            .check_file_state(&repository_id, &branch, &file.path, &content_hash)
+            .check_file_state(
+                &tenant_id,
+                &repository_id,
+                &branch,
+                &file.path,
+                &content_hash,
+            )
             .await?;
 
         let generation = match state {
@@ -169,7 +176,7 @@ pub async fn parser_worker(
                     author: None,
                 };
                 repository
-                    .record_file_indexing(&repository_id, &branch, &metadata)
+                    .record_file_indexing(&tenant_id, &repository_id, &branch, &metadata)
                     .await?;
 
                 // For updated files, delete old chunks
@@ -178,7 +185,13 @@ pub async fn parser_worker(
                     codetriever_meta_data::models::FileState::Updated { .. }
                 ) {
                     let deleted_ids = repository
-                        .replace_file_chunks(&repository_id, &branch, &file.path, generation)
+                        .replace_file_chunks(
+                            &tenant_id,
+                            &repository_id,
+                            &branch,
+                            &file.path,
+                            generation,
+                        )
                         .await?;
                     tracing::debug!(
                         "Parser worker {worker_id}: deleted {} old chunks",
@@ -237,6 +250,7 @@ pub async fn embedding_worker(
     embedding_service: EmbeddingServiceRef,
     storage: VectorStorageRef,
     repository: RepositoryRef,
+    tenant_id: uuid::Uuid,
     repository_id: String,
     branch: String,
     chunk_batch_size: usize,
@@ -278,11 +292,22 @@ pub async fn embedding_worker(
             .map(|c| convert_chunk(c.chunk.clone()))
             .collect();
 
-        // Store in Qdrant
-        // TODO: Track generation metadata through queue (currently hardcoded to 1)
+        // Store in Qdrant with full metadata context
+        let storage_context = codetriever_vector_data::ChunkStorageContext {
+            tenant_id,
+            repository_id: repository_id.clone(),
+            branch: branch.clone(),
+            generation: 1, // TODO: Track generation through queue
+            repository_url: None,
+            commit_sha: None,
+            commit_message: None,
+            commit_date: None,
+            author: None,
+        };
+
         let correlation_id = CorrelationId::new();
         let chunk_ids = storage
-            .store_chunks(&repository_id, &branch, &vector_chunks, 1, &correlation_id)
+            .store_chunks(&storage_context, &vector_chunks, &correlation_id)
             .await?;
 
         // Store metadata in Postgres
@@ -293,6 +318,7 @@ pub async fn embedding_worker(
             .map(
                 |(chunk_with_meta, chunk_id)| codetriever_meta_data::models::ChunkMetadata {
                     chunk_id: *chunk_id,
+                    tenant_id,
                     repository_id: repository_id.clone(),
                     branch: branch.clone(),
                     file_path: chunk_with_meta.chunk.file_path.clone(),
@@ -310,7 +336,7 @@ pub async fn embedding_worker(
             .collect();
 
         repository
-            .insert_chunks(&repository_id, &branch, chunk_metadata)
+            .insert_chunks(&tenant_id, &repository_id, &branch, chunk_metadata)
             .await?;
 
         chunks_stored.fetch_add(batch_size, Ordering::Relaxed);
@@ -369,23 +395,46 @@ use async_trait::async_trait;
 impl IndexerService for Indexer {
     async fn start_indexing_job(
         &self,
+        tenant_id: uuid::Uuid,
         project_id: &str,
         files: Vec<ServiceFileContent>,
     ) -> crate::IndexerResult<uuid::Uuid> {
         // Parse project_id as "repository_id:branch"
         let (repository_id, branch) = project_id.split_once(':').unwrap_or((project_id, "main"));
 
+        // Ensure project branch exists (required for FK constraint)
+        let ctx = codetriever_meta_data::models::RepositoryContext {
+            tenant_id,
+            repository_id: repository_id.to_string(),
+            branch: branch.to_string(),
+            repository_url: None,
+            commit_sha: None,
+            commit_message: None,
+            commit_date: None,
+            author: None,
+            is_dirty: false,
+            root_path: std::path::PathBuf::from("."),
+        };
+        self.repository.ensure_project_branch(&ctx).await?;
+
         // Create job in database
         let job = self
             .repository
-            .create_indexing_job(repository_id, branch, None)
+            .create_indexing_job(&tenant_id, repository_id, branch, None)
             .await?;
 
-        // Enqueue all files to persistent queue
+        // Enqueue all files to persistent queue (skip binary files)
         for file in files {
+            // Skip files with null bytes (binary files) - PostgreSQL text columns reject them
+            if file.content.as_bytes().contains(&0) {
+                tracing::debug!("Skipping binary file {} (contains null bytes)", file.path);
+                continue;
+            }
+
             self.repository
                 .enqueue_file(
                     &job.job_id,
+                    &tenant_id,
                     repository_id,
                     branch,
                     &file.path,
@@ -407,9 +456,13 @@ impl IndexerService for Indexer {
 
     async fn list_jobs(
         &self,
+        tenant_id: Option<uuid::Uuid>,
         project_id: Option<&str>,
     ) -> crate::IndexerResult<Vec<codetriever_meta_data::models::IndexingJob>> {
-        Ok(self.repository.list_indexing_jobs(project_id).await?)
+        Ok(self
+            .repository
+            .list_indexing_jobs(tenant_id.as_ref(), project_id)
+            .await?)
     }
 
     async fn drop_collection(&mut self) -> crate::IndexerResult<bool> {
@@ -484,6 +537,9 @@ mod tests {
         }
     }
 
+    // Test tenant for all unit tests
+    const TEST_TENANT: uuid::Uuid = uuid::Uuid::nil();
+
     #[tokio::test]
     async fn test_indexer_service_creates_job() {
         // Arrange - Create mock repository, storage, and embedding service
@@ -503,7 +559,7 @@ mod tests {
         };
 
         let job_id = indexer
-            .start_indexing_job("test_repo:main", vec![file_content])
+            .start_indexing_job(TEST_TENANT, "test_repo:main", vec![file_content])
             .await;
 
         // Assert - Job should be created

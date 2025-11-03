@@ -26,6 +26,7 @@ fn test_concurrent_search_load() -> test_utils::TestResult {
 
         // Index some test data first
         let index_request = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "load-test",
             "files": [
                 {
@@ -164,6 +165,7 @@ fn test_sustained_load_over_time() -> test_utils::TestResult {
 
         // Index test data
         let index_request = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "sustained-load-test",
             "files": [
                 {
