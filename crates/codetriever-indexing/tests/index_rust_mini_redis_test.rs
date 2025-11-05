@@ -194,9 +194,12 @@ fn test_index_rust_mini_redis() {
                 .as_millis();
             let unique_project_id = format!("mini-redis-{timestamp}:main");
 
+            // Build commit context for mini-redis repo
+            let commit_context = test_utils::test_commit_context();
+
             // Start indexing job (enqueues files, returns immediately - production API!)
             let job_id = indexer
-                .start_indexing_job(tenant_id, &unique_project_id, files)
+                .start_indexing_job(tenant_id, &unique_project_id, files, &commit_context)
                 .await
                 .expect("Failed to start indexing job");
 

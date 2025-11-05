@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::error::DatabaseResult;
 use crate::models::{
-    ChunkMetadata, DequeuedFile, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus,
-    ProjectBranch, RepositoryContext,
+    ChunkMetadata, CommitContext, DequeuedFile, FileMetadata, FileState, IndexedFile, IndexingJob,
+    JobStatus, ProjectBranch, RepositoryContext,
 };
 
 /// Database repository trait for all database operations
@@ -59,13 +59,13 @@ pub trait FileRepository: Send + Sync {
         new_generation: i64,
     ) -> DatabaseResult<Vec<Uuid>>;
 
-    /// Create new indexing job
+    /// Create new indexing job with commit context
     async fn create_indexing_job(
         &self,
         tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
-        commit_sha: Option<&str>,
+        commit_context: &CommitContext,
     ) -> DatabaseResult<IndexingJob>;
 
     /// Update indexing job progress

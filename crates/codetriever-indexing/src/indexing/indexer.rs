@@ -170,10 +170,11 @@ pub async fn parser_worker(
                     encoding: detected_encoding.clone(),
                     size_bytes,
                     generation,
-                    commit_sha: None,
-                    commit_message: None,
-                    commit_date: None,
-                    author: None,
+                    // Deprecated parser_worker doesn't have job context - use placeholders
+                    commit_sha: "unknown".to_string(),
+                    commit_message: "Legacy indexing - no commit data".to_string(),
+                    commit_date: chrono::Utc::now(),
+                    author: "Unknown".to_string(),
                 };
                 repository
                     .record_file_indexing(&tenant_id, &repository_id, &branch, &metadata)
@@ -398,6 +399,7 @@ impl IndexerService for Indexer {
         tenant_id: uuid::Uuid,
         project_id: &str,
         files: Vec<ServiceFileContent>,
+        commit_context: &codetriever_meta_data::models::CommitContext,
     ) -> crate::IndexerResult<uuid::Uuid> {
         // Parse project_id as "repository_id:branch"
         let (repository_id, branch) = project_id.split_once(':').unwrap_or((project_id, "main"));
@@ -407,20 +409,20 @@ impl IndexerService for Indexer {
             tenant_id,
             repository_id: repository_id.to_string(),
             branch: branch.to_string(),
-            repository_url: None,
-            commit_sha: None,
-            commit_message: None,
-            commit_date: None,
-            author: None,
+            repository_url: commit_context.repository_url.clone(),
+            commit_sha: commit_context.commit_sha.clone(),
+            commit_message: commit_context.commit_message.clone(),
+            commit_date: commit_context.commit_date,
+            author: commit_context.author.clone(),
             is_dirty: false,
             root_path: std::path::PathBuf::from("."),
         };
         self.repository.ensure_project_branch(&ctx).await?;
 
-        // Create job in database
+        // Create job in database with full commit context
         let job = self
             .repository
-            .create_indexing_job(&tenant_id, repository_id, branch, None)
+            .create_indexing_job(&tenant_id, repository_id, branch, commit_context)
             .await?;
 
         // Enqueue all files to persistent queue (skip binary files)
@@ -558,8 +560,21 @@ mod tests {
             hash: codetriever_meta_data::hash_content(content),
         };
 
+        let commit_context = codetriever_meta_data::models::CommitContext {
+            repository_url: "https://github.com/test/repo".to_string(),
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test commit".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test <test@test.com>".to_string(),
+        };
+
         let job_id = indexer
-            .start_indexing_job(TEST_TENANT, "test_repo:main", vec![file_content])
+            .start_indexing_job(
+                TEST_TENANT,
+                "test_repo:main",
+                vec![file_content],
+                &commit_context,
+            )
             .await;
 
         // Assert - Job should be created

@@ -38,6 +38,8 @@ pub struct IndexRequest {
     pub tenant_id: uuid::Uuid,
     pub project_id: String,
     pub files: Vec<FileContent>,
+    /// Git commit context (required - extracted by CLI/MCP from user's repo)
+    pub commit_context: codetriever_meta_data::models::CommitContext,
 }
 
 /// Default tenant ID for requests that don't specify one
@@ -175,7 +177,12 @@ pub async fn index_handler(
     // Start async indexing job (returns immediately - no lock needed!)
     let job_id = match tokio::time::timeout(
         Duration::from_secs(5), // Job creation should be fast
-        indexer.start_indexing_job(tenant_id, &request.project_id, files),
+        indexer.start_indexing_job(
+            tenant_id,
+            &request.project_id,
+            files,
+            &request.commit_context,
+        ),
     )
     .await
     {
@@ -356,7 +363,7 @@ mod tests {
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
-            "project_id": "test-project",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
             "files": [
                 {
                     "path": "src/main.rs",
@@ -399,7 +406,7 @@ mod tests {
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
-            "project_id": "test-project",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
             "files": [
                 {"path": "file1.rs", "content": "fn main() {}"},
                 {"path": "file2.rs", "content": "fn test() {}"}
@@ -450,7 +457,7 @@ mod tests {
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
-            "project_id": "test-project",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
             "files": []
         }"#;
 
@@ -476,7 +483,7 @@ mod tests {
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
-            "project_id": "test-project",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
             "files": [
                 {"path": "file.rs", "content": ""}
             ]
@@ -513,7 +520,7 @@ mod tests {
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
-            "project_id": "test-project",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
             "files": [
                 {"path": "file1.rs", "content": "code1"},
                 {"path": "file2.rs", "content": "code2"},
@@ -570,7 +577,7 @@ mod tests {
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
-            "project_id": "test-project",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
             "files": [
                 {"path": "file.py", "content": "def hello(): pass"}
             ]
@@ -607,7 +614,7 @@ mod tests {
         let app = routes_with_indexer(mock_indexer);
 
         let request_body = r#"{
-            "project_id": "test-project",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
             "files": [
                 {"path": "file.rs", "content": "code"}
             ]

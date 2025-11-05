@@ -35,12 +35,12 @@ fn test_postgres_queue_push_and_pop() {
         let ctx = codetriever_meta_data::models::RepositoryContext {
             tenant_id,
             repository_id: "test_repo".to_string(),
-            repository_url: None,
+            repository_url: "https://github.com/test/repo".to_string(),
             branch: "main".to_string(),
-            commit_sha: None,
-            commit_message: None,
-            commit_date: None,
-            author: None,
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test commit".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test <test@test.com>".to_string(),
             is_dirty: false,
             root_path: std::path::PathBuf::from("."),
         };
@@ -50,8 +50,15 @@ fn test_postgres_queue_push_and_pop() {
             .expect("Failed to create project branch");
 
         // Create parent job (required for queue foreign key)
+        let commit_ctx = codetriever_meta_data::models::CommitContext {
+            repository_url: "https://github.com/test/repo".to_string(),
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test".to_string(),
+        };
         let job = repository
-            .create_indexing_job(&tenant_id, "test_repo", "main", None)
+            .create_indexing_job(&tenant_id, "test_repo", "main", &commit_ctx)
             .await
             .expect("Failed to create job");
         let job_id = job.job_id;
@@ -122,12 +129,12 @@ fn test_postgres_queue_concurrent_workers() {
         let ctx = codetriever_meta_data::models::RepositoryContext {
             tenant_id,
             repository_id: "test_repo".to_string(),
-            repository_url: None,
+            repository_url: "https://github.com/test/repo".to_string(),
             branch: "main".to_string(),
-            commit_sha: None,
-            commit_message: None,
-            commit_date: None,
-            author: None,
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test commit".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test <test@test.com>".to_string(),
             is_dirty: false,
             root_path: std::path::PathBuf::from("."),
         };
@@ -137,8 +144,15 @@ fn test_postgres_queue_concurrent_workers() {
             .expect("Failed to create project branch");
 
         // Create parent job (required for queue foreign key)
+        let commit_ctx = codetriever_meta_data::models::CommitContext {
+            repository_url: "https://github.com/test/repo".to_string(),
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test".to_string(),
+        };
         let job = repository
-            .create_indexing_job(&tenant_id, "test_repo", "main", None)
+            .create_indexing_job(&tenant_id, "test_repo", "main", &commit_ctx)
             .await
             .expect("Failed to create job");
         let job_id = job.job_id;
@@ -212,12 +226,12 @@ fn test_postgres_queue_crash_recovery() {
         let ctx = codetriever_meta_data::models::RepositoryContext {
             tenant_id,
             repository_id: "test_repo".to_string(),
-            repository_url: None,
+            repository_url: "https://github.com/test/repo".to_string(),
             branch: "main".to_string(),
-            commit_sha: None,
-            commit_message: None,
-            commit_date: None,
-            author: None,
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test commit".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test <test@test.com>".to_string(),
             is_dirty: false,
             root_path: std::path::PathBuf::from("."),
         };
@@ -226,8 +240,15 @@ fn test_postgres_queue_crash_recovery() {
             .await
             .expect("Failed to create project branch");
 
+        let commit_ctx = codetriever_meta_data::models::CommitContext {
+            repository_url: "https://github.com/test/repo".to_string(),
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test".to_string(),
+        };
         let job = repository
-            .create_indexing_job(&tenant_id, "test_repo", "main", None)
+            .create_indexing_job(&tenant_id, "test_repo", "main", &commit_ctx)
             .await
             .expect("Failed to create job");
         let job_id = job.job_id;

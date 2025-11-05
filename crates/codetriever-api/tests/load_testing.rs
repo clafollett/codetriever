@@ -28,6 +28,7 @@ fn test_concurrent_search_load() -> test_utils::TestResult {
         let index_request = json!({
             "tenant_id": test_state.tenant_id(),
             "project_id": "load-test",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"},
             "files": [
                 {
                     "path": "src/auth.rs",
@@ -167,6 +168,7 @@ fn test_sustained_load_over_time() -> test_utils::TestResult {
         let index_request = json!({
             "tenant_id": test_state.tenant_id(),
             "project_id": "sustained-load-test",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"},
             "files": [
                 {
                     "path": "src/main.rs",

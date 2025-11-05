@@ -92,7 +92,14 @@ CREATE TABLE IF NOT EXISTS indexing_jobs (
     files_total INT,
     files_processed INT DEFAULT 0,
     chunks_created INT DEFAULT 0,
-    commit_sha TEXT,
+
+    -- Git commit metadata (required - indexing always happens in Git context)
+    repository_url TEXT NOT NULL,
+    commit_sha TEXT NOT NULL,
+    commit_message TEXT NOT NULL,
+    commit_date TIMESTAMPTZ NOT NULL,
+    author TEXT NOT NULL,
+
     started_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     error_message TEXT,

@@ -36,6 +36,7 @@ fn test_search_performance_baseline() -> test_utils::TestResult {
         let index_request = json!({
             "tenant_id": test_state.tenant_id(),
             "project_id": "perf-test",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"},
             "files": [
                 {
                     "path": "src/auth.rs",
@@ -228,6 +229,7 @@ fn test_index_large_batch_performance() -> test_utils::TestResult {
         let request_body = json!({
             "tenant_id": test_state.tenant_id(),
             "project_id": "perf-batch-test",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"},
             "files": files
         });
 

@@ -72,13 +72,13 @@ impl RepositoryContext {
 
         Ok(Self {
             tenant_id,
-            repository_id,
-            repository_url,
+            repository_id: repository_id.clone(),
+            repository_url: repository_url.unwrap_or_else(|| repository_id.clone()),
             branch,
-            commit_sha,
-            commit_message,
-            commit_date,
-            author,
+            commit_sha: commit_sha.unwrap_or_else(|| "unknown".to_string()),
+            commit_message: commit_message.unwrap_or_else(|| "No commit message".to_string()),
+            commit_date: commit_date.unwrap_or_else(chrono::Utc::now),
+            author: author.unwrap_or_else(|| "Unknown".to_string()),
             is_dirty,
             root_path,
         })

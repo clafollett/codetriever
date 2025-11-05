@@ -332,10 +332,10 @@ impl BackgroundWorker {
                     encoding: detected_encoding.clone(),
                     size_bytes,
                     generation,
-                    commit_sha: None,
-                    commit_message: None,
-                    commit_date: None,
-                    author: None,
+                    commit_sha: job.commit_sha.clone(),
+                    commit_message: job.commit_message.clone(),
+                    commit_date: job.commit_date,
+                    author: job.author.clone(),
                 };
                 self.repository
                     .record_file_indexing(
@@ -421,11 +421,11 @@ impl BackgroundWorker {
             repository_id: job.repository_id.clone(),
             branch: job.branch.clone(),
             generation,
-            repository_url: None, // Not currently tracked in jobs
-            commit_sha: job.commit_sha.clone(),
-            commit_message: None, // Not currently tracked in jobs
-            commit_date: None,    // Not currently tracked in jobs
-            author: None,         // Not currently tracked in jobs
+            repository_url: Some(job.repository_url.clone()),
+            commit_sha: Some(job.commit_sha.clone()),
+            commit_message: Some(job.commit_message.clone()),
+            commit_date: Some(job.commit_date),
+            author: Some(job.author.clone()),
         };
 
         let correlation_id = CorrelationId::new();

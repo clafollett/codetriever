@@ -15,8 +15,8 @@ use uuid::Uuid;
 use crate::error::{DatabaseError, DatabaseOperation, DatabaseResult};
 
 use crate::models::{
-    ChunkMetadata, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus, ProjectBranch,
-    RepositoryContext,
+    ChunkMetadata, CommitContext, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus,
+    ProjectBranch, RepositoryContext,
 };
 use crate::traits::FileRepository;
 
@@ -107,7 +107,7 @@ impl FileRepository for MockFileRepository {
             tenant_id: ctx.tenant_id,
             repository_id: ctx.repository_id.clone(),
             branch: ctx.branch.clone(),
-            repository_url: ctx.repository_url.clone(),
+            repository_url: Some(ctx.repository_url.clone()),
             first_seen: Utc::now(),
             last_indexed: None,
         });
@@ -168,10 +168,10 @@ impl FileRepository for MockFileRepository {
             encoding: metadata.encoding.clone(),
             size_bytes: metadata.size_bytes,
             generation: metadata.generation,
-            commit_sha: metadata.commit_sha.clone(),
-            commit_message: metadata.commit_message.clone(),
-            commit_date: metadata.commit_date,
-            author: metadata.author.clone(),
+            commit_sha: Some(metadata.commit_sha.clone()),
+            commit_message: Some(metadata.commit_message.clone()),
+            commit_date: Some(metadata.commit_date),
+            author: Some(metadata.author.clone()),
             indexed_at: Utc::now(),
         };
 
@@ -237,7 +237,7 @@ impl FileRepository for MockFileRepository {
         tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
-        commit_sha: Option<&str>,
+        commit_context: &CommitContext,
     ) -> DatabaseResult<IndexingJob> {
         self.check_fail()?;
 
@@ -251,7 +251,11 @@ impl FileRepository for MockFileRepository {
             files_total: None,
             files_processed: 0,
             chunks_created: 0,
-            commit_sha: commit_sha.map(std::string::ToString::to_string),
+            repository_url: commit_context.repository_url.clone(),
+            commit_sha: commit_context.commit_sha.clone(),
+            commit_message: commit_context.commit_message.clone(),
+            commit_date: commit_context.commit_date,
+            author: commit_context.author.clone(),
             started_at: Utc::now(),
             completed_at: None,
             error_message: None,
@@ -495,21 +499,26 @@ mod tests {
     // Test tenant for all unit tests
     const TEST_TENANT: Uuid = Uuid::nil();
 
+    /// Helper to build test `RepositoryContext` with defaults
+    fn test_repo_context(repo_id: &str, branch: &str) -> RepositoryContext {
+        RepositoryContext {
+            tenant_id: TEST_TENANT,
+            repository_id: repo_id.to_string(),
+            repository_url: format!("https://github.com/test/{repo_id}"),
+            branch: branch.to_string(),
+            commit_sha: "abc123def456".to_string(),
+            commit_message: "Test commit".to_string(),
+            commit_date: Utc::now(),
+            author: "Test Author <test@example.com>".to_string(),
+            is_dirty: false,
+            root_path: std::path::PathBuf::from("/tmp"),
+        }
+    }
+
     #[tokio::test]
     async fn test_mock_project_branch() {
         let mock = MockFileRepository::new();
-        let ctx = RepositoryContext {
-            tenant_id: TEST_TENANT,
-            repository_id: "github.com/user/repo".to_string(),
-            repository_url: Some("https://github.com/user/repo".to_string()),
-            branch: "main".to_string(),
-            commit_sha: None,
-            commit_message: None,
-            commit_date: None,
-            author: None,
-            is_dirty: false,
-            root_path: std::path::PathBuf::from("/tmp"),
-        };
+        let ctx = test_repo_context("github.com/user/repo", "main");
 
         // First call creates
         let branch1 = mock.ensure_project_branch(&ctx).await.unwrap();
@@ -540,10 +549,10 @@ mod tests {
             encoding: "UTF-8".to_string(),
             size_bytes: 12,
             generation: 1,
-            commit_sha: None,
-            commit_message: None,
-            commit_date: None,
-            author: None,
+            commit_sha: "abc123".to_string(),
+            commit_message: "Initial commit".to_string(),
+            commit_date: Utc::now(),
+            author: "Test Author".to_string(),
         };
         mock.record_file_indexing(&TEST_TENANT, "repo", "main", &metadata)
             .await

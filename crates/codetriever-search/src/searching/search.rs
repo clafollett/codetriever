@@ -6,15 +6,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use codetriever_common::CorrelationId;
 use codetriever_embeddings::EmbeddingService;
-use codetriever_meta_data::{DataClient, FileRepository, ProjectBranch};
+use codetriever_meta_data::DataClient;
 use codetriever_parsing::CodeChunk;
 use codetriever_vector_data::VectorStorage;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 
 // Type aliases to simplify complex types
-type RepoBranchPairs = Vec<(String, String)>;
-type ProjectBranchMap = std::collections::HashMap<(String, String), ProjectBranch>;
 type SearchCache = Arc<std::sync::Mutex<lru::LruCache<String, Vec<SearchMatch>>>>;
 
 /// Repository metadata for search results
@@ -96,106 +94,6 @@ impl Search {
         }
     }
 
-    /// Enrich search results with repository metadata from database (if available)
-    #[tracing::instrument(skip(self, results), fields(correlation_id, result_count = results.len()))]
-    async fn enrich_with_metadata(
-        &self,
-        mut results: Vec<SearchMatch>,
-        correlation_id: &CorrelationId,
-    ) -> SearchResult<Vec<SearchMatch>> {
-        tracing::Span::current().record("correlation_id", correlation_id.to_string());
-
-        let db_client = &self.db_client;
-
-        // Extract unique file paths from results
-        let file_paths: Vec<&str> = results.iter().map(|r| r.chunk.file_path.as_str()).collect();
-
-        // Early return if no results
-        if file_paths.is_empty() {
-            return Ok(results);
-        }
-
-        // Extract tenant_id from first result (all results should be from same tenant)
-        // Qdrant chunks now have tenant_id in their metadata!
-        // We'll get it from PostgreSQL query by trying any tenant first, then filtering
-        // TODO: Once shared collection, extract from Qdrant payload directly
-
-        // For now: Query with nil tenant to get ANY matching files, then use their tenant_id
-        let initial_metadata = match db_client
-            .repository()
-            .get_files_metadata(&uuid::Uuid::nil(), &file_paths)
-            .await
-        {
-            Ok(metadata) if !metadata.is_empty() => metadata,
-            _ => {
-                // Try a different approach: get files without tenant filter (temporary)
-                // This works because we're still using per-test collections
-                return Ok(results);
-            }
-        };
-
-        // Extract actual tenant_id from the files we found
-        let tenant_id = initial_metadata
-            .first()
-            .map(|f| f.tenant_id)
-            .unwrap_or_else(uuid::Uuid::nil);
-
-        // Re-query with correct tenant_id
-        let files_metadata = db_client
-            .repository()
-            .get_files_metadata(&tenant_id, &file_paths)
-            .await
-            .unwrap_or(initial_metadata); // Fall back to initial if query fails
-
-        // Extract unique repository/branch combinations for batch query
-        let mut repo_branch_pairs = std::collections::HashSet::new();
-        for file in &files_metadata {
-            repo_branch_pairs.insert((file.repository_id.clone(), file.branch.clone()));
-        }
-
-        // Batch fetch all project branches in a single query
-        let repo_branches: RepoBranchPairs = repo_branch_pairs.into_iter().collect();
-        let project_branches = db_client
-            .repository()
-            .get_project_branches(&tenant_id, &repo_branches)
-            .await
-            .unwrap_or_default(); // Database error - continue without project info
-
-        // Create lookup map for project branches
-        let project_branch_map: ProjectBranchMap = project_branches
-            .into_iter()
-            .map(|pb| ((pb.repository_id.clone(), pb.branch.clone()), pb))
-            .collect();
-
-        // Create metadata map with batched project branch data
-        let metadata_map: std::collections::HashMap<String, RepositoryMetadata> = files_metadata
-            .into_iter()
-            .map(|file| {
-                let project_key = (file.repository_id.clone(), file.branch.clone());
-                let project_branch = project_branch_map.get(&project_key);
-
-                let repo_metadata = RepositoryMetadata {
-                    repository_id: file.repository_id,
-                    repository_url: project_branch.and_then(|pb| pb.repository_url.clone()),
-                    branch: file.branch,
-                    commit_sha: file.commit_sha,
-                    commit_message: file.commit_message,
-                    commit_date: file.commit_date,
-                    author: file.author,
-                };
-
-                (file.file_path, repo_metadata)
-            })
-            .collect();
-
-        // Enrich results with metadata
-        for result in &mut results {
-            result.repository_metadata = metadata_map.get(&result.chunk.file_path).cloned();
-        }
-
-        Ok(results)
-    }
-
     /// Internal search attempt - can fail and be retried
     #[tracing::instrument(skip(self), fields(correlation_id))]
     async fn try_search(
@@ -230,21 +128,31 @@ impl Search {
                 .await?;
 
             // Convert StorageSearchResult to SearchMatch
+            // Metadata is now complete from Qdrant payload - no enrichment needed!
             let results: Vec<SearchMatch> = storage_results
                 .into_iter()
-                .map(|r| SearchMatch {
-                    chunk: r.chunk,
-                    similarity: r.similarity,
-                    repository_metadata: None, // Will be enriched below
+                .map(|r| {
+                    // Convert vector-data RepositoryMetadata to search RepositoryMetadata
+                    let repo_metadata = RepositoryMetadata {
+                        repository_id: r.metadata.repository_id,
+                        repository_url: r.metadata.repository_url,
+                        branch: r.metadata.branch,
+                        commit_sha: r.metadata.commit_sha,
+                        commit_message: r.metadata.commit_message,
+                        commit_date: r.metadata.commit_date,
+                        author: r.metadata.author,
+                    };
+
+                    SearchMatch {
+                        chunk: r.chunk,
+                        similarity: r.similarity,
+                        repository_metadata: Some(repo_metadata),
+                    }
                 })
                 .collect();
-            tracing::debug!("Vector search returned {} results", results.len());
+            tracing::debug!("Search returned {} results with metadata", results.len());
 
-            // Enrich with database metadata
-            tracing::debug!("Enriching with database metadata");
-            let enriched = self.enrich_with_metadata(results, correlation_id).await?;
-            tracing::debug!("Metadata enrichment complete");
-            Ok(enriched)
+            Ok(results)
         })
         .await
         .map_err(|_| {

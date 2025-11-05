@@ -17,6 +17,7 @@ pub trait IndexerService: Send + Sync {
     /// - `tenant_id`: Tenant identifier for multi-tenancy isolation
     /// - `project_id`: Project identifier (format: "repository_id:branch")
     /// - `files`: Files to index
+    /// - `commit_context`: Git commit metadata (required - extracted by CLI/MCP from user's repo)
     ///
     /// # Returns
     /// - `Uuid`: Job ID for tracking progress via `get_job_status()`
@@ -25,6 +26,7 @@ pub trait IndexerService: Send + Sync {
         tenant_id: Uuid,
         project_id: &str,
         files: Vec<FileContent>,
+        commit_context: &codetriever_meta_data::models::CommitContext,
     ) -> crate::IndexerResult<Uuid>;
 
     /// Get the current status of an indexing job
@@ -89,6 +91,7 @@ pub mod test_utils {
             _tenant_id: Uuid,
             _project_id: &str,
             _files: Vec<FileContent>,
+            _commit_context: &codetriever_meta_data::models::CommitContext,
         ) -> crate::IndexerResult<Uuid> {
             // Mock returns a test job ID
             Ok(Uuid::new_v4())

@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::error::{DatabaseError, DatabaseErrorExt, DatabaseOperation, DatabaseResult};
 use crate::models::{
-    ChunkMetadata, DequeuedFile, FileMetadata, FileState, IndexedFile, IndexingJob, JobStatus,
-    ProjectBranch, RepositoryContext,
+    ChunkMetadata, CommitContext, DequeuedFile, FileMetadata, FileState, IndexedFile, IndexingJob,
+    JobStatus, ProjectBranch, RepositoryContext,
 };
 use crate::pool_manager::PoolManager;
 use crate::traits::FileRepository;
@@ -467,7 +467,8 @@ impl DbFileRepository {
         let row = sqlx::query(
             r"
             SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
-                   chunks_created, commit_sha, started_at, completed_at, error_message
+                   chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
+                   started_at, completed_at, error_message
             FROM indexing_jobs
             WHERE job_id = $1
             ",
@@ -488,7 +489,11 @@ impl DbFileRepository {
                 files_total: r.get("files_total"),
                 files_processed: r.get("files_processed"),
                 chunks_created: r.get("chunks_created"),
+                repository_url: r.get("repository_url"),
                 commit_sha: r.get("commit_sha"),
+                commit_message: r.get("commit_message"),
+                commit_date: r.get("commit_date"),
+                author: r.get("author"),
                 started_at: r.get("started_at"),
                 completed_at: r.get("completed_at"),
                 error_message: r.get("error_message"),
@@ -519,7 +524,8 @@ impl DbFileRepository {
             (Some(tid), Some(repo)) => sqlx::query(
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
-                           chunks_created, commit_sha, started_at, completed_at, error_message
+                           chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
+                           started_at, completed_at, error_message
                     FROM indexing_jobs
                     WHERE tenant_id = $1 AND repository_id = $2
                     ORDER BY started_at DESC
@@ -534,7 +540,8 @@ impl DbFileRepository {
             (Some(tid), None) => sqlx::query(
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
-                           chunks_created, commit_sha, started_at, completed_at, error_message
+                           chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
+                           started_at, completed_at, error_message
                     FROM indexing_jobs
                     WHERE tenant_id = $1
                     ORDER BY started_at DESC
@@ -548,7 +555,8 @@ impl DbFileRepository {
             (None, _) => sqlx::query(
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
-                           chunks_created, commit_sha, started_at, completed_at, error_message
+                           chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
+                           started_at, completed_at, error_message
                     FROM indexing_jobs
                     ORDER BY started_at DESC
                     LIMIT 100
@@ -572,7 +580,11 @@ impl DbFileRepository {
                     files_total: r.get("files_total"),
                     files_processed: r.get("files_processed"),
                     chunks_created: r.get("chunks_created"),
+                    repository_url: r.get("repository_url"),
                     commit_sha: r.get("commit_sha"),
+                    commit_message: r.get("commit_message"),
+                    commit_date: r.get("commit_date"),
+                    author: r.get("author"),
                     started_at: r.get("started_at"),
                     completed_at: r.get("completed_at"),
                     error_message: r.get("error_message"),
@@ -948,7 +960,7 @@ impl FileRepository for DbFileRepository {
         tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
-        commit_sha: Option<&str>,
+        commit_context: &CommitContext,
     ) -> DatabaseResult<IndexingJob> {
         // Use write pool for INSERT
         let pool = self.pools.write_pool();
@@ -964,9 +976,11 @@ impl FileRepository for DbFileRepository {
             r"
             INSERT INTO indexing_jobs (
                 job_id, tenant_id, repository_id, branch, status,
-                files_processed, chunks_created, commit_sha, started_at
+                files_processed, chunks_created,
+                repository_url, commit_sha, commit_message, commit_date, author,
+                started_at
             )
-            VALUES ($1, $2, $3, $4, $5, 0, 0, $6, NOW())
+            VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, $8, $9, $10, NOW())
             RETURNING *
             ",
         )
@@ -975,7 +989,11 @@ impl FileRepository for DbFileRepository {
         .bind(repository_id)
         .bind(branch)
         .bind(JobStatus::Running.to_string())
-        .bind(commit_sha)
+        .bind(&commit_context.repository_url)
+        .bind(&commit_context.commit_sha)
+        .bind(&commit_context.commit_message)
+        .bind(commit_context.commit_date)
+        .bind(&commit_context.author)
         .fetch_one(pool)
         .await
         .map_db_err(operation, correlation_id)?;
@@ -989,7 +1007,11 @@ impl FileRepository for DbFileRepository {
             files_total: row.get("files_total"),
             files_processed: row.get("files_processed"),
             chunks_created: row.get("chunks_created"),
+            repository_url: row.get("repository_url"),
             commit_sha: row.get("commit_sha"),
+            commit_message: row.get("commit_message"),
+            commit_date: row.get("commit_date"),
+            author: row.get("author"),
             started_at: row.get("started_at"),
             completed_at: row.get("completed_at"),
             error_message: row.get("error_message"),

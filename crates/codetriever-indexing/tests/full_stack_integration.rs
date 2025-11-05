@@ -147,9 +147,18 @@ pub fn process_data(input: &str) -> String {
             .await
             .expect("Failed to create tenant");
 
+        // Build commit context for job creation
+        let commit_context = codetriever_meta_data::models::CommitContext {
+            repository_url: "https://github.com/test/repo".to_string(),
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test commit".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test <test@test.com>".to_string(),
+        };
+
         // Start indexing job (async pattern)
         let job_id = indexer
-            .start_indexing_job(tenant_id, &project_id, vec![file])
+            .start_indexing_job(tenant_id, &project_id, vec![file], &commit_context)
             .await
             .expect("Failed to start indexing job");
 

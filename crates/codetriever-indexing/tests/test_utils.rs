@@ -40,9 +40,20 @@ use codetriever_indexing::{
     BackgroundWorker, WorkerConfig,
     indexing::{IndexerService, service::FileContent},
 };
-use codetriever_meta_data::models::JobStatus;
+use codetriever_meta_data::models::{CommitContext, JobStatus};
 use codetriever_parsing::CodeParser;
 use uuid::Uuid;
+
+/// Create test commit context with default values
+pub fn test_commit_context() -> CommitContext {
+    CommitContext {
+        repository_url: "https://github.com/test/repo".to_string(),
+        commit_sha: "abc123def456".to_string(),
+        commit_message: "Test commit message".to_string(),
+        commit_date: chrono::Utc::now(),
+        author: "Test Author <test@example.com>".to_string(),
+    }
+}
 
 /// Index files using async job pattern (production flow)
 ///
@@ -83,9 +94,10 @@ pub async fn index_files_async(
         worker.run().await;
     });
 
-    // Start indexing job
+    // Start indexing job with commit context
+    let commit_context = test_commit_context();
     let job_id = indexer
-        .start_indexing_job(tenant_id, project_id, files)
+        .start_indexing_job(tenant_id, project_id, files, &commit_context)
         .await
         .expect("Failed to start indexing job");
 

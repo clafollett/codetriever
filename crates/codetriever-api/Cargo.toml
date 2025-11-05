@@ -17,7 +17,7 @@ codetriever-config = { path = "../codetriever-config" }
 codetriever-embeddings = { path = "../codetriever-embeddings" }
 codetriever-indexing = { path = "../codetriever-indexing" }
 codetriever-search = { path = "../codetriever-search" }
-codetriever-meta-data = { path = "../codetriever-meta-data" }
+codetriever-meta-data = { path = "../codetriever-meta-data", features = ["utoipa"] }
 codetriever-vector-data = { path = "../codetriever-vector-data" }
 codetriever-parsing = { path = "../codetriever-parsing" }
 

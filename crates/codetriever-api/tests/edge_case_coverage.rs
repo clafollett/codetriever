@@ -222,6 +222,13 @@ fn test_index_with_special_characters_in_path() -> test_utils::TestResult {
         let request_body = json!({
             "tenant_id": test_state.tenant_id(),
             "project_id": "test-project",
+            "commit_context": {
+                "repository_url": "https://github.com/test/repo",
+                "commit_sha": "abc123",
+                "commit_message": "Test commit",
+                "commit_date": chrono::Utc::now().to_rfc3339(),
+                "author": "Test <test@test.com>"
+            },
             "files": [
                 {
                     "path": "src/模块/测试.rs",
@@ -285,6 +292,13 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
     let request_body = json!({
         "tenant_id": test_state.tenant_id(),
         "project_id": "test-project",
+        "commit_context": {
+            "repository_url": "https://github.com/test/repo",
+            "commit_sha": "abc123",
+            "commit_message": "Test commit",
+            "commit_date": chrono::Utc::now().to_rfc3339(),
+            "author": "Test <test@test.com>"
+        },
         "files": [
             {
                 "path": unique_path,

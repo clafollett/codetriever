@@ -87,7 +87,14 @@ pub struct IndexingJob {
     pub files_total: Option<i32>,
     pub files_processed: i32,
     pub chunks_created: i32,
-    pub commit_sha: Option<String>,
+
+    // Git commit metadata (required - indexing always happens in Git context)
+    pub repository_url: String,
+    pub commit_sha: String,
+    pub commit_message: String,
+    pub commit_date: DateTime<Utc>,
+    pub author: String,
+
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub error_message: Option<String>,
@@ -174,17 +181,32 @@ pub enum FileState {
     },
 }
 
+/// Git commit context (required for all indexing operations)
+///
+/// This contains Git commit metadata that clients must provide when indexing.
+/// CLI and MCP servers extract this from the Git repository on the user's machine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+pub struct CommitContext {
+    pub repository_url: String,
+    pub commit_sha: String,
+    pub commit_message: String,
+    #[cfg_attr(feature = "utoipa", schema(value_type = String))]
+    pub commit_date: DateTime<Utc>,
+    pub author: String,
+}
+
 /// Repository context from Git
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryContext {
     pub tenant_id: Uuid,
     pub repository_id: String,
-    pub repository_url: Option<String>,
+    pub repository_url: String,
     pub branch: String,
-    pub commit_sha: Option<String>,
-    pub commit_message: Option<String>,
-    pub commit_date: Option<DateTime<Utc>>,
-    pub author: Option<String>,
+    pub commit_sha: String,
+    pub commit_message: String,
+    pub commit_date: DateTime<Utc>,
+    pub author: String,
     pub is_dirty: bool,
     pub root_path: std::path::PathBuf,
 }
@@ -198,10 +220,10 @@ pub struct FileMetadata {
     pub encoding: String, // Original encoding detected ("UTF-8", "UTF-16LE", etc.)
     pub size_bytes: i64,  // Original file size (before conversion)
     pub generation: i64,
-    pub commit_sha: Option<String>,
-    pub commit_message: Option<String>,
-    pub commit_date: Option<DateTime<Utc>>,
-    pub author: Option<String>,
+    pub commit_sha: String,
+    pub commit_message: String,
+    pub commit_date: DateTime<Utc>,
+    pub author: String,
 }
 
 /// Statistics about a project's index
