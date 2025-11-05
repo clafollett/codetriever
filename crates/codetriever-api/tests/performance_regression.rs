@@ -72,6 +72,7 @@ fn test_search_performance_baseline() -> test_utils::TestResult {
         let test_state = test_utils::app_state().await?;
         let app = create_router(test_state.state().clone());
         let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "authentication logic",
             "limit": 10
         });
@@ -113,6 +114,7 @@ fn test_small_search_performance() -> test_utils::TestResult {
 
         // Test with small, targeted search that should be very fast
         let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "fn",
             "limit": 1
         });
@@ -150,6 +152,7 @@ fn test_repeated_search_caching_performance() -> test_utils::TestResult {
         let app = create_router(test_state.state().clone());
 
         let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "function definition",
             "limit": 5
         });

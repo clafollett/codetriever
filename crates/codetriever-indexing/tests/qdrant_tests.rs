@@ -70,7 +70,7 @@ fn test_store_and_retrieve_chunks() {
         // Search for similar chunks
         let query_embedding = vec![0.15; 768]; // Close to first chunk
         let results = storage
-            .search(query_embedding, 1, &correlation_id)
+            .search(&TEST_TENANT, query_embedding, 1, &correlation_id)
             .await
             .expect("Failed to search");
 

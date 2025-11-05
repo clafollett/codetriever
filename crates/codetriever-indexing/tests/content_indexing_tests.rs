@@ -284,10 +284,11 @@ impl PostgresConnection {
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);
         let correlation_id = CorrelationId::new();
         let results = search_service
-            .search("postgres database query", 5, &correlation_id)
+            .search(&tenant_id, "postgres database query", 5, &correlation_id)
             .await
             .expect("Failed to search");
 
+        eprintln!("🔍 Search returned {} results", results.len());
         assert!(
             !results.is_empty(),
             "Should find results for postgres query"
@@ -295,11 +296,21 @@ impl PostgresConnection {
 
         // Verify the result contains our content
         let first_result = &results[0];
+        eprintln!(
+            "🔍 First result content preview: {}",
+            &first_result.chunk.content[..100.min(first_result.chunk.content.len())]
+        );
+        eprintln!(
+            "🔍 First result file_path: {}",
+            first_result.chunk.file_path
+        );
+
         assert!(
             first_result.chunk.content.contains("PostgreSQL")
                 || first_result.chunk.content.contains("execute_query")
                 || first_result.chunk.content.contains("postgres"),
-            "Search should return relevant content"
+            "Search should return relevant content. Got: {}",
+            &first_result.chunk.content[..200.min(first_result.chunk.content.len())]
         );
 
         println!("Search returned {} results", results.len());

@@ -38,6 +38,7 @@ fn test_search_with_unicode_characters() -> test_utils::TestResult {
 
         // Test Unicode in search query
         let unicode_query = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "函数 función función 🔍 emoji search",
             "limit": 10
         });
@@ -111,6 +112,7 @@ fn test_search_with_very_long_query() -> test_utils::TestResult {
         // Test with very long query (boundary condition)
         let long_query = "a".repeat(10000);
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": long_query,
             "limit": 5
         });
@@ -139,6 +141,7 @@ fn test_search_with_empty_query() -> test_utils::TestResult {
 
         // Test edge case: empty query
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "",
             "limit": 10
         });
@@ -167,6 +170,7 @@ fn test_search_with_extreme_limit_values() -> test_utils::TestResult {
         // Test with limit = 0
         let app1 = create_router(test_state.state().clone());
         let zero_limit = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "test",
             "limit": 0
         });
@@ -189,6 +193,7 @@ fn test_search_with_extreme_limit_values() -> test_utils::TestResult {
         // Test with very large limit (create second router from same state)
         let app2 = create_router(test_state.state().clone());
         let large_limit = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "test",
             "limit": 999_999
         });
@@ -416,6 +421,7 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({
+                    "tenant_id": test_state.tenant_id(),
                     "query": "println test function large",
                     "limit": 100
                 })

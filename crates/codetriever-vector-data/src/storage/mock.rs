@@ -161,6 +161,7 @@ impl VectorStorage for MockStorage {
 
     async fn search(
         &self,
+        _tenant_id: &Uuid,
         _query_embedding: Vec<f32>,
         limit: usize,
         correlation_id: &CorrelationId,
@@ -177,7 +178,7 @@ impl VectorStorage for MockStorage {
         tracing::debug!(
             correlation_id = %correlation_id,
             chunk_count = stored.len(),
-            "Mock search operation"
+            "Mock search operation (tenant filtering not implemented in mock)"
         );
 
         // Return up to 'limit' chunks with mock similarity scores and metadata
@@ -296,7 +297,7 @@ mod tests {
 
         // Test search
         let results = storage
-            .search(vec![0.1; 768], 10, &correlation_id)
+            .search(&TEST_TENANT, vec![0.1; 768], 10, &correlation_id)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -344,7 +345,7 @@ mod tests {
         // Should fail to search
         assert!(
             storage
-                .search(vec![0.1; 768], 10, &correlation_id)
+                .search(&TEST_TENANT, vec![0.1; 768], 10, &correlation_id)
                 .await
                 .is_err()
         );

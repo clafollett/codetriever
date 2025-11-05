@@ -52,6 +52,7 @@ impl MockSearch {
 impl SearchService for MockSearch {
     async fn search(
         &self,
+        _tenant_id: &uuid::Uuid,
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,

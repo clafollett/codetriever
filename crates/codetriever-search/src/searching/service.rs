@@ -3,6 +3,7 @@
 use super::{SearchMatch, SearchResult};
 use async_trait::async_trait;
 use codetriever_common::CorrelationId;
+use uuid::Uuid;
 
 /// Context retrieval result containing file metadata and content
 #[derive(Debug, Clone)]
@@ -19,9 +20,10 @@ pub struct ContextResult {
 /// Trait for search operations with correlation ID support
 #[async_trait]
 pub trait SearchService: Send + Sync {
-    /// Search for code chunks matching the query
+    /// Search for code chunks matching the query with tenant isolation
     async fn search(
         &self,
+        tenant_id: &Uuid,
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,

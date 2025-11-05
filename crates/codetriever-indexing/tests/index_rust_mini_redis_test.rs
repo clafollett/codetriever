@@ -165,7 +165,7 @@ fn test_index_rust_mini_redis() {
         // Check if already indexed
         let correlation_id = codetriever_common::CorrelationId::new();
         let test_result = search_service
-            .search(test_queries[0], 1, &correlation_id)
+            .search(&tenant_id, test_queries[0], 1, &correlation_id)
             .await;
 
         if test_result.is_err() || test_result.unwrap().is_empty() {
@@ -247,7 +247,7 @@ fn test_index_rust_mini_redis() {
 
             let correlation_id = codetriever_common::CorrelationId::new();
             let results = search_service
-                .search(query, 3, &correlation_id)
+                .search(&tenant_id, query, 3, &correlation_id)
                 .await
                 .expect("Search failed");
 

@@ -47,6 +47,7 @@ use qdrant_client::qdrant::{
 };
 use qdrant_client::{Payload, Qdrant};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Vector database client for storing and searching code embeddings using Qdrant.
 ///
@@ -337,25 +338,47 @@ impl VectorStorage for QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(self, query), fields(query_dim = query.len(), limit))]
+    #[tracing::instrument(skip(self, query_embedding), fields(query_dim = query_embedding.len(), tenant_id = %tenant_id, limit))]
     async fn search(
         &self,
-        query: Vec<f32>,
+        tenant_id: &Uuid,
+        query_embedding: Vec<f32>,
         limit: usize,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<StorageSearchResult>> {
         // Log search operation with correlation ID for tracing
         tracing::info!(
             correlation_id = %correlation_id,
-            query_dim = query.len(),
+            tenant_id = %tenant_id,
+            query_dim = query_embedding.len(),
             limit = %limit,
             collection = %self.collection_name,
-            "Performing vector search"
+            "Performing vector search with tenant isolation"
         );
+
+        // Build tenant isolation filter
+        use qdrant_client::qdrant::{Condition, Filter};
+        let tenant_filter = Filter {
+            must: vec![Condition {
+                condition_one_of: Some(qdrant_client::qdrant::condition::ConditionOneOf::Field(
+                    qdrant_client::qdrant::FieldCondition {
+                        key: "tenant_id".to_string(),
+                        r#match: Some(qdrant_client::qdrant::Match {
+                            match_value: Some(qdrant_client::qdrant::r#match::MatchValue::Keyword(
+                                tenant_id.to_string(),
+                            )),
+                        }),
+                        ..Default::default()
+                    },
+                )),
+            }],
+            ..Default::default()
+        };
 
         let search_request = SearchPoints {
             collection_name: self.collection_name.clone(),
-            vector: query,
+            vector: query_embedding,
+            filter: Some(tenant_filter),
             limit: limit as u64,
             with_payload: Some(true.into()),
             ..Default::default()

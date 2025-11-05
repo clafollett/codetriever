@@ -77,6 +77,9 @@ use utoipa::ToSchema;
 /// ```
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SearchRequest {
+    /// Tenant ID for multi-tenancy isolation
+    #[schema(value_type = String)]
+    pub tenant_id: uuid::Uuid,
     /// The search query string - can be natural language or specific code terms
     pub query: String,
     /// Optional limit on the number of search results returned
@@ -381,10 +384,10 @@ async fn search_handler_impl(
     let limit = req.limit.unwrap_or(10).min(100); // Cap at 100 results
     let query = req.query.clone();
 
-    // Perform search with proper error handling
+    // Perform search with tenant isolation and proper error handling
     let results = match tokio::time::timeout(
         Duration::from_secs(30), // 30-second timeout for search operations
-        search_service.search(&query, limit, &correlation_id),
+        search_service.search(&req.tenant_id, &query, limit, &correlation_id),
     )
     .await
     {
@@ -844,7 +847,7 @@ mod tests {
         let results = match search_service
             .lock()
             .await
-            .search(&query, limit, &correlation_id)
+            .search(&req.tenant_id, &query, limit, &correlation_id)
             .await
         {
             Ok(results) => results,
@@ -983,8 +986,9 @@ mod tests {
         let mock_search_service = codetriever_search::test_mocks::MockSearch::empty();
 
         // Verify that we can use the search service
+        let test_tenant = uuid::Uuid::nil(); // Test tenant ID
         let results = mock_search_service
-            .search("test query", 5, &CorrelationId::new())
+            .search(&test_tenant, "test query", 5, &CorrelationId::new())
             .await;
         assert!(results.is_ok());
 
@@ -1015,6 +1019,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "authentication middleware",
             "limit": 10
         });
@@ -1100,6 +1105,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "authentication",
             "limit": 10
         });
@@ -1162,6 +1168,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "test query",
             "limit": 2  // Request only 2 results
         });
@@ -1204,6 +1211,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "nonexistent code",
             "limit": 10
         });
@@ -1255,6 +1263,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "authentication",
             "limit": 10
         });

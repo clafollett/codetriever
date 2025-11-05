@@ -81,6 +81,7 @@ fn test_concurrent_search_load() -> test_utils::TestResult {
 
             let handle = tokio::spawn(async move {
                 let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
                     "query": query,
                     "limit": 10
                 });
@@ -202,6 +203,7 @@ fn test_sustained_load_over_time() -> test_utils::TestResult {
 
                 let handle = tokio::spawn(async move {
                     let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
                         "query": "hello world",
                         "limit": 5
                     });
@@ -283,9 +285,10 @@ fn test_memory_usage_under_load() -> test_utils::TestResult {
 
                 let handle = tokio::spawn(async move {
                     let search_request = json!({
-                        "query": query,
-                        "limit": 10
-                    });
+                    "tenant_id": "00000000-0000-0000-0000-000000000000",
+                                "query": query,
+                                "limit": 10
+                            });
 
                     let request = Request::builder()
                         .method("POST")

@@ -222,7 +222,7 @@ pub fn process_data(input: &str) -> String {
             .expect("Failed to generate query embedding");
 
         let search_results = storage
-            .search(query_embedding[0].clone(), 5, &correlation_id)
+            .search(&TEST_TENANT, query_embedding[0].clone(), 5, &correlation_id)
             .await
             .expect("Failed to search");
 
@@ -342,7 +342,7 @@ fn test_uuid_based_chunk_deletion() {
 
         // Verify chunks exist in Qdrant
         let search_results = storage
-            .search(vec![0.15; 768], 10, &correlation_id)
+            .search(&TEST_TENANT, vec![0.15; 768], 10, &correlation_id)
             .await
             .expect("Failed to search");
 
@@ -359,7 +359,7 @@ fn test_uuid_based_chunk_deletion() {
 
         // Verify chunks are deleted
         let search_after_delete = storage
-            .search(vec![0.15; 768], 10, &correlation_id)
+            .search(&TEST_TENANT, vec![0.15; 768], 10, &correlation_id)
             .await
             .expect("Failed to search after delete");
 

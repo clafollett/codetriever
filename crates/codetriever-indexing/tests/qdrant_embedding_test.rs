@@ -161,7 +161,7 @@ fn test_indexer_stores_chunks_in_qdrant() {
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);
         let correlation_id = codetriever_common::CorrelationId::new();
         let search_results = search_service
-            .search(query, 5, &correlation_id)
+            .search(&tenant_id, query, 5, &correlation_id)
             .await
             .expect("Failed to search");
 

@@ -95,9 +95,10 @@ impl Search {
     }
 
     /// Internal search attempt - can fail and be retried
-    #[tracing::instrument(skip(self), fields(correlation_id))]
+    #[tracing::instrument(skip(self), fields(tenant_id = %tenant_id, correlation_id))]
     async fn try_search(
         &self,
+        tenant_id: &uuid::Uuid,
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,
@@ -120,11 +121,11 @@ impl Search {
                 }
             })?;
 
-            tracing::debug!("Performing vector search");
-            // Search in vector storage directly
+            tracing::debug!("Performing vector search with tenant isolation");
+            // Search in vector storage with tenant filtering
             let storage_results = self
                 .vector_storage
-                .search(query_embedding, limit, correlation_id)
+                .search(tenant_id, query_embedding, limit, correlation_id)
                 .await?;
 
             // Convert StorageSearchResult to SearchMatch
@@ -173,9 +174,10 @@ impl Search {
 
 #[async_trait]
 impl SearchService for Search {
-    #[tracing::instrument(skip(self), fields(query, limit, correlation_id, cached = false))]
+    #[tracing::instrument(skip(self), fields(tenant_id = %tenant_id, query, limit, correlation_id, cached = false))]
     async fn search(
         &self,
+        tenant_id: &uuid::Uuid,
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,
@@ -199,7 +201,10 @@ impl SearchService for Search {
 
         // Retry search with exponential backoff for resilience
         for attempt in 0..=self.max_retries {
-            match self.try_search(query, limit, correlation_id).await {
+            match self
+                .try_search(tenant_id, query, limit, correlation_id)
+                .await
+            {
                 Ok(results) => {
                     // Cache successful results
                     if let Ok(mut cache) = self.cache.lock() {

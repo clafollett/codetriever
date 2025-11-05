@@ -77,11 +77,13 @@ pub trait VectorStorage: Send + Sync {
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<Uuid>>;
 
-    /// Search for similar code chunks
+    /// Search for similar code chunks with tenant isolation
     ///
-    /// Returns chunks ordered by similarity to the query embedding with their scores
+    /// Filters results by tenant_id for multi-tenancy isolation.
+    /// Returns chunks ordered by similarity to the query embedding.
     async fn search(
         &self,
+        tenant_id: &Uuid,
         query_embedding: Vec<f32>,
         limit: usize,
         correlation_id: &CorrelationId,
