@@ -6,12 +6,13 @@
 use codetriever_config::{ApplicationConfig, DatabaseConfig};
 use codetriever_embeddings::EmbeddingService;
 use codetriever_meta_data::{
+    DataClient,
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
     traits::FileRepository,
 };
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock as OnceCell};
 
 // Re-export shared test utilities from codetriever-test-utils
 #[allow(unused_imports)]
@@ -79,12 +80,23 @@ pub async fn index_files_async(
     files: Vec<FileContent>,
 ) -> (Uuid, codetriever_meta_data::models::IndexingJob) {
     // Create background worker with dynamic storage routing
+    // Create PostgreSQL chunk queue
+    let db_config = codetriever_meta_data::DatabaseConfig::from_env();
+    let chunk_queue_pool = db_config
+        .create_pool()
+        .await
+        .expect("Failed to create chunk queue pool");
+    let chunk_queue = Arc::new(codetriever_meta_data::PostgresChunkQueue::new(
+        chunk_queue_pool,
+    ));
+
     let worker = BackgroundWorker::new(
         Arc::clone(&repository),
         Arc::clone(&embedding_service),
         qdrant_url,
         code_parser,
         WorkerConfig::from_app_config(config),
+        chunk_queue,
     );
 
     // Get shutdown handle before moving worker
@@ -248,19 +260,64 @@ pub async fn create_code_parser_with_tokenizer(
     )
 }
 
-/// Create REAL file repository for integration testing
-#[allow(unused)]
+/// Shared test database resources (ONE pool for ALL tests - prevents exhaustion!)
+struct SharedDbResources {
+    repository: Arc<dyn FileRepository>,
+    #[allow(dead_code)]
+    db_client: Arc<DataClient>,
+}
+
+static SHARED_DB_RESOURCES: OnceCell<SharedDbResources> = OnceCell::new();
+
+/// Get shared database repository (ONE pool for ALL tests!)
+///
+/// All tests across ALL test files share the SAME database pool to prevent
+/// connection exhaustion. DO NOT create new pools in tests!
+pub fn get_shared_test_repository() -> Arc<dyn FileRepository> {
+    let resources = SHARED_DB_RESOURCES.get_or_init(|| {
+        eprintln!("🗄️  Initializing SHARED database pool (ONE time for ALL tests!)");
+        codetriever_common::initialize_environment();
+
+        let db_config = DatabaseConfig::from_env();
+
+        // Use block_in_place to allow async work from within sync initialization
+        // This prevents "Cannot start a runtime from within a runtime" errors
+        let pools = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(PoolManager::new(&db_config, PoolConfig::default()))
+        })
+        .expect("Failed to create shared pool manager");
+
+        let repository = Arc::new(DbFileRepository::new(pools.clone()));
+        let db_client = Arc::new(DataClient::new(pools));
+
+        SharedDbResources {
+            repository,
+            db_client,
+        }
+    });
+
+    Arc::clone(&resources.repository)
+}
+
+/// Get shared database client (reuses same pool as repository!)
+///
+/// Exposed for tests that need DataClient (like Search service integration tests)
+#[allow(dead_code)]
+pub fn get_shared_db_client() -> Arc<DataClient> {
+    // Ensure repository is initialized first (which creates the shared resources)
+    let _ = get_shared_test_repository();
+
+    let resources = SHARED_DB_RESOURCES
+        .get()
+        .expect("DB resources should be initialized by get_shared_test_repository");
+
+    Arc::clone(&resources.db_client)
+}
+
+/// Create test repository (actually returns shared singleton - prevents pool exhaustion!)
 pub async fn create_test_repository() -> Arc<dyn FileRepository> {
-    // Initialize environment to load database config
-    codetriever_common::initialize_environment();
-
-    // Create REAL database connection pool
-    let db_config = DatabaseConfig::from_env();
-    let pools = PoolManager::new(&db_config, PoolConfig::default())
-        .await
-        .expect("Failed to create pool manager for test repository");
-
-    Arc::new(DbFileRepository::new(pools))
+    get_shared_test_repository()
 }
 
 /// Create a fully configured indexer for integration tests with REAL dependencies

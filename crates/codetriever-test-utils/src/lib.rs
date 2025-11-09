@@ -160,6 +160,15 @@ pub fn get_shared_embedding_service() -> SharedEmbeddingService {
 
         let config = codetriever_config::ApplicationConfig::from_env();
 
+        eprintln!(
+            "🔍 [DEBUG] Embedding config pool_size: {}",
+            config.embedding.performance.pool_size
+        );
+        eprintln!(
+            "🔍 [DEBUG] Embedding config indexer_batch_size: {}",
+            config.embedding.performance.indexer_batch_size
+        );
+
         let service = Arc::new(codetriever_embeddings::DefaultEmbeddingService::new(
             config.embedding,
         )) as SharedEmbeddingService;

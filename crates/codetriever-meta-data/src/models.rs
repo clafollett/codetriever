@@ -240,3 +240,30 @@ pub struct IndexingStats {
     pub last_indexed: Option<DateTime<Utc>>,
     pub unique_commits: i64,
 }
+
+/// Chunk processing queue entry (persistent chunk queue with SKIP LOCKED)
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ChunkQueueEntry {
+    pub id: Uuid,
+    pub job_id: Uuid,
+
+    /// Serialized `ChunkWithMetadata` (JSONB in `PostgreSQL`)
+    pub chunk_data: serde_json::Value,
+
+    /// Queue state: 'queued', 'processing', 'completed', 'failed'
+    pub status: String,
+
+    /// SQS-style visibility timeout fields
+    pub claimed_at: Option<DateTime<Utc>>,
+    pub claimed_by: Option<String>,
+    pub visible_after: Option<DateTime<Utc>>,
+
+    /// Retry logic
+    pub retry_count: i32,
+    pub max_retries: i32,
+    pub last_error: Option<String>,
+
+    /// Timestamps
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}

@@ -164,3 +164,46 @@ CREATE TABLE IF NOT EXISTS file_moves (
     FOREIGN KEY (tenant_id, repository_id, branch)
         REFERENCES project_branches(tenant_id, repository_id, branch) ON DELETE CASCADE
 );
+
+-- Chunk processing queue for distributed embedding workers
+-- Uses SKIP LOCKED pattern for lock-free concurrent processing
+-- Replaces in-memory queue with persistent, crash-recoverable storage
+CREATE TABLE IF NOT EXISTS chunk_processing_queue (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),  -- Time-ordered for efficient indexing
+    job_id UUID NOT NULL REFERENCES indexing_jobs(job_id) ON DELETE CASCADE,
+
+    -- Chunk data (serialized ChunkWithMetadata - everything embedder needs)
+    chunk_data JSONB NOT NULL,
+
+    -- Queue state management (SQS-inspired pattern)
+    status TEXT NOT NULL DEFAULT 'queued',  -- 'queued', 'processing', 'completed', 'failed'
+    claimed_at TIMESTAMPTZ,                 -- When worker claimed this chunk
+    claimed_by TEXT,                        -- Worker identifier for debugging
+    visible_after TIMESTAMPTZ,              -- SQS-style visibility timeout
+
+    -- Retry logic for failed chunks
+    retry_count INT DEFAULT 0,
+    max_retries INT DEFAULT 3,
+    last_error TEXT,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+
+    CONSTRAINT valid_chunk_status CHECK (status IN ('queued', 'processing', 'completed', 'failed'))
+);
+
+-- Critical index for SKIP LOCKED dequeue queries
+-- Covers: status filter, visible_after check, time ordering
+CREATE INDEX IF NOT EXISTS idx_chunk_queue_dequeue
+    ON chunk_processing_queue (status, visible_after, created_at)
+    WHERE status IN ('queued', 'processing');
+
+-- Job progress tracking index (check if job complete)
+CREATE INDEX IF NOT EXISTS idx_chunk_queue_job_status
+    ON chunk_processing_queue (job_id, status);
+
+-- Cleanup index (purge old completed chunks)
+CREATE INDEX IF NOT EXISTS idx_chunk_queue_cleanup
+    ON chunk_processing_queue (status, completed_at)
+    WHERE status IN ('completed', 'failed');

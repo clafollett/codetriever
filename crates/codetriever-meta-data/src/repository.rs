@@ -382,31 +382,69 @@ impl DbFileRepository {
     ///
     /// # Errors
     ///
-    /// Returns error if database update fails
-    pub async fn increment_job_progress(
+    /// Atomically increment files processed count
+    ///
+    /// Called by parser workers after successfully processing a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database update fails.
+    pub async fn increment_files_processed(
         &self,
         job_id: &uuid::Uuid,
-        files_delta: i32,
-        chunks_delta: i32,
+        delta: i32,
     ) -> DatabaseResult<()> {
         let pool = self.pools.write_pool();
         let correlation_id = None;
 
         let operation = DatabaseOperation::Query {
-            description: "increment_job_progress".to_string(),
+            description: "increment_files_processed".to_string(),
         };
 
         sqlx::query(
             r"
             UPDATE indexing_jobs
-            SET files_processed = files_processed + $2,
-                chunks_created = chunks_created + $3
+            SET files_processed = files_processed + $2
             WHERE job_id = $1
             ",
         )
         .bind(job_id)
-        .bind(files_delta)
-        .bind(chunks_delta)
+        .bind(delta)
+        .execute(pool)
+        .await
+        .map_db_err(operation, correlation_id)?;
+
+        Ok(())
+    }
+
+    /// Atomically increment chunks created count
+    ///
+    /// Called by embedder workers after successfully storing chunks.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if database update fails.
+    pub async fn increment_chunks_created(
+        &self,
+        job_id: &uuid::Uuid,
+        delta: i32,
+    ) -> DatabaseResult<()> {
+        let pool = self.pools.write_pool();
+        let correlation_id = None;
+
+        let operation = DatabaseOperation::Query {
+            description: "increment_chunks_created".to_string(),
+        };
+
+        sqlx::query(
+            r"
+            UPDATE indexing_jobs
+            SET chunks_created = chunks_created + $2
+            WHERE job_id = $1
+            ",
+        )
+        .bind(job_id)
+        .bind(delta)
         .execute(pool)
         .await
         .map_db_err(operation, correlation_id)?;
@@ -1502,14 +1540,12 @@ impl FileRepository for DbFileRepository {
         self.get_queue_depth(job_id).await
     }
 
-    async fn increment_job_progress(
-        &self,
-        job_id: &Uuid,
-        files_delta: i32,
-        chunks_delta: i32,
-    ) -> DatabaseResult<()> {
-        self.increment_job_progress(job_id, files_delta, chunks_delta)
-            .await
+    async fn increment_files_processed(&self, job_id: &Uuid, delta: i32) -> DatabaseResult<()> {
+        self.increment_files_processed(job_id, delta).await
+    }
+
+    async fn increment_chunks_created(&self, job_id: &Uuid, delta: i32) -> DatabaseResult<()> {
+        self.increment_chunks_created(job_id, delta).await
     }
 
     async fn mark_file_completed(&self, job_id: &Uuid, file_path: &str) -> DatabaseResult<()> {

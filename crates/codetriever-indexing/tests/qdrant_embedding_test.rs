@@ -8,7 +8,7 @@ use codetriever_search::SearchService;
 use std::{path::Path, sync::Arc};
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
-    create_test_repository, create_test_storage, test_config,
+    create_test_repository, create_test_storage, get_shared_db_client, test_config,
 };
 
 /// Read files from directory (reuse from index_rust_mini_redis_test pattern)
@@ -146,17 +146,9 @@ fn test_indexer_stores_chunks_in_qdrant() {
 
         // Verify we can search for the indexed content
         let query = "redis connection";
-        // Use the embedding_service and vector_storage from earlier
 
-        // Create database client for search
-        let db_config = codetriever_config::DatabaseConfig::from_env();
-        let pools = codetriever_meta_data::PoolManager::new(
-            &db_config,
-            codetriever_meta_data::PoolConfig::default(),
-        )
-        .await
-        .expect("Failed to create pool manager");
-        let db_client = std::sync::Arc::new(codetriever_meta_data::DataClient::new(pools));
+        // Use shared database client (reuses repository's pool!)
+        let db_client = get_shared_db_client();
 
         let search_service =
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);

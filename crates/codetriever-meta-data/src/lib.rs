@@ -2,6 +2,7 @@
 
 // Module declarations
 pub mod chunk_id;
+pub mod chunk_queue;
 pub mod client;
 // config module removed - now using codetriever-config
 pub mod error;
@@ -19,6 +20,7 @@ pub use mock::MockDataClient;
 
 // Public exports
 pub use chunk_id::{generate_chunk_id, hash_content};
+pub use chunk_queue::{ChunkQueue, PostgresChunkQueue, QueueDepth};
 pub use client::DataClient;
 // Use unified DatabaseConfig from codetriever-config
 pub use codetriever_config::DatabaseConfig;

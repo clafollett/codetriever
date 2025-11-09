@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::{path::Path, time::Duration};
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
-    create_test_repository, create_test_storage, test_config,
+    create_test_repository, create_test_storage, get_shared_db_client, test_config,
 };
 
 /// Initialize tracing for performance profiling
@@ -117,6 +117,16 @@ fn test_index_rust_mini_redis() {
         // Load tokenizer for accurate chunking (used by BackgroundWorker)
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
 
+        // Create PostgreSQL chunk queue for distributed chunk processing
+        let db_config = codetriever_meta_data::DatabaseConfig::from_env();
+        let chunk_queue_pool = db_config
+            .create_pool()
+            .await
+            .expect("Failed to create chunk queue pool");
+        let chunk_queue = Arc::new(codetriever_meta_data::PostgresChunkQueue::new(
+            chunk_queue_pool,
+        ));
+
         // Create background worker for processing (tests the real production flow!)
         let worker = BackgroundWorker::new(
             repository,
@@ -124,6 +134,7 @@ fn test_index_rust_mini_redis() {
             config.vector_storage.url.clone(),
             code_parser,
             WorkerConfig::from_app_config(&config),
+            chunk_queue,
         );
 
         // Get shutdown handle before moving worker
@@ -148,16 +159,9 @@ fn test_index_rust_mini_redis() {
             "hash map insert",
         ];
 
-        // Create search service
+        // Create search service with shared database client (reuses repository's pool!)
         let vector_storage = Arc::new(storage.clone()) as Arc<dyn VectorStorage>;
-        let db_config = codetriever_config::DatabaseConfig::from_env();
-        let pools = codetriever_meta_data::PoolManager::new(
-            &db_config,
-            codetriever_meta_data::PoolConfig::default(),
-        )
-        .await
-        .expect("Failed to create pool manager");
-        let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
+        let db_client = get_shared_db_client();
 
         let search_service =
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);

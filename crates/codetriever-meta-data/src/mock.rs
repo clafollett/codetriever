@@ -455,12 +455,12 @@ impl FileRepository for MockFileRepository {
         Ok(0)
     }
 
-    async fn increment_job_progress(
-        &self,
-        _job_id: &Uuid,
-        _files_delta: i32,
-        _chunks_delta: i32,
-    ) -> DatabaseResult<()> {
+    async fn increment_files_processed(&self, _job_id: &Uuid, _delta: i32) -> DatabaseResult<()> {
+        self.check_fail()?;
+        Ok(())
+    }
+
+    async fn increment_chunks_created(&self, _job_id: &Uuid, _delta: i32) -> DatabaseResult<()> {
         self.check_fail()?;
         Ok(())
     }

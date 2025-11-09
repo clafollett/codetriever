@@ -200,12 +200,17 @@ pub async fn spawn_background_worker(
     let worker_config = WorkerConfig::from_app_config(config);
 
     // Create background worker with dynamic storage routing
+    // Create PostgreSQL chunk queue for persistent, crash-recoverable chunk processing
+    let write_pool = pools.write_pool().clone();
+    let chunk_queue = Arc::new(codetriever_meta_data::PostgresChunkQueue::new(write_pool));
+
     let worker = BackgroundWorker::new(
         file_repository,
         Arc::clone(&embedding_service),
         config.vector_storage.url.clone(),
         code_parser,
         worker_config,
+        chunk_queue,
     );
 
     let shutdown_handle = worker.shutdown_handle();

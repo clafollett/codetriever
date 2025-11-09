@@ -21,11 +21,29 @@ pub use in_memory_queue::{InMemoryChunkQueue, InMemoryFileQueue};
 pub use postgres_queue::PostgresFileQueue;
 
 /// Wrapper for chunks with their file generation metadata
-#[derive(Clone, Debug)]
+///
+/// Contains all context needed for embedding workers to process and store chunks
+/// without additional database lookups.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ChunkWithMetadata {
+    // Chunk data
     pub chunk: CodeChunk,
     pub generation: i64,
     pub file_chunk_index: usize, // Stable index within the file (assigned by parser)
+
+    // Job context (needed for progress tracking and storage)
+    pub job_id: uuid::Uuid,
+    pub tenant_id: uuid::Uuid,
+    pub repository_id: String,
+    pub branch: String,
+    pub vector_namespace: String,
+
+    // Commit metadata (needed for ChunkStorageContext)
+    pub repository_url: String,
+    pub commit_sha: String,
+    pub commit_message: String,
+    pub commit_date: chrono::DateTime<chrono::Utc>,
+    pub author: String,
 }
 
 /// Result type for queue operations

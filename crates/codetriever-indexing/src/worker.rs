@@ -1,14 +1,16 @@
 //! Background worker for processing indexing jobs
 //!
 //! This module provides a background worker that processes indexing jobs from the
-//! persistent PostgreSQL queue. It's designed to be easily extractable into a
-//! separate daemon binary when needed for production deployments.
+//! persistent PostgreSQL queue using a two-level worker architecture for maximum
+//! parallelism and throughput.
 //!
 //! # Architecture
 //!
-//! The worker continuously polls the database for queued jobs and processes them
-//! using the existing parser and embedding worker infrastructure. Jobs are processed
-//! one at a time per worker instance, with concurrent file processing within each job.
+//! The worker uses a two-level pipeline:
+//! 1. **Parser Workers** (N concurrent): Pull files from PostgreSQL → parse → push chunks to in-memory queue
+//! 2. **Embedder Workers** (M concurrent): Pull chunks from in-memory queue → embed → store
+//!
+//! This architecture keeps ALL embedding models busy in parallel, achieving optimal GPU utilization.
 //!
 //! # Future Extraction
 //!
@@ -26,15 +28,17 @@
 //! }
 //! ```
 
+use crate::queues::ChunkWithMetadata;
 use crate::{IndexerError, IndexerResult};
 use codetriever_config::ApplicationConfig;
 use codetriever_embeddings::EmbeddingService;
 use codetriever_meta_data::models::JobStatus;
 use codetriever_meta_data::traits::FileRepository;
+use codetriever_meta_data::{ChunkQueue, PostgresChunkQueue};
 use codetriever_parsing::CodeParser;
 use codetriever_vector_data::VectorStorage;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -120,7 +124,11 @@ impl WorkerConfig {
 
 /// Background worker for processing indexing jobs
 ///
-/// This worker continuously polls the PostgreSQL queue for jobs and processes them.
+/// This worker continuously polls the PostgreSQL queue for jobs and processes them
+/// using a two-level architecture:
+/// - Parser workers: Pull files from PostgreSQL → parse → push chunks to in-memory queue
+/// - Embedder workers: Pull chunks from in-memory queue → embed → store in Qdrant/PostgreSQL
+///
 /// Designed to run as a background thread in the API binary, with zero web framework
 /// dependencies for easy extraction to a separate daemon later.
 pub struct BackgroundWorker {
@@ -131,16 +139,18 @@ pub struct BackgroundWorker {
     code_parser: Arc<CodeParser>,
     config: WorkerConfig,
     shutdown_signal: Arc<AtomicBool>,
+    chunk_queue: Arc<PostgresChunkQueue>,
 }
 
 impl BackgroundWorker {
-    /// Create a new background worker with dynamic storage routing
+    /// Create a new background worker with two-level architecture
     pub fn new(
         repository: Arc<dyn FileRepository>,
         embedding_service: Arc<dyn EmbeddingService>,
         qdrant_url: String,
         code_parser: Arc<CodeParser>,
         config: WorkerConfig,
+        chunk_queue: Arc<PostgresChunkQueue>,
     ) -> Self {
         Self {
             repository,
@@ -150,6 +160,7 @@ impl BackgroundWorker {
             code_parser,
             config,
             shutdown_signal: Arc::new(AtomicBool::new(false)),
+            chunk_queue,
         }
     }
 
@@ -195,336 +206,105 @@ impl BackgroundWorker {
         Ok(storage)
     }
 
-    /// Main worker loop - continuously processes files from global queue
+    /// Main worker loop - spawns parser and embedder workers in two-level architecture
     ///
-    /// This method runs indefinitely until shutdown is signaled. It pulls files
-    /// from the global FIFO queue (across ALL jobs) and processes them, providing
-    /// maximum concurrency and fair scheduling.
+    /// This method runs indefinitely until shutdown is signaled. It spawns:
+    /// - N parser workers that pull files from PostgreSQL and push chunks to in-memory queue
+    /// - M embedder workers that pull chunks from queue, embed them, and store results
     ///
     /// # Graceful Shutdown
     ///
     /// Set the shutdown signal to trigger graceful shutdown. The worker will
-    /// finish its current file before exiting.
+    /// close queues, wait for all workers to finish, then exit.
     pub async fn run(&self) {
-        info!("🚀 Background indexing worker started (file-level FIFO)");
+        eprintln!(
+            "🚀 [WORKER] Starting two-level architecture: {} parser workers, {} embedder workers",
+            self.config.parser_concurrency, self.config.embedder_concurrency
+        );
+        info!(
+            "🚀 Background indexing worker started (parsers: {}, embedders: {})",
+            self.config.parser_concurrency, self.config.embedder_concurrency
+        );
 
+        // Shared counters for progress tracking
+        let files_processed = Arc::new(AtomicUsize::new(0));
+        let chunks_created = Arc::new(AtomicUsize::new(0));
+
+        let mut join_set = tokio::task::JoinSet::new();
+
+        // Spawn parser workers (pull from PostgreSQL → parse → push chunks to queue)
+        for worker_id in 0..self.config.parser_concurrency {
+            let repository = Arc::clone(&self.repository);
+            let code_parser = Arc::clone(&self.code_parser);
+            let chunk_queue = Arc::clone(&self.chunk_queue);
+            let shutdown = Arc::clone(&self.shutdown_signal);
+            let files_processed = Arc::clone(&files_processed);
+            let chunks_created = Arc::clone(&chunks_created);
+            let poll_interval = self.config.poll_interval_ms;
+
+            join_set.spawn(async move {
+                parser_worker(
+                    worker_id,
+                    repository,
+                    code_parser,
+                    chunk_queue,
+                    shutdown,
+                    files_processed,
+                    chunks_created,
+                    poll_interval,
+                )
+                .await
+            });
+        }
+
+        // Spawn embedder workers (pull chunks from queue → embed → store)
+        for worker_id in 0..self.config.embedder_concurrency {
+            let embedding_service = Arc::clone(&self.embedding_service);
+            let chunk_queue = Arc::clone(&self.chunk_queue);
+            let shutdown = Arc::clone(&self.shutdown_signal);
+            let batch_size = self.config.embedding_batch_size;
+            let storage_cache = self.storage_cache.clone();
+            let qdrant_url = self.qdrant_url.clone();
+            let repository = Arc::clone(&self.repository);
+
+            join_set.spawn(async move {
+                embedder_worker(
+                    worker_id,
+                    embedding_service,
+                    chunk_queue,
+                    storage_cache,
+                    qdrant_url,
+                    repository,
+                    shutdown,
+                    batch_size,
+                )
+                .await
+            });
+        }
+
+        // Wait for shutdown signal
         loop {
-            // Check for shutdown signal
             if self.shutdown_signal.load(Ordering::Relaxed) {
-                info!("📛 Shutdown signal received, worker stopping gracefully");
+                info!("📛 Shutdown signal received, waiting for workers to finish");
+                // NOTE: PostgreSQL queue doesn't need explicit close() - workers will exit naturally
                 break;
             }
+            sleep(Duration::from_millis(self.config.poll_interval_ms)).await;
+        }
 
-            // Dequeue next file from global queue (industry-standard pattern!)
-            match self.repository.dequeue_file().await {
-                Ok(Some(dequeued)) => {
-                    info!(
-                        job_id = %dequeued.job_id,
-                        file = %dequeued.file_path,
-                        "📥 Processing file from global queue"
-                    );
-
-                    match self.process_file(&dequeued).await {
-                        Ok(chunks_created) => {
-                            info!(
-                                job_id = %dequeued.job_id,
-                                file = %dequeued.file_path,
-                                chunks = chunks_created,
-                                "✅ File processed successfully"
-                            );
-
-                            // Mark file as completed in queue
-                            if let Err(e) = self
-                                .repository
-                                .mark_file_completed(&dequeued.job_id, &dequeued.file_path)
-                                .await
-                            {
-                                error!(
-                                    job_id = %dequeued.job_id,
-                                    error = %e,
-                                    "Failed to mark file completed"
-                                );
-                            }
-
-                            // Increment job progress
-                            if let Err(e) = self
-                                .repository
-                                .increment_job_progress(&dequeued.job_id, 1, chunks_created as i32)
-                                .await
-                            {
-                                error!(
-                                    job_id = %dequeued.job_id,
-                                    error = %e,
-                                    "Failed to update job progress"
-                                );
-                            }
-
-                            // Check if job is complete (now that file is marked completed)
-                            match self.repository.check_job_complete(&dequeued.job_id).await {
-                                Ok(true) => {
-                                    info!(job_id = %dequeued.job_id, "🎉 Job completed!");
-                                    if let Err(e) = self
-                                        .repository
-                                        .complete_job(&dequeued.job_id, JobStatus::Completed, None)
-                                        .await
-                                    {
-                                        error!(job_id = %dequeued.job_id, error = %e, "Failed to mark job complete");
-                                    }
-                                }
-                                Ok(false) => {
-                                    // Job still has more files
-                                }
-                                Err(e) => {
-                                    error!(job_id = %dequeued.job_id, error = %e, "Failed to check job completion");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!(
-                                job_id = %dequeued.job_id,
-                                file = %dequeued.file_path,
-                                error = %e,
-                                "❌ File processing failed"
-                            );
-                            // Don't fail the entire job - just this file
-                            // Continue processing other files
-                        }
-                    }
-                }
-                Ok(None) => {
-                    // No files available - sleep and retry
-                    sleep(Duration::from_millis(self.config.poll_interval_ms)).await;
-                }
-                Err(e) => {
-                    error!(error = %e, "Failed to dequeue file");
-                    sleep(Duration::from_millis(self.config.poll_interval_ms * 5)).await; // Back off on errors
-                }
+        // Wait for all workers to complete
+        info!("⏳ Waiting for {} workers to complete", join_set.len());
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                error!(error = %e, "Worker task panicked");
             }
         }
 
-        info!("🛑 Background indexing worker stopped");
-    }
-
-    /// Process a single file (parse + embed + store)
-    ///
-    /// Implements the complete indexing pipeline for a single file:
-    /// 1. Encoding detection and UTF-8 conversion
-    /// 2. File state checking (skip unchanged files)
-    /// 3. Parsing into chunks
-    /// 4. Embedding generation
-    /// 5. Storage in Qdrant + PostgreSQL
-    ///
-    /// Returns the number of chunks created for progress tracking.
-    async fn process_file(
-        &self,
-        dequeued: &codetriever_meta_data::DequeuedFile,
-    ) -> IndexerResult<usize> {
-        use codetriever_common::CorrelationId;
-        use codetriever_parsing::get_language_from_extension;
-
-        // Get job details to know repository_id and branch
-        let job = self
-            .repository
-            .get_indexing_job(&dequeued.job_id)
-            .await?
-            .ok_or_else(|| IndexerError::Other(format!("Job not found: {}", dequeued.job_id)))?;
-
-        // 1. Detect encoding and convert to UTF-8 (skip binary files)
-        let encoding_result = match detect_and_convert_to_utf8(&dequeued.file_content) {
-            Some(result) => result,
-            None => {
-                tracing::warn!("Skipping binary file {}", dequeued.file_path);
-                return Ok(0); // No chunks for binary files
-            }
-        };
-
-        let utf8_content = encoding_result.content;
-        let detected_encoding = encoding_result.encoding_name;
-
-        // 2. Check file state in database (skip unchanged files)
-        let content_hash = codetriever_meta_data::hash_content(&utf8_content);
-        let state = self
-            .repository
-            .check_file_state(
-                &job.tenant_id,
-                &job.repository_id,
-                &job.branch,
-                &dequeued.file_path,
-                &content_hash,
-            )
-            .await?;
-
-        let generation = match state {
-            codetriever_meta_data::models::FileState::Unchanged => {
-                eprintln!(
-                    "⏭️  [WORKER] Skipping unchanged file {} (tenant: {})",
-                    dequeued.file_path, job.tenant_id
-                );
-                return Ok(0); // No chunks needed
-            }
-            codetriever_meta_data::models::FileState::New { generation }
-            | codetriever_meta_data::models::FileState::Updated {
-                new_generation: generation,
-                ..
-            } => {
-                // Record file indexing with detected encoding
-                #[allow(clippy::cast_possible_wrap)]
-                let size_bytes = dequeued.file_content.len() as i64;
-                let metadata = codetriever_meta_data::models::FileMetadata {
-                    path: dequeued.file_path.clone(),
-                    content: utf8_content.clone(),
-                    content_hash: content_hash.clone(),
-                    encoding: detected_encoding.clone(),
-                    size_bytes,
-                    generation,
-                    commit_sha: job.commit_sha.clone(),
-                    commit_message: job.commit_message.clone(),
-                    commit_date: job.commit_date,
-                    author: job.author.clone(),
-                };
-                self.repository
-                    .record_file_indexing(
-                        &job.tenant_id,
-                        &job.repository_id,
-                        &job.branch,
-                        &metadata,
-                    )
-                    .await?;
-
-                // For updated files, delete old chunks from both Qdrant and PostgreSQL
-                if matches!(
-                    state,
-                    codetriever_meta_data::models::FileState::Updated { .. }
-                ) {
-                    let deleted_ids = self
-                        .repository
-                        .replace_file_chunks(
-                            &job.tenant_id,
-                            &job.repository_id,
-                            &job.branch,
-                            &dequeued.file_path,
-                            generation,
-                        )
-                        .await?;
-                    tracing::debug!(
-                        "Deleted {} old chunks for {}",
-                        deleted_ids.len(),
-                        dequeued.file_path
-                    );
-                }
-
-                generation
-            }
-        };
-
-        // 3. Parse file into chunks
-        let ext = dequeued.file_path.rsplit('.').next().unwrap_or("");
-        let language = get_language_from_extension(ext).unwrap_or(ext);
-        let parsing_chunks =
-            self.code_parser
-                .parse(&utf8_content, language, &dequeued.file_path)?;
-
-        if parsing_chunks.is_empty() {
-            eprintln!(
-                "⚠️  [WORKER] File {} produced zero chunks (tenant: {})",
-                dequeued.file_path, job.tenant_id
-            );
-            return Ok(0);
-        }
-
-        let chunk_count = parsing_chunks.len();
-        tracing::info!("Parsed {} chunks from {}", chunk_count, dequeued.file_path);
-
-        // 4. Generate embeddings for all chunks
-        let texts: Vec<&str> = parsing_chunks.iter().map(|c| c.content.as_str()).collect();
-        let embeddings = self.embedding_service.generate_embeddings(texts).await?;
-
-        // 5. Convert to vector data chunks and add embeddings
-        let vector_chunks: Vec<codetriever_vector_data::CodeChunk> = parsing_chunks
-            .iter()
-            .zip(embeddings.iter())
-            .map(
-                |(parsing_chunk, embedding)| codetriever_vector_data::CodeChunk {
-                    file_path: parsing_chunk.file_path.clone(),
-                    content: parsing_chunk.content.clone(),
-                    start_line: parsing_chunk.start_line,
-                    end_line: parsing_chunk.end_line,
-                    byte_start: parsing_chunk.byte_start,
-                    byte_end: parsing_chunk.byte_end,
-                    kind: parsing_chunk.kind.clone(),
-                    language: parsing_chunk.language.clone(),
-                    name: parsing_chunk.name.clone(),
-                    token_count: parsing_chunk.token_count,
-                    embedding: Some(embedding.clone()),
-                },
-            )
-            .collect();
-
-        // 6. Store chunks in Qdrant with full metadata context
-        // Build storage context with available metadata
-        // Note: commit_sha comes from job level (one commit per indexing job)
-        // For per-file commit tracking, we'd need to enhance the queue schema
-        let storage_context = codetriever_vector_data::ChunkStorageContext {
-            tenant_id: job.tenant_id,
-            repository_id: job.repository_id.clone(),
-            branch: job.branch.clone(),
-            generation,
-            repository_url: Some(job.repository_url.clone()),
-            commit_sha: Some(job.commit_sha.clone()),
-            commit_message: Some(job.commit_message.clone()),
-            commit_date: Some(job.commit_date),
-            author: Some(job.author.clone()),
-        };
-
-        let correlation_id = CorrelationId::new();
-
-        // Get storage for this job's vector namespace (uses cache)
-        let storage = self
-            .get_or_create_storage(&dequeued.vector_namespace)
-            .await?;
-
-        let chunk_ids = storage
-            .store_chunks(&storage_context, &vector_chunks, &correlation_id)
-            .await
-            .map_err(|e| IndexerError::Other(format!("Failed to store chunks: {e}")))?;
-
-        // 7. Store chunk metadata in PostgreSQL
-        let chunk_metadata: Vec<codetriever_meta_data::models::ChunkMetadata> = parsing_chunks
-            .iter()
-            .zip(chunk_ids.iter())
-            .enumerate()
-            .map(
-                |(idx, (parsing_chunk, chunk_id))| codetriever_meta_data::models::ChunkMetadata {
-                    chunk_id: *chunk_id,
-                    tenant_id: job.tenant_id,
-                    repository_id: job.repository_id.clone(),
-                    branch: job.branch.clone(),
-                    file_path: parsing_chunk.file_path.clone(),
-                    chunk_index: idx as i32,
-                    generation,
-                    start_line: parsing_chunk.start_line as i32,
-                    end_line: parsing_chunk.end_line as i32,
-                    byte_start: parsing_chunk.byte_start as i64,
-                    byte_end: parsing_chunk.byte_end as i64,
-                    kind: parsing_chunk.kind.clone(),
-                    name: parsing_chunk.name.clone(),
-                    created_at: chrono::Utc::now(),
-                },
-            )
-            .collect();
-
-        self.repository
-            .insert_chunks(
-                &job.tenant_id,
-                &job.repository_id,
-                &job.branch,
-                chunk_metadata,
-            )
-            .await?;
-
-        tracing::info!("Stored {} chunks for {}", chunk_count, dequeued.file_path);
-
-        Ok(chunk_count)
+        info!(
+            "🛑 Background indexing worker stopped gracefully (processed {} files, {} chunks)",
+            files_processed.load(Ordering::Relaxed),
+            chunks_created.load(Ordering::Relaxed)
+        );
     }
 
     /// Process one file from the queue (for testing)
@@ -538,19 +318,71 @@ impl BackgroundWorker {
             Some(dequeued) => {
                 let job_id = dequeued.job_id;
 
-                // Process the file
-                let chunks_created = self.process_file(&dequeued).await?;
+                // Get job details
+                let job = self
+                    .repository
+                    .get_indexing_job(&job_id)
+                    .await?
+                    .ok_or_else(|| IndexerError::Other(format!("Job not found: {job_id}")))?;
 
-                // Update progress
-                self.repository
-                    .increment_job_progress(&job_id, 1, chunks_created as i32)
+                // Parse file
+                let file_path = dequeued.file_path.clone();
+                let parsing_result =
+                    parse_file(&dequeued, &job, &self.code_parser, &self.repository).await?;
+
+                if let Some((chunks, generation)) = parsing_result {
+                    let chunk_count = chunks.len();
+
+                    // Create ChunkWithMetadata entries
+                    let chunks_with_metadata: Vec<ChunkWithMetadata> = chunks
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, chunk)| ChunkWithMetadata {
+                            chunk,
+                            generation,
+                            file_chunk_index: idx,
+                            job_id,
+                            tenant_id: job.tenant_id,
+                            repository_id: job.repository_id.clone(),
+                            branch: job.branch.clone(),
+                            vector_namespace: dequeued.vector_namespace.clone(),
+                            repository_url: job.repository_url.clone(),
+                            commit_sha: job.commit_sha.clone(),
+                            commit_message: job.commit_message.clone(),
+                            commit_date: job.commit_date,
+                            author: job.author.clone(),
+                        })
+                        .collect();
+
+                    // Embed and store (synchronously for testing)
+                    let storage = self
+                        .get_or_create_storage(&dequeued.vector_namespace)
+                        .await?;
+                    embed_and_store_chunks(
+                        &chunks_with_metadata,
+                        &self.embedding_service,
+                        &storage,
+                        &self.repository,
+                    )
                     .await?;
 
-                // Check if job complete
-                if self.repository.check_job_complete(&job_id).await? {
+                    // Update progress
                     self.repository
-                        .complete_job(&job_id, JobStatus::Completed, None)
+                        .mark_file_completed(&job_id, &file_path)
                         .await?;
+                    self.repository
+                        .increment_files_processed(&job_id, 1)
+                        .await?;
+                    self.repository
+                        .increment_chunks_created(&job_id, chunk_count as i32)
+                        .await?;
+
+                    // Check if job complete
+                    if self.repository.check_job_complete(&job_id).await? {
+                        self.repository
+                            .complete_job(&job_id, JobStatus::Completed, None)
+                            .await?;
+                    }
                 }
 
                 Ok(Some(job_id))
@@ -558,4 +390,486 @@ impl BackgroundWorker {
             None => Ok(None),
         }
     }
+}
+
+/// Parser worker: pulls files from PostgreSQL, parses them, pushes chunks to queue
+#[allow(clippy::too_many_arguments)]
+async fn parser_worker(
+    worker_id: usize,
+    repository: Arc<dyn FileRepository>,
+    code_parser: Arc<CodeParser>,
+    chunk_queue: Arc<PostgresChunkQueue>,
+    shutdown: Arc<AtomicBool>,
+    files_processed: Arc<AtomicUsize>,
+    chunks_created: Arc<AtomicUsize>,
+    poll_interval_ms: u64,
+) -> IndexerResult<()> {
+    eprintln!("🔧 [PARSER-{worker_id}] Worker started");
+    tracing::debug!("Parser worker {worker_id} starting");
+
+    loop {
+        // Check shutdown
+        if shutdown.load(Ordering::Relaxed) {
+            tracing::debug!("Parser worker {worker_id}: shutdown signal received");
+            break;
+        }
+
+        // Try to dequeue a file
+        match repository.dequeue_file().await {
+            Ok(Some(dequeued)) => {
+                let job_id = dequeued.job_id;
+                let file_path = dequeued.file_path.clone();
+
+                tracing::debug!(
+                    "Parser worker {worker_id}: processing file {file_path} from job {job_id}"
+                );
+
+                // Get job details
+                let job = match repository.get_indexing_job(&job_id).await? {
+                    Some(job) => job,
+                    None => {
+                        error!("Job {job_id} not found");
+                        continue;
+                    }
+                };
+
+                // Parse file
+                match parse_file(&dequeued, &job, &code_parser, &repository).await {
+                    Ok(Some((chunks, generation))) => {
+                        let chunk_count = chunks.len();
+                        chunks_created.fetch_add(chunk_count, Ordering::Relaxed);
+
+                        eprintln!(
+                            "📄 [PARSER-{worker_id}] Parsed {chunk_count} chunks from {file_path}"
+                        );
+                        tracing::info!(
+                            "Parser worker {worker_id}: parsed {chunk_count} chunks from {file_path}"
+                        );
+
+                        // Create ChunkWithMetadata entries and serialize to JSONB for PostgreSQL
+                        let chunks_with_metadata: Vec<serde_json::Value> = chunks
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, chunk)| {
+                                let chunk_meta = ChunkWithMetadata {
+                                    chunk,
+                                    generation,
+                                    file_chunk_index: idx,
+                                    job_id,
+                                    tenant_id: job.tenant_id,
+                                    repository_id: job.repository_id.clone(),
+                                    branch: job.branch.clone(),
+                                    vector_namespace: dequeued.vector_namespace.clone(),
+                                    repository_url: job.repository_url.clone(),
+                                    commit_sha: job.commit_sha.clone(),
+                                    commit_message: job.commit_message.clone(),
+                                    commit_date: job.commit_date,
+                                    author: job.author.clone(),
+                                };
+                                serde_json::to_value(chunk_meta).expect("Failed to serialize chunk")
+                            })
+                            .collect();
+
+                        // Enqueue to PostgreSQL (persistent, crash-recoverable!)
+                        if let Err(e) = chunk_queue
+                            .enqueue_chunks(job_id, chunks_with_metadata)
+                            .await
+                        {
+                            error!("Parser worker {worker_id}: failed to enqueue chunks: {e}");
+                            continue;
+                        }
+
+                        // Mark file as completed
+                        if let Err(e) = repository.mark_file_completed(&job_id, &file_path).await {
+                            error!("Failed to mark file completed: {e}");
+                        }
+
+                        // Increment files processed counter
+                        if let Err(e) = repository.increment_files_processed(&job_id, 1).await {
+                            error!("Failed to increment files processed: {e}");
+                        }
+
+                        files_processed.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Ok(None) => {
+                        // File was skipped (binary, unchanged, etc.)
+                        files_processed.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        error!("Parser worker {worker_id}: failed to parse {file_path}: {e}");
+                    }
+                }
+            }
+            Ok(None) => {
+                // No files available - sleep
+                sleep(Duration::from_millis(poll_interval_ms)).await;
+            }
+            Err(e) => {
+                error!("Parser worker {worker_id}: failed to dequeue file: {e}");
+                sleep(Duration::from_millis(poll_interval_ms * 5)).await;
+            }
+        }
+    }
+
+    eprintln!("🛑 [PARSER-{worker_id}] Worker shutting down");
+    tracing::debug!("Parser worker {worker_id} shutting down");
+    Ok(())
+}
+
+/// Embedder worker: pulls chunks from queue, embeds them, stores results
+#[allow(clippy::too_many_arguments)]
+async fn embedder_worker(
+    worker_id: usize,
+    embedding_service: Arc<dyn EmbeddingService>,
+    chunk_queue: Arc<PostgresChunkQueue>,
+    storage_cache: StorageCache,
+    qdrant_url: String,
+    repository: Arc<dyn FileRepository>,
+    shutdown: Arc<AtomicBool>,
+    batch_size: usize,
+) -> IndexerResult<()> {
+    eprintln!("⚡ [EMBEDDER-{worker_id}] Worker started");
+    tracing::debug!("Embedder worker {worker_id} starting");
+
+    loop {
+        // Check shutdown - sleep briefly if shutdown signaled
+        if shutdown.load(Ordering::Relaxed) {
+            tracing::debug!(
+                "Embedder worker {worker_id}: shutdown signal received, draining queue"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Dequeue chunks from PostgreSQL (SKIP LOCKED pattern)
+        let claimed_chunks = match chunk_queue
+            .dequeue_chunks(&format!("embedder-{worker_id}"), batch_size as i32, 300)
+            .await
+        {
+            Ok(chunks) if chunks.is_empty() => {
+                // No chunks available - sleep
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            Ok(chunks) => chunks,
+            Err(e) => {
+                error!("Embedder worker {worker_id}: failed to dequeue chunks: {e}");
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+                continue;
+            }
+        };
+
+        let chunk_ids: Vec<uuid::Uuid> = claimed_chunks.iter().map(|(id, _)| *id).collect();
+        let chunk_count = claimed_chunks.len();
+
+        tracing::debug!("Embedder worker {worker_id}: processing {chunk_count} chunks");
+
+        // Deserialize chunks from JSONB
+        let chunks: Vec<ChunkWithMetadata> = claimed_chunks
+            .iter()
+            .filter_map(|(_, data)| {
+                serde_json::from_value(data.clone())
+                    .map_err(|e| {
+                        error!("Failed to deserialize chunk: {e}");
+                        e
+                    })
+                    .ok()
+            })
+            .collect();
+
+        if chunks.is_empty() {
+            error!("Embedder worker {worker_id}: all chunks failed deserialization");
+            continue;
+        }
+
+        // Get storage for this namespace (use first chunk's namespace - all should be same)
+        let vector_namespace = &chunks[0].vector_namespace;
+        let storage =
+            match get_or_create_storage_cached(&storage_cache, &qdrant_url, vector_namespace).await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("Embedder worker {worker_id}: failed to get storage: {e}");
+                    // Requeue chunks on storage creation failure
+                    for chunk_id in &chunk_ids {
+                        let _ = chunk_queue
+                            .requeue_chunk(*chunk_id, &format!("Storage creation failed: {e}"))
+                            .await;
+                    }
+                    continue;
+                }
+            };
+
+        // Embed and store
+        if let Err(e) =
+            embed_and_store_chunks(&chunks, &embedding_service, &storage, &repository).await
+        {
+            error!("Embedder worker {worker_id}: failed to embed/store chunks: {e}");
+            // Requeue chunks on embedding/storage failure
+            for chunk_id in &chunk_ids {
+                let _ = chunk_queue
+                    .requeue_chunk(*chunk_id, &format!("Embedding failed: {e}"))
+                    .await;
+            }
+            continue;
+        }
+
+        // SUCCESS! Acknowledge chunks as completed
+        if let Err(e) = chunk_queue.ack_chunks(&chunk_ids).await {
+            error!("Embedder worker {worker_id}: failed to ack chunks: {e}");
+        }
+
+        // Update job progress (group by job_id)
+        let mut job_chunks: std::collections::HashMap<uuid::Uuid, i32> =
+            std::collections::HashMap::new();
+        for chunk_meta in &chunks {
+            *job_chunks.entry(chunk_meta.job_id).or_insert(0) += 1;
+        }
+
+        for (job_id, chunk_count) in job_chunks {
+            if let Err(e) = repository
+                .increment_chunks_created(&job_id, chunk_count)
+                .await
+            {
+                error!("Failed to increment chunks created for {job_id}: {e}");
+            }
+
+            // Check if job is complete (all chunks processed)
+            match chunk_queue.check_job_complete(job_id).await {
+                Ok(true) => {
+                    info!("Embedder worker {worker_id}: Job {job_id} complete!");
+                    if let Err(e) = repository
+                        .complete_job(&job_id, JobStatus::Completed, None)
+                        .await
+                    {
+                        error!("Failed to mark job complete: {e}");
+                    }
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    error!("Failed to check job completion: {e}");
+                }
+            }
+        }
+
+        eprintln!("💾 [EMBEDDER-{worker_id}] Embedded and stored {chunk_count} chunks",);
+        tracing::info!("Embedder worker {worker_id}: stored {chunk_count} chunks");
+    }
+}
+
+/// Parse a file and return chunks + generation, or None if skipped
+async fn parse_file(
+    dequeued: &codetriever_meta_data::DequeuedFile,
+    job: &codetriever_meta_data::IndexingJob,
+    code_parser: &CodeParser,
+    repository: &Arc<dyn FileRepository>,
+) -> IndexerResult<Option<(Vec<codetriever_parsing::CodeChunk>, i64)>> {
+    use codetriever_parsing::get_language_from_extension;
+
+    // 1. Detect encoding and convert to UTF-8
+    let encoding_result = match detect_and_convert_to_utf8(&dequeued.file_content) {
+        Some(result) => result,
+        None => {
+            tracing::warn!("Skipping binary file {}", dequeued.file_path);
+            return Ok(None);
+        }
+    };
+
+    let utf8_content = encoding_result.content;
+    let detected_encoding = encoding_result.encoding_name;
+
+    // 2. Check file state in database
+    let content_hash = codetriever_meta_data::hash_content(&utf8_content);
+    let state = repository
+        .check_file_state(
+            &job.tenant_id,
+            &job.repository_id,
+            &job.branch,
+            &dequeued.file_path,
+            &content_hash,
+        )
+        .await?;
+
+    let generation = match state {
+        codetriever_meta_data::models::FileState::Unchanged => {
+            tracing::debug!("Skipping unchanged file {}", dequeued.file_path);
+            return Ok(None);
+        }
+        codetriever_meta_data::models::FileState::New { generation }
+        | codetriever_meta_data::models::FileState::Updated {
+            new_generation: generation,
+            ..
+        } => {
+            // Record file indexing
+            let metadata = codetriever_meta_data::models::FileMetadata {
+                path: dequeued.file_path.clone(),
+                content: utf8_content.clone(),
+                content_hash: content_hash.clone(),
+                encoding: detected_encoding.clone(),
+                size_bytes: dequeued.file_content.len() as i64,
+                generation,
+                commit_sha: job.commit_sha.clone(),
+                commit_message: job.commit_message.clone(),
+                commit_date: job.commit_date,
+                author: job.author.clone(),
+            };
+            repository
+                .record_file_indexing(&job.tenant_id, &job.repository_id, &job.branch, &metadata)
+                .await?;
+
+            // For updated files, delete old chunks
+            if matches!(
+                state,
+                codetriever_meta_data::models::FileState::Updated { .. }
+            ) {
+                let deleted_ids = repository
+                    .replace_file_chunks(
+                        &job.tenant_id,
+                        &job.repository_id,
+                        &job.branch,
+                        &dequeued.file_path,
+                        generation,
+                    )
+                    .await?;
+                tracing::debug!(
+                    "Deleted {} old chunks for {}",
+                    deleted_ids.len(),
+                    dequeued.file_path
+                );
+            }
+
+            generation
+        }
+    };
+
+    // 3. Parse file into chunks
+    let ext = dequeued.file_path.rsplit('.').next().unwrap_or("");
+    let language = get_language_from_extension(ext).unwrap_or(ext);
+    let chunks = code_parser.parse(&utf8_content, language, &dequeued.file_path)?;
+
+    if chunks.is_empty() {
+        tracing::warn!("File {} produced zero chunks", dequeued.file_path);
+        return Ok(None);
+    }
+
+    Ok(Some((chunks, generation)))
+}
+
+/// Embed chunks and store them in Qdrant + PostgreSQL
+async fn embed_and_store_chunks(
+    chunks_with_metadata: &[ChunkWithMetadata],
+    embedding_service: &Arc<dyn EmbeddingService>,
+    storage: &Arc<codetriever_vector_data::QdrantStorage>,
+    repository: &Arc<dyn FileRepository>,
+) -> IndexerResult<()> {
+    use codetriever_common::CorrelationId;
+
+    // 1. Generate embeddings
+    let texts: Vec<&str> = chunks_with_metadata
+        .iter()
+        .map(|c| c.chunk.content.as_str())
+        .collect();
+    let embeddings = embedding_service.generate_embeddings(texts).await?;
+
+    // 2. Create vector chunks with embeddings
+    let vector_chunks: Vec<codetriever_vector_data::CodeChunk> = chunks_with_metadata
+        .iter()
+        .zip(embeddings.iter())
+        .map(
+            |(chunk_meta, embedding)| codetriever_vector_data::CodeChunk {
+                file_path: chunk_meta.chunk.file_path.clone(),
+                content: chunk_meta.chunk.content.clone(),
+                start_line: chunk_meta.chunk.start_line,
+                end_line: chunk_meta.chunk.end_line,
+                byte_start: chunk_meta.chunk.byte_start,
+                byte_end: chunk_meta.chunk.byte_end,
+                kind: chunk_meta.chunk.kind.clone(),
+                language: chunk_meta.chunk.language.clone(),
+                name: chunk_meta.chunk.name.clone(),
+                token_count: chunk_meta.chunk.token_count,
+                embedding: Some(embedding.clone()),
+            },
+        )
+        .collect();
+
+    // 3. Build storage context (use first chunk's metadata - all from same file)
+    let first = &chunks_with_metadata[0];
+    let storage_context = codetriever_vector_data::ChunkStorageContext {
+        tenant_id: first.tenant_id,
+        repository_id: first.repository_id.clone(),
+        branch: first.branch.clone(),
+        generation: first.generation,
+        repository_url: Some(first.repository_url.clone()),
+        commit_sha: Some(first.commit_sha.clone()),
+        commit_message: Some(first.commit_message.clone()),
+        commit_date: Some(first.commit_date),
+        author: Some(first.author.clone()),
+    };
+
+    let correlation_id = CorrelationId::new();
+
+    // 4. Store in Qdrant
+    let chunk_ids = storage
+        .store_chunks(&storage_context, &vector_chunks, &correlation_id)
+        .await
+        .map_err(|e| IndexerError::Other(format!("Failed to store chunks in Qdrant: {e}")))?;
+
+    // 5. Store metadata in PostgreSQL
+    let chunk_metadata: Vec<codetriever_meta_data::models::ChunkMetadata> = chunks_with_metadata
+        .iter()
+        .zip(chunk_ids.iter())
+        .map(
+            |(chunk_meta, chunk_id)| codetriever_meta_data::models::ChunkMetadata {
+                chunk_id: *chunk_id,
+                tenant_id: chunk_meta.tenant_id,
+                repository_id: chunk_meta.repository_id.clone(),
+                branch: chunk_meta.branch.clone(),
+                file_path: chunk_meta.chunk.file_path.clone(),
+                chunk_index: chunk_meta.file_chunk_index as i32,
+                generation: chunk_meta.generation,
+                start_line: chunk_meta.chunk.start_line as i32,
+                end_line: chunk_meta.chunk.end_line as i32,
+                byte_start: chunk_meta.chunk.byte_start as i64,
+                byte_end: chunk_meta.chunk.byte_end as i64,
+                kind: chunk_meta.chunk.kind.clone(),
+                name: chunk_meta.chunk.name.clone(),
+                created_at: chrono::Utc::now(),
+            },
+        )
+        .collect();
+
+    repository
+        .insert_chunks(
+            &first.tenant_id,
+            &first.repository_id,
+            &first.branch,
+            chunk_metadata,
+        )
+        .await?;
+
+    Ok(())
+}
+
+/// Get or create storage from cache
+async fn get_or_create_storage_cached(
+    storage_cache: &StorageCache,
+    qdrant_url: &str,
+    vector_namespace: &str,
+) -> IndexerResult<Arc<codetriever_vector_data::QdrantStorage>> {
+    // Check cache first
+    if let Some(storage) = storage_cache.get(vector_namespace) {
+        return Ok(storage.clone());
+    }
+
+    // Create new storage
+    let storage = codetriever_vector_data::QdrantStorage::new(
+        qdrant_url.to_string(),
+        vector_namespace.to_string(),
+    )
+    .await
+    .map_err(|e| IndexerError::Other(format!("Failed to create storage: {e}")))?;
+
+    let storage = Arc::new(storage);
+    storage_cache.insert(vector_namespace.to_string(), storage.clone());
+
+    Ok(storage)
 }

@@ -61,7 +61,7 @@ fn test_full_stack_indexing_with_postgres_and_qdrant() {
         let pools = PoolManager::new(&db_config, pool_config)
             .await
             .expect("Failed to create pool manager");
-        let repository = Arc::new(DbFileRepository::new(pools))
+        let repository = Arc::new(DbFileRepository::new(pools.clone()))
             as Arc<dyn codetriever_meta_data::traits::FileRepository>;
 
         let qdrant_url =
@@ -91,12 +91,19 @@ fn test_full_stack_indexing_with_postgres_and_qdrant() {
             config.indexing.max_chunk_tokens,
         ));
 
+        // Create PostgreSQL chunk queue (clone pools before worker takes ownership)
+        let write_pool_for_queue = pools.write_pool().clone();
+        let chunk_queue = Arc::new(codetriever_meta_data::PostgresChunkQueue::new(
+            write_pool_for_queue,
+        ));
+
         let worker = BackgroundWorker::new(
             Arc::clone(&repository),
             Arc::clone(&embedding_service),
             config.vector_storage.url.clone(),
             code_parser,
             WorkerConfig::from_app_config(&config),
+            chunk_queue,
         );
 
         // Get shutdown handle before moving worker

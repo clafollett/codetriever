@@ -96,12 +96,18 @@ pub async fn spawn_test_worker()
         config.indexing.max_chunk_tokens,
     ));
 
+    // Create PostgreSQL chunk queue
+    let write_pool = shared.db_client.pools().write_pool().clone();
+    let chunk_queue =
+        std::sync::Arc::new(codetriever_meta_data::PostgresChunkQueue::new(write_pool));
+
     let worker = BackgroundWorker::new(
         std::sync::Arc::clone(&shared.file_repository),
         std::sync::Arc::clone(&shared.embedding_service),
         config.vector_storage.url.clone(),
         code_parser,
         WorkerConfig::from_app_config(&config),
+        chunk_queue,
     );
 
     let shutdown = worker.shutdown_handle();

@@ -15,6 +15,7 @@
 
 #[path = "test_utils.rs"]
 mod test_utils;
+use test_utils::get_shared_db_client;
 
 use codetriever_common::CorrelationId;
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
@@ -206,7 +207,9 @@ fn test_index_file_content_creates_searchable_chunks() {
             .await
             .expect("Failed to create storage");
         let embedding_service = create_test_embedding_service();
-        let repository = create_test_repository().await;
+        let repository = test_utils::create_test_repository().await;
+        // Get shared db_client (reuses same pool as repository - prevents pool exhaustion!)
+        let db_client = get_shared_db_client();
         let vector_storage =
             Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
@@ -294,16 +297,7 @@ impl PostgresConnection {
         // Search for indexed content with REAL database integration
         // (use embedding_service and vector_storage from earlier)
 
-        // Create database client for search
-        let db_config = codetriever_config::DatabaseConfig::from_env();
-        let pools = codetriever_meta_data::PoolManager::new(
-            &db_config,
-            codetriever_meta_data::PoolConfig::default(),
-        )
-        .await
-        .expect("Failed to create pool manager");
-        let db_client = std::sync::Arc::new(codetriever_meta_data::DataClient::new(pools));
-
+        // Reuse db_client from repository (prevents pool exhaustion!)
         let search_service =
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);
         eprintln!("🔍 [INSTRUMENTATION] Searching with tenant_id: {tenant_id}");

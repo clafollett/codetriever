@@ -173,13 +173,11 @@ pub trait FileRepository: Send + Sync {
     /// Get queue depth for a job
     async fn get_queue_depth(&self, job_id: &Uuid) -> DatabaseResult<i64>;
 
-    /// Atomically increment job progress after processing a file
-    async fn increment_job_progress(
-        &self,
-        job_id: &Uuid,
-        files_delta: i32,
-        chunks_delta: i32,
-    ) -> DatabaseResult<()>;
+    /// Atomically increment files processed count
+    async fn increment_files_processed(&self, job_id: &Uuid, delta: i32) -> DatabaseResult<()>;
+
+    /// Atomically increment chunks created count
+    async fn increment_chunks_created(&self, job_id: &Uuid, delta: i32) -> DatabaseResult<()>;
 
     /// Mark a file as completed in the queue
     async fn mark_file_completed(&self, job_id: &Uuid, file_path: &str) -> DatabaseResult<()>;
