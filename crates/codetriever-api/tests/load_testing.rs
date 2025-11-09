@@ -26,7 +26,9 @@ fn test_concurrent_search_load() -> test_utils::TestResult {
 
         // Index some test data first
         let index_request = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "load-test",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"},
             "files": [
                 {
                     "path": "src/auth.rs",
@@ -79,6 +81,7 @@ fn test_concurrent_search_load() -> test_utils::TestResult {
 
             let handle = tokio::spawn(async move {
                 let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
                     "query": query,
                     "limit": 10
                 });
@@ -164,7 +167,9 @@ fn test_sustained_load_over_time() -> test_utils::TestResult {
 
         // Index test data
         let index_request = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "sustained-load-test",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"},
             "files": [
                 {
                     "path": "src/main.rs",
@@ -198,6 +203,7 @@ fn test_sustained_load_over_time() -> test_utils::TestResult {
 
                 let handle = tokio::spawn(async move {
                     let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
                         "query": "hello world",
                         "limit": 5
                     });
@@ -279,9 +285,10 @@ fn test_memory_usage_under_load() -> test_utils::TestResult {
 
                 let handle = tokio::spawn(async move {
                     let search_request = json!({
-                        "query": query,
-                        "limit": 10
-                    });
+                    "tenant_id": "00000000-0000-0000-0000-000000000000",
+                                "query": query,
+                                "limit": 10
+                            });
 
                     let request = Request::builder()
                         .method("POST")

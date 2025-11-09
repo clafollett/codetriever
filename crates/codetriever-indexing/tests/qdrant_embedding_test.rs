@@ -4,11 +4,11 @@
 mod test_utils;
 
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
-use codetriever_search::SearchProvider;
+use codetriever_search::SearchService;
 use std::{path::Path, sync::Arc};
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
-    create_test_repository, create_test_storage, test_config,
+    create_test_repository, create_test_storage, get_shared_db_client, test_config,
 };
 
 /// Read files from directory (reuse from index_rust_mini_redis_test pattern)
@@ -64,16 +64,14 @@ fn test_indexer_stores_chunks_in_qdrant() {
 
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
+        let vector_storage =
+            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>;
 
-        // Load tokenizer for accurate chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
-            embedding_service,
-            Arc::new(storage.clone()) as Arc<dyn codetriever_vector_data::VectorStorage>,
-            repository,
-            code_parser,
-            &config,
-        );
+        let indexer = Arc::new(Indexer::new(
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_storage),
+            Arc::clone(&repository),
+        )) as Arc<dyn codetriever_indexing::indexing::IndexerService>;
 
         // Index a small test repo (mini-redis has ~30 Rust files)
         // Use CARGO_MANIFEST_DIR to find the workspace root reliably
@@ -104,50 +102,59 @@ fn test_indexer_stores_chunks_in_qdrant() {
             .as_millis();
         let project_id = format!("test-indexer-{timestamp}:main");
 
+        // Use async job pattern with BackgroundWorker
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
         let start = std::time::Instant::now();
-        let result = indexer
-            .index_file_content(&project_id, files)
-            .await
-            .expect("Failed to index files");
+        let (_job_id, job_status) = test_utils::index_files_async(
+            &indexer,
+            Arc::clone(&repository),
+            Arc::clone(&embedding_service),
+            config.vector_storage.url.clone(),
+            storage.collection_name().to_string(),
+            code_parser,
+            &config,
+            tenant_id,
+            &project_id,
+            files,
+        )
+        .await;
         let duration = start.elapsed();
 
         println!("Indexing stats:");
-        println!("  Files indexed: {}", result.files_indexed);
-        println!("  Chunks created: {}", result.chunks_created);
-        println!("  Chunks stored: {}", result.chunks_stored);
+        println!("  Files indexed: {}", job_status.files_processed);
+        println!("  Chunks created: {}", job_status.chunks_created);
+        println!("  Chunks stored: {}", job_status.chunks_created);
         println!("  Time taken: {duration:.2?}");
         println!(
             "  Speed: {:.2} chunks/sec",
-            result.chunks_created as f64 / duration.as_secs_f64()
+            job_status.chunks_created as f64 / duration.as_secs_f64()
         );
 
-        assert!(result.files_indexed > 0, "Should index at least one file");
-        assert!(result.chunks_created > 0, "Should create chunks");
         assert!(
-            result.chunks_stored > 0,
+            job_status.files_processed > 0,
+            "Should index at least one file"
+        );
+        assert!(job_status.chunks_created > 0, "Should create chunks");
+        assert!(
+            job_status.chunks_created > 0,
             "Chunks should be stored in Qdrant"
         );
 
         // Verify we can search for the indexed content
         let query = "redis connection";
-        let embedding_service = indexer.embedding_service();
-        let vector_storage = indexer.vector_storage();
 
-        // Create database client for search
-        let db_config = codetriever_config::DatabaseConfig::from_env();
-        let pools = codetriever_meta_data::PoolManager::new(
-            &db_config,
-            codetriever_meta_data::PoolConfig::default(),
-        )
-        .await
-        .expect("Failed to create pool manager");
-        let db_client = std::sync::Arc::new(codetriever_meta_data::DataClient::new(pools));
+        // Use shared database client (reuses repository's pool!)
+        let db_client = get_shared_db_client();
 
         let search_service =
-            codetriever_search::SearchService::new(embedding_service, vector_storage, db_client);
+            codetriever_search::Search::new(embedding_service, vector_storage, db_client);
         let correlation_id = codetriever_common::CorrelationId::new();
         let search_results = search_service
-            .search(query, 5, &correlation_id)
+            .search(&tenant_id, query, 5, &correlation_id)
             .await
             .expect("Failed to search");
 

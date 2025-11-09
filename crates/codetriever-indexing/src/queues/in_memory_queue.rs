@@ -149,6 +149,29 @@ impl Default for InMemoryFileQueue {
 mod tests {
     use super::*;
 
+    /// Helper to create test ChunkWithMetadata with dummy job context
+    fn test_chunk_metadata(
+        chunk: CodeChunk,
+        generation: i64,
+        file_chunk_index: usize,
+    ) -> ChunkWithMetadata {
+        ChunkWithMetadata {
+            chunk,
+            generation,
+            file_chunk_index,
+            job_id: uuid::Uuid::nil(),
+            tenant_id: uuid::Uuid::nil(),
+            repository_id: "test-repo".to_string(),
+            branch: "main".to_string(),
+            vector_namespace: "test".to_string(),
+            repository_url: "https://github.com/test/repo".to_string(),
+            commit_sha: "abc123".to_string(),
+            commit_message: "Test commit".to_string(),
+            commit_date: chrono::Utc::now(),
+            author: "Test Author".to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn test_file_queue_push_pop() {
         let queue = InMemoryFileQueue::new();
@@ -171,22 +194,24 @@ mod tests {
         let queue = InMemoryChunkQueue::new(100);
 
         let chunks: Vec<ChunkWithMetadata> = (0..10)
-            .map(|i| ChunkWithMetadata {
-                chunk: CodeChunk {
-                    file_path: "test.rs".to_string(),
-                    content: format!("chunk {i}"),
-                    start_line: i,
-                    end_line: i + 1,
-                    byte_start: i * 100,
-                    byte_end: (i + 1) * 100,
-                    language: "rust".to_string(),
-                    kind: Some("function".to_string()),
-                    name: Some(format!("fn_{i}")),
-                    token_count: Some(50),
-                    embedding: None,
-                },
-                generation: 1,
-                file_chunk_index: i,
+            .map(|i| {
+                test_chunk_metadata(
+                    CodeChunk {
+                        file_path: "test.rs".to_string(),
+                        content: format!("chunk {i}"),
+                        start_line: i,
+                        end_line: i + 1,
+                        byte_start: i * 100,
+                        byte_end: (i + 1) * 100,
+                        language: "rust".to_string(),
+                        kind: Some("function".to_string()),
+                        name: Some(format!("fn_{i}")),
+                        token_count: Some(50),
+                        embedding: None,
+                    },
+                    1,
+                    i,
+                )
             })
             .collect();
 
@@ -207,8 +232,8 @@ mod tests {
         let queue = InMemoryChunkQueue::new(2); // Small capacity
 
         let chunks: Vec<ChunkWithMetadata> = vec![
-            ChunkWithMetadata {
-                chunk: CodeChunk {
+            test_chunk_metadata(
+                CodeChunk {
                     file_path: "test.rs".to_string(),
                     content: "chunk1".to_string(),
                     start_line: 1,
@@ -221,9 +246,9 @@ mod tests {
                     token_count: Some(50),
                     embedding: None,
                 },
-                generation: 1,
-                file_chunk_index: 0,
-            };
+                1,
+                0,
+            );
             5 // Try to push 5 chunks into capacity-2 queue
         ];
 

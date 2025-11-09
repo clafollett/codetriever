@@ -115,6 +115,11 @@ db-setup: docker-up
 # Run migrations
 db-migrate: db-setup
 
+# Query the database using configured credentials from .env
+# Note: Uses docker exec to run psql inside the PostgreSQL container
+db-query QUERY:
+    @docker exec -e PGPASSWORD="${DB_PASSWORD}" codetriever-postgres psql -U "${DB_USER}" -d "${DB_NAME}" -c "{{QUERY}}"
+
 # Reset database (drop and recreate)
 db-reset: docker-reset docker-up
     @sleep 3

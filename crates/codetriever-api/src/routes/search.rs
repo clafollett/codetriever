@@ -39,7 +39,7 @@ use axum::{
     routing::post,
 };
 use codetriever_common::CorrelationId;
-use codetriever_search::{SearchError, SearchProvider, SearchService};
+use codetriever_search::SearchService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,18 +65,23 @@ use utoipa::ToSchema;
 ///
 /// // Basic search
 /// let request = SearchRequest {
+///     tenant_id: uuid::Uuid::nil(),
 ///     query: "error handling".to_string(),
 ///     limit: None,
 /// };
 ///
 /// // Limited search
 /// let request = SearchRequest {
+///     tenant_id: uuid::Uuid::nil(),
 ///     query: "database connection pool".to_string(),
 ///     limit: Some(5),
 /// };
 /// ```
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SearchRequest {
+    /// Tenant ID for multi-tenancy isolation
+    #[schema(value_type = String)]
+    pub tenant_id: uuid::Uuid,
     /// The search query string - can be natural language or specific code terms
     pub query: String,
     /// Optional limit on the number of search results returned
@@ -197,153 +202,16 @@ pub struct CommitInfo {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use axum::Router;
-/// use codetriever_api::routes::search;
-///
-/// // Mount search routes into main app
-/// let app = Router::new()
-///     .nest("/api/v1", search::routes());
-/// ```
-///
-/// # Usage with Main Router
-///
-/// Typically, this router is nested under a versioned API path:
-///
-/// ```text
-/// POST /api/v1/search
-/// ```
 /// Type for search service handle
-type SearchServiceHandle = Arc<dyn SearchProvider>;
-type LazySearchHandle = Arc<tokio::sync::Mutex<LazySearchService>>;
+type SearchServiceHandle = Arc<dyn SearchService>;
 
-// Type alias to simplify complex type
-type SearchProviderHandle = Option<Arc<dyn SearchProvider>>;
-
-/// Lazy-initialized search service that creates real storage connection on first use
-pub struct LazySearchService {
-    service: SearchProviderHandle,
-}
-
-impl LazySearchService {
-    const fn new() -> Self {
-        Self { service: None }
-    }
-
-    #[allow(clippy::expect_used)] // Safe: we guarantee initialization above
-    async fn get_or_init(&mut self) -> Result<Arc<dyn SearchProvider>, SearchError> {
-        if self.service.is_none() {
-            tracing::info!("Initializing search service with Qdrant storage on first use");
-            self.service = Some(create_configured_search_service().await?);
-        }
-        // Safe: we just ensured initialization above
-        Ok(Arc::clone(
-            self.service.as_ref().expect("Service must be initialized"),
-        ))
-    }
-}
-
-/// Create a properly configured search service with real Qdrant storage
-async fn create_configured_search_service() -> Result<Arc<dyn SearchProvider>, SearchError> {
-    use codetriever_config::ApplicationConfig;
-    use codetriever_meta_data::{PoolConfig, PoolManager};
-    use codetriever_vector_data::QdrantStorage;
-
-    // Load configuration
-    let config = ApplicationConfig::from_env();
-
-    // Set up embedding service first
-    let embedding_service = Arc::new(codetriever_embeddings::DefaultEmbeddingService::new(
-        config.embedding.clone(),
-    )) as Arc<dyn codetriever_embeddings::EmbeddingService>;
-
-    // Set up vector storage (Qdrant) - same as indexing service
-    let vector_storage = match QdrantStorage::new(
-        config.vector_storage.url.clone(),
-        config.vector_storage.collection_name.clone(),
-    )
-    .await
-    {
-        Ok(storage) => {
-            tracing::info!("Connected to Qdrant storage successfully for search");
-            Arc::new(storage) as Arc<dyn codetriever_vector_data::VectorStorage>
-        }
-        Err(e) => {
-            tracing::warn!("Could not connect to Qdrant for search: {e}");
-            tracing::warn!("Search will not work without vector storage!");
-            // Fall back to mock storage (searches will return empty)
-            Arc::new(codetriever_vector_data::MockStorage::new())
-                as Arc<dyn codetriever_vector_data::VectorStorage>
-        }
-    };
-
-    // Set up database client - REQUIRED for SearchService to function
-    let pools = PoolManager::new(&config.database, PoolConfig::default())
-        .await
-        .map_err(|e| SearchError::DatabaseConnectionFailed {
-            message: format!("Failed to connect to database: {e}"),
-        })?;
-    let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
-
-    Ok(Arc::new(SearchService::new(
-        embedding_service,
-        vector_storage,
-        db_client,
-    )))
-}
-
-/// Service factory for proper dependency injection
-pub struct ServiceFactory {
-    embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
-    vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
-    db_client: Arc<codetriever_meta_data::DataClient>,
-}
-
-impl ServiceFactory {
-    /// Create a new service factory with injected dependencies
-    pub fn new(
-        embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
-        vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
-        db_client: Arc<codetriever_meta_data::DataClient>,
-    ) -> Self {
-        Self {
-            embedding_service,
-            vector_storage,
-            db_client,
-        }
-    }
-
-    /// Create the search service with all dependencies
-    pub fn create_search_service(&self) -> Arc<dyn SearchProvider> {
-        Arc::new(SearchService::new(
-            Arc::clone(&self.embedding_service),
-            Arc::clone(&self.vector_storage),
-            Arc::clone(&self.db_client),
-        ))
-    }
-}
-
-/// Create routes with lazy-initialized search service that properly connects to Qdrant
-pub fn routes() -> Router {
-    // Create a lazy-initialized search wrapper
-    // Storage will be initialized on first use with proper Qdrant configuration
-    let search_wrapper = Arc::new(tokio::sync::Mutex::new(LazySearchService::new()));
-    routes_with_lazy_search(search_wrapper)
-}
-
-/// Create routes with injected search service (proper dependency injection)
-pub fn routes_with_search_service(search_service: Arc<dyn SearchProvider>) -> Router {
+/// Create routes with injected search service
+///
+/// Handles both /search and /context endpoints with the same service
+pub fn routes_with_search_service(search_service: Arc<dyn SearchService>) -> Router {
     Router::new()
         .route("/search", post(search_handler))
-        .with_state(search_service)
-}
-
-/// Create routes with lazy search service wrapper
-pub fn routes_with_lazy_search(
-    search_service: Arc<tokio::sync::Mutex<LazySearchService>>,
-) -> Router {
-    Router::new()
-        .route("/search", post(lazy_search_handler))
+        .route("/context", post(context_handler))
         .with_state(search_service)
 }
 
@@ -418,39 +286,6 @@ fn highlight_search_terms(content: &str, query: &str) -> Vec<Range> {
     highlights
 }
 
-/// Handler for lazy-initialized search service
-///
-/// # Errors
-///
-/// Returns `ApiError` if:
-/// - Query is empty or invalid
-/// - Search service is unavailable
-/// - Database timeout occurs
-pub async fn lazy_search_handler(
-    State(search_service): State<LazySearchHandle>,
-    context: Option<Extension<RequestContext>>,
-    Json(req): Json<SearchRequest>,
-) -> ApiResult<Json<SearchResponse>> {
-    // Get or initialize the search service
-    let correlation_id = context
-        .as_ref()
-        .map_or_else(CorrelationId::new, |ctx| ctx.correlation_id.clone());
-
-    let mut service_guard = search_service.lock().await;
-    let service = service_guard.get_or_init().await.map_err(|e| {
-        // Database connection failure during initialization is a service unavailability issue
-        tracing::error!(correlation_id = %correlation_id, error = %e, "Failed to initialize search service");
-        ApiError::SearchServiceUnavailable {
-            correlation_id: correlation_id.clone(),
-            timeout_duration: Duration::from_secs(30),
-        }
-    })?;
-    drop(service_guard); // Release lock before doing the actual search
-
-    // Delegate to the regular search handler logic
-    search_handler_impl(service, context, req).await
-}
-
 /// Search for code in the indexed repository.
 ///
 /// Performs semantic search using embeddings to find the most relevant code chunks
@@ -501,7 +336,7 @@ pub async fn search_handler(
 
 /// Common search handler implementation
 async fn search_handler_impl(
-    search_service: Arc<dyn SearchProvider>,
+    search_service: Arc<dyn SearchService>,
     context: Option<Extension<RequestContext>>,
     req: SearchRequest,
 ) -> ApiResult<Json<SearchResponse>> {
@@ -551,10 +386,10 @@ async fn search_handler_impl(
     let limit = req.limit.unwrap_or(10).min(100); // Cap at 100 results
     let query = req.query.clone();
 
-    // Perform search with proper error handling
+    // Perform search with tenant isolation and proper error handling
     let results = match tokio::time::timeout(
         Duration::from_secs(30), // 30-second timeout for search operations
-        search_service.search(&query, limit, &correlation_id),
+        search_service.search(&req.tenant_id, &query, limit, &correlation_id),
     )
     .await
     {
@@ -701,6 +536,294 @@ async fn search_handler_impl(
     }))
 }
 
+// ============================================================================
+// Context Endpoint (merged from routes/context.rs)
+// ============================================================================
+
+/// Request payload for context retrieval operations
+///
+/// This struct defines the parameters needed to retrieve code context around
+/// a specific location in a file.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ContextRequest {
+    /// Optional repository identifier (uses most recent if not provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_id: Option<String>,
+    /// Optional branch name (uses default branch if not provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// File path within the repository
+    pub file_path: String,
+    /// Optional line number to center context around
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    /// Optional radius (lines before/after target line, default: 20)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radius: Option<usize>,
+}
+
+/// Response with file content and context metadata
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ContextResponse {
+    /// File path
+    pub file_path: String,
+    /// Repository identifier
+    pub repository_id: String,
+    /// Branch name
+    pub branch: String,
+    /// File content (full or excerpt based on line/radius)
+    pub content: String,
+    /// Line range information
+    pub lines: LineInfo,
+    /// Programming language
+    pub language: String,
+    /// File encoding
+    pub encoding: String,
+    /// File size in bytes
+    pub size_bytes: i64,
+    /// Parsed symbols (functions, classes, etc.)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub symbols: Vec<Symbol>,
+}
+
+/// Line range information
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LineInfo {
+    /// Start line number (1-indexed)
+    pub start: usize,
+    /// End line number (1-indexed)
+    pub end: usize,
+    /// Requested line number (if specified)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested: Option<usize>,
+    /// Total lines in the file
+    pub total: usize,
+}
+
+/// Symbol information (function, class, struct, etc.)
+#[derive(Debug, Serialize, ToSchema)]
+pub struct Symbol {
+    /// Symbol name
+    pub name: String,
+    /// Symbol kind (function, class, struct, etc.)
+    pub kind: String,
+    /// Line number where symbol is defined
+    pub line: usize,
+    /// Line range for the symbol
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SymbolRange>,
+}
+
+/// Line range for a symbol
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SymbolRange {
+    /// Start line
+    pub start: usize,
+    /// End line
+    pub end: usize,
+}
+
+/// HTTP handler for context retrieval requests
+///
+/// # Errors
+///
+/// Returns `ApiError` if file not found, validation fails, or service errors occur
+#[utoipa::path(
+    post,
+    path = "/context",
+    tag = "search",
+    request_body = ContextRequest,
+    responses(
+        (status = 200, description = "Context retrieved successfully", body = ContextResponse),
+        (status = 404, description = "File not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
+#[instrument(skip(search_service), fields(correlation_id))]
+pub async fn context_handler(
+    State(search_service): State<SearchServiceHandle>,
+    ctx: Option<Extension<RequestContext>>,
+    Json(req): Json<ContextRequest>,
+) -> ApiResult<Json<ContextResponse>> {
+    let start = std::time::Instant::now();
+
+    // Extract correlation ID
+    let correlation_id = ctx
+        .as_ref()
+        .map_or_else(CorrelationId::new, |c| c.correlation_id.clone());
+
+    tracing::Span::current().record("correlation_id", correlation_id.to_string());
+
+    info!(
+        correlation_id = %correlation_id,
+        file_path = %req.file_path,
+        repository_id = ?req.repository_id,
+        branch = ?req.branch,
+        line = ?req.line,
+        radius = ?req.radius,
+        "Processing context request"
+    );
+
+    // Validate request
+    if req.file_path.trim().is_empty() {
+        warn!(correlation_id = %correlation_id, "Empty file path rejected");
+        return Err(ApiError::invalid_query(
+            req.file_path,
+            "File path cannot be empty".to_string(),
+            correlation_id,
+        ));
+    }
+
+    // Get file content from search service
+    let file_result = match tokio::time::timeout(
+        Duration::from_secs(30),
+        search_service.get_context(
+            req.repository_id.as_deref(),
+            req.branch.as_deref(),
+            &req.file_path,
+            &correlation_id,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(result)) => result,
+        Ok(Err(search_error)) => {
+            error!(
+                correlation_id = %correlation_id,
+                error = %search_error,
+                file_path = %req.file_path,
+                "Failed to fetch file content"
+            );
+            return Err(ApiError::InternalServerError { correlation_id });
+        }
+        Err(_timeout) => {
+            error!(correlation_id = %correlation_id, "Context request timed out");
+            return Err(ApiError::SearchServiceUnavailable {
+                correlation_id,
+                timeout_duration: Duration::from_secs(30),
+            });
+        }
+    };
+
+    // Check if file was found (empty strings = not found)
+    if file_result.file_content.is_empty() {
+        warn!(
+            correlation_id = %correlation_id,
+            file_path = %req.file_path,
+            "File not found"
+        );
+        return Err(ApiError::invalid_query(
+            req.file_path,
+            "File not found in index".to_string(),
+            correlation_id,
+        ));
+    }
+
+    // Extract line range
+    let (extracted_content, line_info) =
+        extract_line_range(&file_result.file_content, req.line, req.radius);
+
+    // Detect language
+    let language = detect_language(&req.file_path);
+
+    // TODO: Get encoding and size from database metadata
+    let encoding = "UTF-8".to_string();
+    #[allow(clippy::cast_possible_wrap)]
+    let size_bytes = file_result.file_content.len() as i64;
+
+    let query_time_ms = start.elapsed().as_millis();
+
+    info!(
+        correlation_id = %correlation_id,
+        file_path = %req.file_path,
+        lines_returned = line_info.end.saturating_sub(line_info.start).saturating_add(1),
+        query_time_ms,
+        "Context request completed"
+    );
+
+    Ok(Json(ContextResponse {
+        file_path: req.file_path,
+        repository_id: file_result.repository_id,
+        branch: file_result.branch,
+        content: extracted_content,
+        lines: line_info,
+        language,
+        encoding,
+        size_bytes,
+        symbols: vec![], // TODO: Implement tree-sitter parsing
+    }))
+}
+
+/// Extract a line range from file content
+fn extract_line_range(
+    file_content: &str,
+    line: Option<usize>,
+    radius: Option<usize>,
+) -> (String, LineInfo) {
+    let lines: Vec<&str> = file_content.lines().collect();
+    let total_lines = lines.len();
+
+    if total_lines == 0 {
+        return (
+            String::new(),
+            LineInfo {
+                start: 0,
+                end: 0,
+                requested: line,
+                total: 0,
+            },
+        );
+    }
+
+    let (start, end) = match line {
+        Some(target_line) if target_line > 0 && target_line <= total_lines => {
+            let radius_size = radius.unwrap_or(20);
+            let start = target_line.saturating_sub(radius_size).max(1);
+            let end = target_line.saturating_add(radius_size).min(total_lines);
+            (start, end)
+        }
+        _ => (1, total_lines),
+    };
+
+    let start_idx = start.saturating_sub(1);
+    let extracted = lines
+        .get(start_idx..end)
+        .map(|slice| slice.join("\n"))
+        .unwrap_or_default();
+
+    (
+        extracted,
+        LineInfo {
+            start,
+            end,
+            requested: line,
+            total: total_lines,
+        },
+    )
+}
+
+/// Detect programming language from file extension
+fn detect_language(file_path: &str) -> String {
+    match std::path::Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+    {
+        Some("rs") => "rust".to_string(),
+        Some("py") => "python".to_string(),
+        Some("js") => "javascript".to_string(),
+        Some("ts") => "typescript".to_string(),
+        Some("go") => "go".to_string(),
+        Some("java") => "java".to_string(),
+        Some("cpp" | "cc" | "cxx" | "h" | "hpp") => "cpp".to_string(),
+        Some("c") => "c".to_string(),
+        Some("md") => "markdown".to_string(),
+        Some("json") => "json".to_string(),
+        Some("yaml" | "yml") => "yaml".to_string(),
+        Some("toml") => "toml".to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)] // OK in tests
@@ -709,7 +832,7 @@ mod tests {
     use crate::test_utils::TestResult;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use codetriever_search::test_mocks::MockSearchService;
+    use codetriever_search::test_mocks::MockSearch;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -717,7 +840,7 @@ mod tests {
 
     async fn search_handler_with_service(
         req: SearchRequest,
-        search_service: Arc<tokio::sync::Mutex<codetriever_search::test_mocks::MockSearchService>>,
+        search_service: Arc<tokio::sync::Mutex<codetriever_search::test_mocks::MockSearch>>,
     ) -> Json<SearchResponse> {
         let limit = req.limit.unwrap_or(10);
         let query = req.query.clone();
@@ -726,7 +849,7 @@ mod tests {
         let results = match search_service
             .lock()
             .await
-            .search(&query, limit, &correlation_id)
+            .search(&req.tenant_id, &query, limit, &correlation_id)
             .await
         {
             Ok(results) => results,
@@ -779,7 +902,7 @@ mod tests {
     }
 
     /// Create routes with a mock search service for testing
-    fn routes_with_mock(search_service: Arc<Mutex<MockSearchService>>) -> Router {
+    fn routes_with_mock(search_service: Arc<Mutex<MockSearch>>) -> Router {
         Router::new().route(
             "/search",
             post({
@@ -862,11 +985,12 @@ mod tests {
         // Clean test - just use the mock service
 
         // Use mock for testing instead of real embedding service
-        let mock_search_service = codetriever_search::test_mocks::MockSearchService::empty();
+        let mock_search_service = codetriever_search::test_mocks::MockSearch::empty();
 
         // Verify that we can use the search service
+        let test_tenant = uuid::Uuid::nil(); // Test tenant ID
         let results = mock_search_service
-            .search("test query", 5, &CorrelationId::new())
+            .search(&test_tenant, "test query", 5, &CorrelationId::new())
             .await;
         assert!(results.is_ok());
 
@@ -875,19 +999,13 @@ mod tests {
         assert_eq!(search_results.len(), 0);
     }
 
-    #[tokio::test]
-    async fn test_routes_default_creates_working_router() {
-        // Test that routes_default creates a working router
-        let _router = routes();
-
-        // Test passes if we can create routes without panicking
-        // This validates the dependency injection is working
-    }
+    // Removed test_routes_default_creates_working_router - routes() function deleted
+    // (lazy initialization removed, now use routes_with_search_service)
 
     #[tokio::test]
     async fn test_search_returns_matches_with_metadata() -> TestResult {
         // Test that the new response format includes matches array and metadata
-        let mock_service = Arc::new(Mutex::new(MockSearchService::with_results(vec![
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![
             (
                 "src/auth.rs".to_string(),
                 "fn authenticate() {}".to_string(),
@@ -903,6 +1021,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "authentication middleware",
             "limit": 10
         });
@@ -972,7 +1091,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_backward_compat_format() -> TestResult {
         // Create mock search service with test data
-        let mock_service = Arc::new(Mutex::new(MockSearchService::with_results(vec![
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![
             (
                 "src/auth.rs".to_string(),
                 "fn authenticate() {}".to_string(),
@@ -988,6 +1107,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "authentication",
             "limit": 10
         });
@@ -1039,7 +1159,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_respects_limit() -> TestResult {
         // Create mock with 5 results
-        let mock_service = Arc::new(Mutex::new(MockSearchService::with_results(vec![
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![
             ("file1.rs".to_string(), "content1".to_string(), 0.9),
             ("file2.rs".to_string(), "content2".to_string(), 0.8),
             ("file3.rs".to_string(), "content3".to_string(), 0.7),
@@ -1050,6 +1170,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "test query",
             "limit": 2  // Request only 2 results
         });
@@ -1087,11 +1208,12 @@ mod tests {
     #[tokio::test]
     async fn test_search_handles_empty_results() -> TestResult {
         // Create mock with no results
-        let mock_service = Arc::new(Mutex::new(MockSearchService::with_results(vec![])));
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![])));
 
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "nonexistent code",
             "limit": 10
         });
@@ -1134,7 +1256,7 @@ mod tests {
         // Test that the search response structure includes repository and commit fields
         // Even if they're None, the fields should be present in the response structure
 
-        let mock_service = Arc::new(Mutex::new(MockSearchService::with_results(vec![(
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![(
             "src/auth.rs".to_string(),
             "fn authenticate() {}".to_string(),
             0.95,
@@ -1143,6 +1265,7 @@ mod tests {
         let app = routes_with_mock(mock_service);
 
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "authentication",
             "limit": 10
         });

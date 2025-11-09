@@ -34,7 +34,9 @@ fn test_search_performance_baseline() -> test_utils::TestResult {
 
         // Index some test content first
         let index_request = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "perf-test",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"},
             "files": [
                 {
                     "path": "src/auth.rs",
@@ -70,6 +72,7 @@ fn test_search_performance_baseline() -> test_utils::TestResult {
         let test_state = test_utils::app_state().await?;
         let app = create_router(test_state.state().clone());
         let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "authentication logic",
             "limit": 10
         });
@@ -111,6 +114,7 @@ fn test_small_search_performance() -> test_utils::TestResult {
 
         // Test with small, targeted search that should be very fast
         let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "fn",
             "limit": 1
         });
@@ -148,6 +152,7 @@ fn test_repeated_search_caching_performance() -> test_utils::TestResult {
         let app = create_router(test_state.state().clone());
 
         let search_request = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "function definition",
             "limit": 5
         });
@@ -225,7 +230,9 @@ fn test_index_large_batch_performance() -> test_utils::TestResult {
         }
 
         let request_body = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "perf-batch-test",
+            "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"},
             "files": files
         });
 

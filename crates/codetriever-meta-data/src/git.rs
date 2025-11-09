@@ -13,6 +13,11 @@ type RepositoryIdentity = (String, Option<String>);
 impl RepositoryContext {
     /// Detect repository context from a given path
     ///
+    /// # Parameters
+    ///
+    /// * `tenant_id` - Tenant identifier for multi-tenancy
+    /// * `path` - Path within the git repository
+    ///
     /// # Errors
     ///
     /// Returns an error if:
@@ -21,7 +26,7 @@ impl RepositoryContext {
     /// - Repository HEAD reference cannot be accessed
     /// - Git object access fails due to corruption or permissions
     /// - Repository status check fails
-    pub fn detect(path: &Path) -> Result<Self> {
+    pub fn detect(tenant_id: uuid::Uuid, path: &Path) -> Result<Self> {
         // Find the repository root
         let repo = Repository::discover(path)
             .context("Not a git repository - codetriever requires git initialization")?;
@@ -66,13 +71,14 @@ impl RepositoryContext {
         let (repository_id, repository_url) = Self::get_repository_identity(&repo);
 
         Ok(Self {
-            repository_id,
-            repository_url,
+            tenant_id,
+            repository_id: repository_id.clone(),
+            repository_url: repository_url.unwrap_or_else(|| repository_id.clone()),
             branch,
-            commit_sha,
-            commit_message,
-            commit_date,
-            author,
+            commit_sha: commit_sha.unwrap_or_else(|| "unknown".to_string()),
+            commit_message: commit_message.unwrap_or_else(|| "No commit message".to_string()),
+            commit_date: commit_date.unwrap_or_else(chrono::Utc::now),
+            author: author.unwrap_or_else(|| "Unknown".to_string()),
             is_dirty,
             root_path,
         })

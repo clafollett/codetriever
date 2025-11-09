@@ -5,6 +5,7 @@
 
 use crate::{
     VectorDataError, VectorDataResult,
+    storage::traits::ChunkStorageContext,
     storage::{CodeChunk, StorageSearchResult, StorageStats, VectorStorage},
 };
 use async_trait::async_trait;
@@ -117,10 +118,8 @@ impl Default for MockStorage {
 impl VectorStorage for MockStorage {
     async fn store_chunks(
         &self,
-        repository_id: &str,
-        branch: &str,
+        context: &ChunkStorageContext,
         chunks: &[CodeChunk],
-        generation: i64,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<Uuid>> {
         if self.fail_on_store {
@@ -135,10 +134,10 @@ impl VectorStorage for MockStorage {
         for chunk in chunks.iter() {
             // Use proper chunk ID generation from meta-data crate
             let chunk_id = generate_chunk_id(
-                repository_id,
-                branch,
+                &context.repository_id,
+                &context.branch,
                 &chunk.file_path,
-                generation,
+                context.generation,
                 chunk.byte_start,
                 chunk.byte_end,
             );
@@ -148,9 +147,9 @@ impl VectorStorage for MockStorage {
             // Store chunk with full repository context and correlation ID
             let stored_chunk = StoredChunk {
                 chunk: chunk.clone(),
-                repository_id: repository_id.to_string(),
-                branch: branch.to_string(),
-                generation,
+                repository_id: context.repository_id.clone(),
+                branch: context.branch.clone(),
+                generation: context.generation,
                 chunk_id,
                 correlation_id: correlation_id.clone(),
             };
@@ -162,6 +161,7 @@ impl VectorStorage for MockStorage {
 
     async fn search(
         &self,
+        _tenant_id: &Uuid,
         _query_embedding: Vec<f32>,
         limit: usize,
         correlation_id: &CorrelationId,
@@ -178,10 +178,10 @@ impl VectorStorage for MockStorage {
         tracing::debug!(
             correlation_id = %correlation_id,
             chunk_count = stored.len(),
-            "Mock search operation"
+            "Mock search operation (tenant filtering not implemented in mock)"
         );
 
-        // Return up to 'limit' chunks with mock similarity scores
+        // Return up to 'limit' chunks with mock similarity scores and metadata
         let results: Vec<StorageSearchResult> = stored
             .iter()
             .take(limit)
@@ -190,6 +190,15 @@ impl VectorStorage for MockStorage {
                 chunk: stored_chunk.chunk.clone(),
                 // Mock decreasing similarity scores
                 similarity: 1.0 - (i as f32 * 0.1),
+                metadata: crate::storage::traits::RepositoryMetadata {
+                    repository_id: stored_chunk.repository_id.clone(),
+                    repository_url: None,
+                    branch: stored_chunk.branch.clone(),
+                    commit_sha: None,
+                    commit_message: None,
+                    commit_date: None,
+                    author: None,
+                },
             })
             .collect();
 
@@ -236,6 +245,24 @@ impl VectorStorage for MockStorage {
 mod tests {
     use super::*;
 
+    // Test tenant for all unit tests
+    const TEST_TENANT: Uuid = Uuid::nil();
+
+    /// Helper to build test storage context
+    fn test_context(repo_id: &str, branch: &str, generation: i64) -> ChunkStorageContext {
+        ChunkStorageContext {
+            tenant_id: TEST_TENANT,
+            repository_id: repo_id.to_string(),
+            branch: branch.to_string(),
+            generation,
+            repository_url: None,
+            commit_sha: None,
+            commit_message: None,
+            commit_date: None,
+            author: None,
+        }
+    }
+
     #[tokio::test]
     async fn test_mock_storage_basic_operations() {
         let storage = MockStorage::new();
@@ -261,15 +288,16 @@ mod tests {
         }];
 
         let correlation_id = CorrelationId::new();
+        let context = test_context("test_repo", "main", 1);
         let chunk_ids = storage
-            .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
+            .store_chunks(&context, &chunks, &correlation_id)
             .await
             .unwrap();
         assert_eq!(chunk_ids.len(), 1);
 
         // Test search
         let results = storage
-            .search(vec![0.1; 768], 10, &correlation_id)
+            .search(&TEST_TENANT, vec![0.1; 768], 10, &correlation_id)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -304,10 +332,11 @@ mod tests {
         }];
 
         let correlation_id = CorrelationId::new();
+        let context = test_context("test_repo", "main", 1);
         // Should fail to store
         assert!(
             storage
-                .store_chunks("test_repo", "main", &chunks, 1, &correlation_id)
+                .store_chunks(&context, &chunks, &correlation_id)
                 .await
                 .is_err()
         );
@@ -316,7 +345,7 @@ mod tests {
         // Should fail to search
         assert!(
             storage
-                .search(vec![0.1; 768], 10, &correlation_id)
+                .search(&TEST_TENANT, vec![0.1; 768], 10, &correlation_id)
                 .await
                 .is_err()
         );
@@ -344,24 +373,15 @@ mod tests {
         let correlation_id1 = CorrelationId::new();
         let correlation_id2 = CorrelationId::new();
 
+        let ctx1 = test_context("repo1", "main", 1);
+        let ctx2 = test_context("repo2", "dev", 1);
+
         storage
-            .store_chunks(
-                "repo1",
-                "main",
-                std::slice::from_ref(&chunk1),
-                1,
-                &correlation_id1,
-            )
+            .store_chunks(&ctx1, std::slice::from_ref(&chunk1), &correlation_id1)
             .await
             .unwrap();
         storage
-            .store_chunks(
-                "repo2",
-                "dev",
-                std::slice::from_ref(&chunk1),
-                1,
-                &correlation_id2,
-            )
+            .store_chunks(&ctx2, std::slice::from_ref(&chunk1), &correlation_id2)
             .await
             .unwrap();
 
@@ -393,34 +413,19 @@ mod tests {
         let correlation_id = CorrelationId::new();
 
         // Store chunks with different generations
+        let ctx_gen1 = test_context("repo", "main", 1);
+        let ctx_gen2 = test_context("repo", "main", 2);
+
         storage
-            .store_chunks(
-                "repo",
-                "main",
-                std::slice::from_ref(&chunk),
-                1,
-                &correlation_id,
-            )
+            .store_chunks(&ctx_gen1, std::slice::from_ref(&chunk), &correlation_id)
             .await
             .unwrap();
         storage
-            .store_chunks(
-                "repo",
-                "main",
-                std::slice::from_ref(&chunk),
-                2,
-                &correlation_id,
-            )
+            .store_chunks(&ctx_gen2, std::slice::from_ref(&chunk), &correlation_id)
             .await
             .unwrap();
         storage
-            .store_chunks(
-                "repo",
-                "main",
-                std::slice::from_ref(&chunk),
-                1,
-                &correlation_id,
-            )
+            .store_chunks(&ctx_gen1, std::slice::from_ref(&chunk), &correlation_id)
             .await
             .unwrap();
 
@@ -452,14 +457,9 @@ mod tests {
         assert!(storage.last_correlation_id().is_none());
 
         let correlation_id = CorrelationId::from("test-trace-123");
+        let context = test_context("repo", "main", 1);
         storage
-            .store_chunks(
-                "repo",
-                "main",
-                std::slice::from_ref(&chunk),
-                1,
-                &correlation_id,
-            )
+            .store_chunks(&context, std::slice::from_ref(&chunk), &correlation_id)
             .await
             .unwrap();
 

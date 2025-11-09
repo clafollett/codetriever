@@ -4,9 +4,27 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Represents a repository/branch combination
+/// Result from dequeuing a file from the global task queue
+#[derive(Debug, Clone)]
+pub struct DequeuedFile {
+    /// Tenant ID (multi-tenancy support)
+    pub tenant_id: Uuid,
+    /// Job ID this file belongs to
+    pub job_id: Uuid,
+    /// File path within repository
+    pub file_path: String,
+    /// Full file content (UTF-8)
+    pub file_content: String,
+    /// SHA256 hash of content
+    pub content_hash: String,
+    /// Vector storage namespace - tells worker where to store chunks
+    pub vector_namespace: String,
+}
+
+/// Represents a repository/branch combination (per tenant)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ProjectBranch {
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub repository_url: Option<String>,
@@ -17,6 +35,7 @@ pub struct ProjectBranch {
 /// Represents an indexed file in the database
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct IndexedFile {
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub file_path: String,
@@ -40,6 +59,7 @@ pub struct IndexedFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkMetadata {
     pub chunk_id: Uuid,
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub file_path: String,
@@ -62,13 +82,24 @@ pub struct ChunkMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexingJob {
     pub job_id: Uuid,
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub status: JobStatus,
     pub files_total: Option<i32>,
     pub files_processed: i32,
     pub chunks_created: i32,
-    pub commit_sha: Option<String>,
+
+    // Git commit metadata (required - indexing always happens in Git context)
+    pub repository_url: String,
+    pub commit_sha: String,
+    pub commit_message: String,
+    pub commit_date: DateTime<Utc>,
+    pub author: String,
+
+    // Vector storage namespace - workers use this to route to correct collection/index
+    pub vector_namespace: String,
+
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub error_message: Option<String>,
@@ -124,6 +155,7 @@ impl std::fmt::Display for JobStatus {
 pub struct IndexingJobFile {
     pub id: Uuid,
     pub job_id: Uuid,
+    pub tenant_id: Uuid,
     pub repository_id: String,
     pub branch: String,
     pub file_path: String,
@@ -154,16 +186,32 @@ pub enum FileState {
     },
 }
 
+/// Git commit context (required for all indexing operations)
+///
+/// This contains Git commit metadata that clients must provide when indexing.
+/// CLI and MCP servers extract this from the Git repository on the user's machine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+pub struct CommitContext {
+    pub repository_url: String,
+    pub commit_sha: String,
+    pub commit_message: String,
+    #[cfg_attr(feature = "utoipa", schema(value_type = String))]
+    pub commit_date: DateTime<Utc>,
+    pub author: String,
+}
+
 /// Repository context from Git
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryContext {
+    pub tenant_id: Uuid,
     pub repository_id: String,
-    pub repository_url: Option<String>,
+    pub repository_url: String,
     pub branch: String,
-    pub commit_sha: Option<String>,
-    pub commit_message: Option<String>,
-    pub commit_date: Option<DateTime<Utc>>,
-    pub author: Option<String>,
+    pub commit_sha: String,
+    pub commit_message: String,
+    pub commit_date: DateTime<Utc>,
+    pub author: String,
     pub is_dirty: bool,
     pub root_path: std::path::PathBuf,
 }
@@ -177,10 +225,10 @@ pub struct FileMetadata {
     pub encoding: String, // Original encoding detected ("UTF-8", "UTF-16LE", etc.)
     pub size_bytes: i64,  // Original file size (before conversion)
     pub generation: i64,
-    pub commit_sha: Option<String>,
-    pub commit_message: Option<String>,
-    pub commit_date: Option<DateTime<Utc>>,
-    pub author: Option<String>,
+    pub commit_sha: String,
+    pub commit_message: String,
+    pub commit_date: DateTime<Utc>,
+    pub author: String,
 }
 
 /// Statistics about a project's index
@@ -191,4 +239,31 @@ pub struct IndexingStats {
     pub total_size_bytes: i64,
     pub last_indexed: Option<DateTime<Utc>>,
     pub unique_commits: i64,
+}
+
+/// Chunk processing queue entry (persistent chunk queue with SKIP LOCKED)
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ChunkQueueEntry {
+    pub id: Uuid,
+    pub job_id: Uuid,
+
+    /// Serialized `ChunkWithMetadata` (JSONB in `PostgreSQL`)
+    pub chunk_data: serde_json::Value,
+
+    /// Queue state: 'queued', 'processing', 'completed', 'failed'
+    pub status: String,
+
+    /// SQS-style visibility timeout fields
+    pub claimed_at: Option<DateTime<Utc>>,
+    pub claimed_by: Option<String>,
+    pub visible_after: Option<DateTime<Utc>>,
+
+    /// Retry logic
+    pub retry_count: i32,
+    pub max_retries: i32,
+    pub last_error: Option<String>,
+
+    /// Timestamps
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
 }

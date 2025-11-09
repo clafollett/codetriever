@@ -13,15 +13,15 @@
 #![allow(clippy::expect_used)] // Test code - expect is acceptable for setup
 
 use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::OnceCell;
 
 use codetriever_api::AppState;
 use codetriever_config::ApplicationConfig;
-use codetriever_indexing::{ServiceConfig, ServiceFactory};
+use codetriever_indexing::IndexerService;
 use codetriever_meta_data::{
     DataClient, DbFileRepository, PoolConfig, PoolManager, traits::FileRepository,
 };
-use codetriever_search::SearchService;
+use codetriever_search::Search;
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
 
 /// Standard test result type for all test functions
@@ -52,12 +52,8 @@ async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::
     eprintln!("🔧 Creating database pools...");
     let pools = PoolManager::new(&config.database, PoolConfig::default()).await?;
     let db_client = Arc::new(DataClient::new(pools.clone()));
-    eprintln!("✅ Database pools created");
-
-    // Create shared file repository (uses same pools)
-    eprintln!("🔧 Creating file repository...");
     let file_repository = Arc::new(DbFileRepository::new(pools)) as Arc<dyn FileRepository>;
-    eprintln!("✅ File repository created");
+    eprintln!("✅ Database pools and file repository created");
 
     // Get SHARED embedding service from codetriever-test-utils
     // This is initialized ONCE across ALL test crates (prevents 28GB+ RAM usage)
@@ -75,9 +71,65 @@ async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::
     })
 }
 
+/// Spawn a `BackgroundWorker` for a test that needs async file processing
+///
+/// Returns shutdown handle for graceful cleanup
+///
+/// # Errors
+///
+/// Returns error if worker initialization fails (embedding service, tokenizer, etc.)
+#[allow(dead_code, clippy::significant_drop_tightening)] // Worker is spawned into tokio task
+pub async fn spawn_test_worker()
+-> Result<std::sync::Arc<std::sync::atomic::AtomicBool>, Box<dyn std::error::Error>> {
+    use codetriever_config::ApplicationConfig;
+    use codetriever_indexing::{BackgroundWorker, WorkerConfig};
+
+    let shared = SHARED_RESOURCES
+        .get_or_try_init(|| async { init_shared_resources().await })
+        .await?;
+
+    let config = ApplicationConfig::from_env();
+    let tokenizer = shared.embedding_service.provider().get_tokenizer().await;
+    let code_parser = std::sync::Arc::new(codetriever_parsing::CodeParser::new(
+        tokenizer,
+        config.indexing.split_large_units,
+        config.indexing.max_chunk_tokens,
+    ));
+
+    // Create PostgreSQL chunk queue
+    let write_pool = shared.db_client.pools().write_pool().clone();
+    let chunk_queue =
+        std::sync::Arc::new(codetriever_meta_data::PostgresChunkQueue::new(write_pool));
+
+    let worker = BackgroundWorker::new(
+        std::sync::Arc::clone(&shared.file_repository),
+        std::sync::Arc::clone(&shared.embedding_service),
+        config.vector_storage.url.clone(),
+        code_parser,
+        WorkerConfig::from_app_config(&config),
+        chunk_queue,
+    );
+
+    let shutdown = worker.shutdown_handle();
+    tokio::spawn(async move {
+        worker.run().await;
+    });
+
+    Ok(shutdown)
+}
+
 /// Test fixture that owns `AppState` and cleans up Qdrant collection
+///
+/// Each test gets a unique tenant for perfect isolation (no race conditions!)
+///
+/// NOTE: `BackgroundWorker` is NOT spawned by default to avoid test isolation issues
+/// with the shared global queue. Tests that need async file processing should
+/// spawn their own worker (see `index_rust_mini_redis_test.rs` for pattern).
 pub struct TestAppState {
     state: AppState,
+    // Unique tenant per test for perfect isolation
+    // Used by tests that need tenant-scoped operations (index requests, delete_by_filter in Phase 2)
+    tenant_id: uuid::Uuid,
     collection_name: String,
     vector_storage: Arc<QdrantStorage>,
     created_at: std::time::Instant, // Track lifetime for debugging
@@ -88,6 +140,15 @@ impl TestAppState {
     #[must_use]
     pub const fn state(&self) -> &AppState {
         &self.state
+    }
+
+    /// Get the tenant ID for this test
+    ///
+    /// Used by tests that send index requests or will use `delete_by_filter` cleanup
+    #[must_use]
+    #[allow(dead_code)] // Used by test files that import test_utils
+    pub const fn tenant_id(&self) -> uuid::Uuid {
+        self.tenant_id
     }
 }
 
@@ -155,9 +216,15 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
 
     // Example: test_search_with_unicode_1760197451942_0
     let collection_name = format!("{test_name}_{timestamp}_{counter}");
+    let tenant_name = format!("tenant_{test_name}_{timestamp}_{counter}");
     eprintln!(
-        "🔢 [DEBUG] Creating collection: name={test_name}, ts={timestamp}, counter={counter} → {collection_name}"
+        "🔢 [DEBUG] Creating tenant: name={test_name}, ts={timestamp}, counter={counter} → {tenant_name}"
     );
+
+    // Create unique tenant for this test (perfect isolation!)
+    let tenant_id = shared.file_repository.create_tenant(&tenant_name).await?;
+
+    eprintln!("🏢 [TENANT] Created tenant: {tenant_id} ({tenant_name})");
 
     // Create per-test Qdrant collection
     let vector_storage_concrete = Arc::new(
@@ -171,41 +238,41 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
     let vector_storage_trait = Arc::clone(&vector_storage_concrete) as Arc<dyn VectorStorage>;
 
     // Create search service with shared DB/embedding, but unique vector storage
-    let search_service = Arc::new(SearchService::new(
+    let search_service = Arc::new(Search::new(
         Arc::clone(&shared.embedding_service),
         Arc::clone(&vector_storage_trait),
         Arc::clone(&shared.db_client),
-    )) as Arc<dyn codetriever_search::SearchProvider>;
+    )) as Arc<dyn codetriever_search::SearchService>;
 
-    // Create indexer service
-    let factory = ServiceFactory::new(ServiceConfig::from_env()?);
-    let indexer = factory
-        .indexer(
-            Arc::clone(&shared.embedding_service),
-            Arc::clone(&vector_storage_trait),
-            Arc::clone(&shared.file_repository),
-        )
-        .await?;
-    let indexer_service =
-        Arc::new(Mutex::new(indexer)) as Arc<Mutex<dyn codetriever_indexing::IndexerService>>;
+    // Create indexer service (handles job creation only)
+    // Background worker is spawned in bootstrap.rs for production
+    let indexer = codetriever_indexing::indexing::Indexer::new(
+        Arc::clone(&shared.embedding_service),
+        Arc::clone(&vector_storage_trait),
+        Arc::clone(&shared.file_repository),
+    );
+    let indexer_service = Arc::new(indexer) as Arc<dyn IndexerService>;
 
-    let db_client =
-        Arc::clone(&shared.db_client) as Arc<dyn codetriever_api::routes::status::DatabaseClient>;
+    // NOTE: BackgroundWorker is NOT spawned here to avoid test isolation issues.
+    // Tests that need async file processing should spawn their own worker with
+    // their own VectorStorage instance (see index_rust_mini_redis_test.rs pattern).
 
     let state = AppState::new(
-        db_client,
+        Arc::clone(&shared.db_client),
         vector_storage_trait,
         search_service,
         indexer_service,
+        collection_name.clone(),
     );
 
     let test_state = Arc::new(TestAppState {
         state,
+        tenant_id,
         collection_name: collection_name.clone(),
         vector_storage: vector_storage_concrete,
         created_at: std::time::Instant::now(),
     });
 
-    eprintln!("🏗️  [CREATED] TestAppState with collection: {collection_name}");
+    eprintln!("🏗️  [CREATED] TestAppState with tenant: {tenant_id}, collection: {collection_name}");
     Ok(test_state)
 }

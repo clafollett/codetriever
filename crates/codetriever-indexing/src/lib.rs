@@ -5,17 +5,17 @@
 
 pub mod config;
 pub mod error;
-pub mod factory;
 pub mod indexing;
 pub mod queues;
 pub mod security;
+pub mod worker;
 
 // Re-export error types
 pub use error::{IndexerError, IndexerResult};
 
 // Re-export main orchestration types
-pub use factory::{ServiceConfig, ServiceFactory};
-pub use indexing::{IndexResult, Indexer, IndexerService};
+pub use indexing::{Indexer, IndexerService};
+pub use worker::{BackgroundWorker, WorkerConfig};
 
 // Re-export external crate types for convenience
 pub use codetriever_embeddings::{EmbeddingError, EmbeddingResult};

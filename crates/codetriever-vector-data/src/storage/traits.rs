@@ -5,15 +5,56 @@
 
 use crate::VectorDataResult;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use codetriever_common::CorrelationId;
 use codetriever_parsing::CodeChunk;
 use uuid::Uuid;
 
-/// Search result with similarity score from storage
+/// Context for storing chunks with all metadata (tenant, repository, commit info)
+///
+/// This struct contains all the metadata needed to properly store chunks in Qdrant
+/// with full context for multi-tenancy, repository tracking, and Git commit information.
+#[derive(Debug, Clone)]
+pub struct ChunkStorageContext {
+    /// Tenant ID for multi-tenancy isolation
+    pub tenant_id: Uuid,
+    /// Repository identifier (e.g., "github.com/user/repo")
+    pub repository_id: String,
+    /// Branch name (e.g., "main", "develop")
+    pub branch: String,
+    /// Generation number for versioning
+    pub generation: i64,
+    /// Repository URL (e.g., "https://github.com/user/repo")
+    pub repository_url: Option<String>,
+    /// Git commit SHA
+    pub commit_sha: Option<String>,
+    /// Git commit message
+    pub commit_message: Option<String>,
+    /// Git commit timestamp
+    pub commit_date: Option<DateTime<Utc>>,
+    /// Git commit author
+    pub author: Option<String>,
+}
+
+/// Repository metadata extracted from storage payload
+#[derive(Debug, Clone)]
+pub struct RepositoryMetadata {
+    pub repository_id: String,
+    pub repository_url: Option<String>,
+    pub branch: String,
+    pub commit_sha: Option<String>,
+    pub commit_message: Option<String>,
+    pub commit_date: Option<DateTime<Utc>>,
+    pub author: Option<String>,
+}
+
+/// Search result with similarity score and metadata from storage
 #[derive(Debug, Clone)]
 pub struct StorageSearchResult {
     pub chunk: CodeChunk,
     pub similarity: f32,
+    /// Repository and commit metadata (extracted from Qdrant payload)
+    pub metadata: RepositoryMetadata,
 }
 
 /// Trait for vector storage backends
@@ -22,23 +63,27 @@ pub struct StorageSearchResult {
 /// implementations (Qdrant, Pinecone, Weaviate, etc.) to be used interchangeably.
 #[async_trait]
 pub trait VectorStorage: Send + Sync {
-    /// Store code chunks with their embeddings
+    /// Store code chunks with their embeddings and full metadata
     ///
-    /// Returns the number of chunks successfully stored
+    /// Stores chunks in vector database with complete context including tenant,
+    /// repository, and Git commit information. All metadata is stored in the
+    /// payload so search results are complete without additional enrichment queries.
+    ///
+    /// Returns the chunk IDs that were stored
     async fn store_chunks(
         &self,
-        repository_id: &str,
-        branch: &str,
+        context: &ChunkStorageContext,
         chunks: &[CodeChunk],
-        generation: i64,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<Uuid>>;
 
-    /// Search for similar code chunks
+    /// Search for similar code chunks with tenant isolation
     ///
-    /// Returns chunks ordered by similarity to the query embedding with their scores
+    /// Filters results by tenant_id for multi-tenancy isolation.
+    /// Returns chunks ordered by similarity to the query embedding.
     async fn search(
         &self,
+        tenant_id: &Uuid,
         query_embedding: Vec<f32>,
         limit: usize,
         correlation_id: &CorrelationId,

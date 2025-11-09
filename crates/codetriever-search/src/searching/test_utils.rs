@@ -1,6 +1,8 @@
 //! Test utilities for search services
 
-use super::{SearchMatch, SearchProvider, SearchResult};
+use super::search::{SearchMatch, SearchResult};
+use super::service::SearchService;
+
 use async_trait::async_trait;
 use codetriever_common::CorrelationId;
 use codetriever_vector_data::CodeChunk;
@@ -9,11 +11,11 @@ use codetriever_vector_data::CodeChunk;
 type TestSearchResult = (String, String, f32);
 
 /// Mock search service for testing
-pub struct MockSearchService {
+pub struct MockSearch {
     results: Vec<SearchMatch>,
 }
 
-impl MockSearchService {
+impl MockSearch {
     /// Create a mock that returns specific results
     pub fn with_results(results: Vec<TestSearchResult>) -> Self {
         let results = results
@@ -47,9 +49,10 @@ impl MockSearchService {
 }
 
 #[async_trait]
-impl SearchProvider for MockSearchService {
+impl SearchService for MockSearch {
     async fn search(
         &self,
+        _tenant_id: &uuid::Uuid,
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,
@@ -59,5 +62,20 @@ impl SearchProvider for MockSearchService {
         tracing::Span::current().record("correlation_id", correlation_id.to_string());
         let results: Vec<SearchMatch> = self.results.iter().take(limit).cloned().collect();
         Ok(results)
+    }
+
+    async fn get_context(
+        &self,
+        _repository_id: Option<&str>,
+        _branch: Option<&str>,
+        _file_path: &str,
+        _correlation_id: &CorrelationId,
+    ) -> SearchResult<super::service::ContextResult> {
+        // Mock returns test file content
+        Ok(super::service::ContextResult {
+            repository_id: "test-repo".to_string(),
+            branch: "main".to_string(),
+            file_content: "fn test() {}\n".to_string(),
+        })
     }
 }

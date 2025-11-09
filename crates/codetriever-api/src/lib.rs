@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod error;
 pub mod middleware;
 pub mod openapi;

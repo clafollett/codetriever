@@ -1,20 +1,47 @@
 //! Indexer service trait for dependency injection and testing
 
-use super::IndexResult;
 use async_trait::async_trait;
+use codetriever_meta_data::models::IndexingJob;
+use uuid::Uuid;
 
 /// Trait for indexing operations to enable dependency injection and testing
 #[async_trait]
 pub trait IndexerService: Send + Sync {
-    /// Index file content directly without filesystem access
+    /// Start an asynchronous indexing job (non-blocking, returns immediately)
     ///
-    /// This is the primary indexing API - files are provided as in-memory content
-    /// rather than filesystem paths, allowing for flexibility in how files are sourced.
-    async fn index_file_content(
-        &mut self,
+    /// Enqueues files to the persistent queue and returns a job ID.
+    /// The job is processed asynchronously by background workers.
+    /// Use this for API endpoints to avoid blocking HTTP requests.
+    ///
+    /// # Parameters
+    /// - `tenant_id`: Tenant identifier for multi-tenancy isolation
+    /// - `project_id`: Project identifier (format: "repository_id:branch")
+    /// - `files`: Files to index
+    /// - `commit_context`: Git commit metadata (required - extracted by CLI/MCP from user's repo)
+    ///
+    /// # Returns
+    /// - `Uuid`: Job ID for tracking progress via `get_job_status()`
+    async fn start_indexing_job(
+        &self,
+        vector_namespace: &str,
+        tenant_id: Uuid,
         project_id: &str,
         files: Vec<FileContent>,
-    ) -> crate::IndexerResult<IndexResult>;
+        commit_context: &codetriever_meta_data::models::CommitContext,
+    ) -> crate::IndexerResult<Uuid>;
+
+    /// Get the current status of an indexing job
+    ///
+    /// # Returns
+    /// - `IndexingJob`: Job metadata including status, progress, and any errors
+    async fn get_job_status(&self, job_id: &Uuid) -> crate::IndexerResult<Option<IndexingJob>>;
+
+    /// List all indexing jobs, optionally filtered by tenant and/or project
+    async fn list_jobs(
+        &self,
+        tenant_id: Option<Uuid>,
+        project_id: Option<&str>,
+    ) -> crate::IndexerResult<Vec<IndexingJob>>;
 
     /// Drop the collection from storage
     async fn drop_collection(&mut self) -> crate::IndexerResult<bool>;
@@ -60,23 +87,33 @@ pub mod test_utils {
 
     #[async_trait]
     impl IndexerService for MockIndexerService {
-        async fn index_file_content(
-            &mut self,
+        async fn start_indexing_job(
+            &self,
+            _vector_namespace: &str,
+            _tenant_id: Uuid,
             _project_id: &str,
             _files: Vec<FileContent>,
-        ) -> crate::IndexerResult<IndexResult> {
-            if self.should_error {
-                Err(crate::IndexerError::Io {
-                    message: "Mock error".to_string(),
-                    source: None,
-                })
-            } else {
-                Ok(IndexResult {
-                    files_indexed: self.files_to_return,
-                    chunks_created: self.chunks_to_return,
-                    chunks_stored: 0,
-                })
-            }
+            _commit_context: &codetriever_meta_data::models::CommitContext,
+        ) -> crate::IndexerResult<Uuid> {
+            // Mock returns a test job ID
+            Ok(Uuid::new_v4())
+        }
+
+        async fn get_job_status(
+            &self,
+            _job_id: &Uuid,
+        ) -> crate::IndexerResult<Option<IndexingJob>> {
+            // Mock returns None (job not found)
+            Ok(None)
+        }
+
+        async fn list_jobs(
+            &self,
+            _tenant_id: Option<Uuid>,
+            _project_id: Option<&str>,
+        ) -> crate::IndexerResult<Vec<IndexingJob>> {
+            // Mock returns empty list
+            Ok(vec![])
         }
 
         async fn drop_collection(&mut self) -> crate::IndexerResult<bool> {

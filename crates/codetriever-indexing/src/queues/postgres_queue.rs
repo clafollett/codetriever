@@ -22,6 +22,7 @@ use uuid::Uuid;
 pub struct PostgresFileQueue {
     repository: Arc<dyn FileRepository>,
     job_id: Uuid,
+    tenant_id: Uuid,
     repository_id: String,
     branch: String,
 }
@@ -32,17 +33,20 @@ impl PostgresFileQueue {
     /// # Arguments
     /// * `repository` - FileRepository implementation (provides queue methods)
     /// * `job_id` - Parent indexing job ID
+    /// * `tenant_id` - Tenant identifier for multi-tenancy
     /// * `repository_id` - Repository identifier
     /// * `branch` - Branch name
     pub fn new(
         repository: Arc<dyn FileRepository>,
         job_id: Uuid,
+        tenant_id: Uuid,
         repository_id: String,
         branch: String,
     ) -> Self {
         Self {
             repository,
             job_id,
+            tenant_id,
             repository_id,
             branch,
         }
@@ -55,6 +59,7 @@ impl FileContentQueue for PostgresFileQueue {
         self.repository
             .enqueue_file(
                 &self.job_id,
+                &self.tenant_id,
                 &self.repository_id,
                 &self.branch,
                 &file.path,
@@ -68,17 +73,18 @@ impl FileContentQueue for PostgresFileQueue {
     }
 
     async fn pop(&self) -> QueueResult<FileContent> {
+        // Use global dequeue - pulls from ANY job in FIFO order!
         let result = self
             .repository
-            .dequeue_file(&self.job_id)
+            .dequeue_file()
             .await
             .map_err(|e| QueueError::Operation(format!("Failed to pop from queue: {e}")))?;
 
         match result {
-            Some((path, content, hash)) => Ok(FileContent {
-                path,
-                content,
-                hash,
+            Some(dequeued) => Ok(FileContent {
+                path: dequeued.file_path,
+                content: dequeued.file_content,
+                hash: dequeued.content_hash,
             }),
             None => Err(QueueError::Closed), // No more files in queue
         }

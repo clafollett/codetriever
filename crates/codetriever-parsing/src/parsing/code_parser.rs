@@ -10,7 +10,7 @@ use tokenizers::Tokenizer;
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIteratorMut};
 
 /// Represents a chunk of code extracted by the parser
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CodeChunk {
     /// Path to the source file
     pub file_path: String,

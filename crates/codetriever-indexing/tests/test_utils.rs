@@ -6,16 +6,141 @@
 use codetriever_config::{ApplicationConfig, DatabaseConfig};
 use codetriever_embeddings::EmbeddingService;
 use codetriever_meta_data::{
+    DataClient,
     pool_manager::{PoolConfig, PoolManager},
     repository::DbFileRepository,
     traits::FileRepository,
 };
 use codetriever_vector_data::{QdrantStorage, VectorStorage};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock as OnceCell};
 
 // Re-export shared test utilities from codetriever-test-utils
 #[allow(unused_imports)]
 pub use codetriever_test_utils::{get_shared_embedding_service, get_test_runtime};
+
+/// Create a unique tenant in the database
+///
+/// Returns the tenant_id for use in tests
+#[allow(dead_code)]
+pub async fn create_test_tenant(
+    repository: &std::sync::Arc<dyn codetriever_meta_data::traits::FileRepository>,
+) -> uuid::Uuid {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let tenant_name = format!("test_tenant_{timestamp}");
+
+    repository
+        .create_tenant(&tenant_name)
+        .await
+        .expect("Failed to create tenant")
+}
+
+use codetriever_indexing::{
+    BackgroundWorker, WorkerConfig,
+    indexing::{IndexerService, service::FileContent},
+};
+use codetriever_meta_data::models::{CommitContext, JobStatus};
+use codetriever_parsing::CodeParser;
+use uuid::Uuid;
+
+/// Create test commit context with default values
+pub fn test_commit_context() -> CommitContext {
+    CommitContext {
+        repository_url: "https://github.com/test/repo".to_string(),
+        commit_sha: "abc123def456".to_string(),
+        commit_message: "Test commit message".to_string(),
+        commit_date: chrono::Utc::now(),
+        author: "Test Author <test@example.com>".to_string(),
+    }
+}
+
+/// Index files using async job pattern (production flow)
+///
+/// This helper manages the complete async indexing flow:
+/// 1. Creates BackgroundWorker
+/// 2. Starts indexing job
+/// 3. Polls until complete
+/// 4. Returns job result
+///
+/// Note: Some test files don't use this helper, causing dead_code warnings.
+/// This is expected for shared test utilities.
+#[allow(dead_code, clippy::too_many_arguments)]
+pub async fn index_files_async(
+    indexer: &Arc<dyn IndexerService>,
+    repository: Arc<dyn FileRepository>,
+    embedding_service: Arc<dyn EmbeddingService>,
+    qdrant_url: String,
+    vector_namespace: String,
+    code_parser: Arc<CodeParser>,
+    config: &ApplicationConfig,
+    tenant_id: Uuid,
+    project_id: &str,
+    files: Vec<FileContent>,
+) -> (Uuid, codetriever_meta_data::models::IndexingJob) {
+    // Create background worker with dynamic storage routing
+    // Create PostgreSQL chunk queue
+    let db_config = codetriever_meta_data::DatabaseConfig::from_env();
+    let chunk_queue_pool = db_config
+        .create_pool()
+        .await
+        .expect("Failed to create chunk queue pool");
+    let chunk_queue = Arc::new(codetriever_meta_data::PostgresChunkQueue::new(
+        chunk_queue_pool,
+    ));
+
+    let worker = BackgroundWorker::new(
+        Arc::clone(&repository),
+        Arc::clone(&embedding_service),
+        qdrant_url,
+        code_parser,
+        WorkerConfig::from_app_config(config),
+        chunk_queue,
+    );
+
+    // Get shutdown handle before moving worker
+    let shutdown = worker.shutdown_handle();
+
+    // Spawn worker in background
+    let worker_handle = tokio::spawn(async move {
+        worker.run().await;
+    });
+
+    // Start indexing job with commit context
+    let commit_context = test_commit_context();
+    let job_id = indexer
+        .start_indexing_job(
+            &vector_namespace,
+            tenant_id,
+            project_id,
+            files,
+            &commit_context,
+        )
+        .await
+        .expect("Failed to start indexing job");
+
+    // Poll for completion
+    let result = loop {
+        let job_status = indexer
+            .get_job_status(&job_id)
+            .await
+            .expect("Failed to get status")
+            .expect("Job should exist");
+
+        match job_status.status {
+            JobStatus::Completed => break (job_id, job_status),
+            JobStatus::Failed => panic!("Job failed: {:?}", job_status.error_message),
+            _ => tokio::time::sleep(tokio::time::Duration::from_millis(100)).await,
+        }
+    };
+
+    // Shutdown worker gracefully after job completes
+    shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), worker_handle).await;
+
+    result
+}
 
 /// Get the Qdrant URL for testing, defaulting to localhost
 /// Can be overridden with QDRANT_TEST_URL environment variable
@@ -135,19 +260,64 @@ pub async fn create_code_parser_with_tokenizer(
     )
 }
 
-/// Create REAL file repository for integration testing
-#[allow(unused)]
+/// Shared test database resources (ONE pool for ALL tests - prevents exhaustion!)
+struct SharedDbResources {
+    repository: Arc<dyn FileRepository>,
+    #[allow(dead_code)]
+    db_client: Arc<DataClient>,
+}
+
+static SHARED_DB_RESOURCES: OnceCell<SharedDbResources> = OnceCell::new();
+
+/// Get shared database repository (ONE pool for ALL tests!)
+///
+/// All tests across ALL test files share the SAME database pool to prevent
+/// connection exhaustion. DO NOT create new pools in tests!
+pub fn get_shared_test_repository() -> Arc<dyn FileRepository> {
+    let resources = SHARED_DB_RESOURCES.get_or_init(|| {
+        eprintln!("🗄️  Initializing SHARED database pool (ONE time for ALL tests!)");
+        codetriever_common::initialize_environment();
+
+        let db_config = DatabaseConfig::from_env();
+
+        // Use block_in_place to allow async work from within sync initialization
+        // This prevents "Cannot start a runtime from within a runtime" errors
+        let pools = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(PoolManager::new(&db_config, PoolConfig::default()))
+        })
+        .expect("Failed to create shared pool manager");
+
+        let repository = Arc::new(DbFileRepository::new(pools.clone()));
+        let db_client = Arc::new(DataClient::new(pools));
+
+        SharedDbResources {
+            repository,
+            db_client,
+        }
+    });
+
+    Arc::clone(&resources.repository)
+}
+
+/// Get shared database client (reuses same pool as repository!)
+///
+/// Exposed for tests that need DataClient (like Search service integration tests)
+#[allow(dead_code)]
+pub fn get_shared_db_client() -> Arc<DataClient> {
+    // Ensure repository is initialized first (which creates the shared resources)
+    let _ = get_shared_test_repository();
+
+    let resources = SHARED_DB_RESOURCES
+        .get()
+        .expect("DB resources should be initialized by get_shared_test_repository");
+
+    Arc::clone(&resources.db_client)
+}
+
+/// Create test repository (actually returns shared singleton - prevents pool exhaustion!)
 pub async fn create_test_repository() -> Arc<dyn FileRepository> {
-    // Initialize environment to load database config
-    codetriever_common::initialize_environment();
-
-    // Create REAL database connection pool
-    let db_config = DatabaseConfig::from_env();
-    let pools = PoolManager::new(&db_config, PoolConfig::default())
-        .await
-        .expect("Failed to create pool manager for test repository");
-
-    Arc::new(DbFileRepository::new(pools))
+    get_shared_test_repository()
 }
 
 /// Create a fully configured indexer for integration tests with REAL dependencies
@@ -163,15 +333,10 @@ pub async fn create_test_indexer(
     let embedding_service = create_test_embedding_service();
     let repository = create_test_repository().await;
 
-    // Load tokenizer from embedding service for accurate chunking
-    let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-
     let indexer = codetriever_indexing::indexing::Indexer::new(
         embedding_service,
         Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
         repository,
-        code_parser,
-        &config,
     );
 
     Ok((indexer, storage))

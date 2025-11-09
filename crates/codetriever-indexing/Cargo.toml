@@ -25,6 +25,7 @@ async-trait = { workspace = true }
 lazy_static = { workspace = true }
 once_cell = { workspace = true }
 futures = { workspace = true }
+dashmap = { workspace = true }
 
 # Resilience patterns - using simple retry logic
 # Performance caching

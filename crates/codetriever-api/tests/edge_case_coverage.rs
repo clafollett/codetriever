@@ -38,6 +38,7 @@ fn test_search_with_unicode_characters() -> test_utils::TestResult {
 
         // Test Unicode in search query
         let unicode_query = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "函数 función función 🔍 emoji search",
             "limit": 10
         });
@@ -111,6 +112,7 @@ fn test_search_with_very_long_query() -> test_utils::TestResult {
         // Test with very long query (boundary condition)
         let long_query = "a".repeat(10000);
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": long_query,
             "limit": 5
         });
@@ -139,6 +141,7 @@ fn test_search_with_empty_query() -> test_utils::TestResult {
 
         // Test edge case: empty query
         let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "",
             "limit": 10
         });
@@ -167,6 +170,7 @@ fn test_search_with_extreme_limit_values() -> test_utils::TestResult {
         // Test with limit = 0
         let app1 = create_router(test_state.state().clone());
         let zero_limit = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "test",
             "limit": 0
         });
@@ -189,6 +193,7 @@ fn test_search_with_extreme_limit_values() -> test_utils::TestResult {
         // Test with very large limit (create second router from same state)
         let app2 = create_router(test_state.state().clone());
         let large_limit = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "query": "test",
             "limit": 999_999
         });
@@ -220,7 +225,15 @@ fn test_index_with_special_characters_in_path() -> test_utils::TestResult {
 
         // Test with special characters in file paths
         let request_body = json!({
+            "tenant_id": test_state.tenant_id(),
             "project_id": "test-project",
+            "commit_context": {
+                "repository_url": "https://github.com/test/repo",
+                "commit_sha": "abc123",
+                "commit_message": "Test commit",
+                "commit_date": chrono::Utc::now().to_rfc3339(),
+                "author": "Test <test@test.com>"
+            },
             "files": [
                 {
                     "path": "src/模块/测试.rs",
@@ -259,6 +272,11 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
         eprintln!("\n📦 [Large File Test] Starting...");
         let test_state = test_utils::app_state().await?;
         eprintln!("📦 [Large File Test] App state created");
+
+        // Spawn BackgroundWorker for this test (async job pattern requires it!)
+        let _worker_shutdown = test_utils::spawn_test_worker().await?;
+        eprintln!("📦 [Large File Test] BackgroundWorker spawned");
+
         let app = create_router(test_state.state().clone());
 
     // Test with large file content (boundary condition)
@@ -277,7 +295,15 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
     let unique_path = format!("src/large_file_{timestamp}.rs");
 
     let request_body = json!({
+        "tenant_id": test_state.tenant_id(),
         "project_id": "test-project",
+        "commit_context": {
+            "repository_url": "https://github.com/test/repo",
+            "commit_sha": "abc123",
+            "commit_message": "Test commit",
+            "commit_date": chrono::Utc::now().to_rfc3339(),
+            "author": "Test <test@test.com>"
+        },
         "files": [
             {
                 "path": unique_path,
@@ -315,7 +341,50 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
     // Test file: 5000 lines × 6 tokens/line ≈ 30,000 tokens total
     // At 512 tokens/chunk → expect ~58 chunks (30000/512)
     if status.is_success() {
-        let chunks_created = response["chunks_created"].as_u64().unwrap();
+        // With async pattern, response is 202 Accepted with job_id
+        let job_id = response["job_id"]
+            .as_str()
+            .expect("Response should include job_id");
+
+        // Poll for job completion
+        let app2 = create_router(test_state.state().clone());
+        let mut attempts = 0;
+        let chunks_created = loop {
+            attempts += 1;
+            let status_request = Request::builder()
+                .method("GET")
+                .uri(format!("/index/jobs/{job_id}"))
+                .body(Body::empty())
+                .unwrap();
+
+            let status_response = app2.clone().oneshot(status_request).await.unwrap();
+            let status_body = axum::body::to_bytes(status_response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let job_status: serde_json::Value =
+                serde_json::from_slice(&status_body).unwrap();
+
+            let status = job_status["status"].as_str().unwrap();
+            if status == "completed" {
+                #[allow(clippy::cast_sign_loss)]
+                let chunks = job_status["chunks_created"].as_i64().unwrap() as u64;
+                break chunks;
+            } else if status == "failed" {
+                panic!("Job failed: {:?}", job_status["error_message"]);
+            }
+
+            // Debug logging every 50 attempts
+            if attempts % 50 == 0 {
+                eprintln!("⏳ [Attempt {attempts}] Job status: {status}, files_processed: {}, chunks: {}",
+                    job_status["files_processed"], job_status["chunks_created"]);
+            }
+
+            assert!(
+                attempts <= 300,
+                "Job did not complete in time after {attempts} attempts. Last status: {job_status:?}"
+            );
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        };
         let file_size_bytes = large_content.len();
 
         eprintln!(
@@ -352,6 +421,7 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({
+                    "tenant_id": test_state.tenant_id(),
                     "query": "println test function large",
                     "limit": 100
                 })

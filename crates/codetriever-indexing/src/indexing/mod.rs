@@ -2,7 +2,7 @@ pub mod indexer;
 pub mod service;
 pub mod watcher;
 
-pub use indexer::{IndexResult, Indexer};
+pub use indexer::Indexer;
 pub use service::{FileContent, IndexerService};
 pub use watcher::FileWatcher;
 

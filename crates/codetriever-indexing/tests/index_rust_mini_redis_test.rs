@@ -6,13 +6,16 @@
 #[path = "test_utils.rs"]
 mod test_utils;
 
-use codetriever_indexing::indexing::{Indexer, service::FileContent};
-use codetriever_search::SearchProvider;
+use codetriever_indexing::indexing::service::FileContent;
+use codetriever_indexing::{BackgroundWorker, Indexer, IndexerService, WorkerConfig};
+use codetriever_meta_data::models::JobStatus;
+use codetriever_search::SearchService;
 use codetriever_vector_data::VectorStorage;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
+use std::{path::Path, time::Duration};
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
-    create_test_repository, create_test_storage, test_config,
+    create_test_repository, create_test_storage, get_shared_db_client, test_config,
 };
 
 /// Initialize tracing for performance profiling
@@ -102,15 +105,45 @@ fn test_index_rust_mini_redis() {
         let embedding_service = create_test_embedding_service();
         let repository = create_test_repository().await;
 
-        // Load tokenizer for accurate chunking
-        let code_parser = create_code_parser_with_tokenizer(&embedding_service).await;
-        let mut indexer = Indexer::new(
+        // Create unique tenant for this test
+        let tenant_id = test_utils::create_test_tenant(&repository).await;
+
+        let indexer = Arc::new(Indexer::new(
             embedding_service.clone(),
             Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
+            repository.clone(),
+        )) as Arc<dyn IndexerService>;
+
+        // Load tokenizer for accurate chunking (used by BackgroundWorker)
+        let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
+
+        // Create PostgreSQL chunk queue for distributed chunk processing
+        let db_config = codetriever_meta_data::DatabaseConfig::from_env();
+        let chunk_queue_pool = db_config
+            .create_pool()
+            .await
+            .expect("Failed to create chunk queue pool");
+        let chunk_queue = Arc::new(codetriever_meta_data::PostgresChunkQueue::new(
+            chunk_queue_pool,
+        ));
+
+        // Create background worker for processing (tests the real production flow!)
+        let worker = BackgroundWorker::new(
             repository,
+            embedding_service.clone(),
+            config.vector_storage.url.clone(),
             code_parser,
-            &config,
+            WorkerConfig::from_app_config(&config),
+            chunk_queue,
         );
+
+        // Get shutdown handle before moving worker
+        let shutdown = worker.shutdown_handle();
+
+        // Spawn worker in background (simulates production daemon)
+        let worker_handle = tokio::spawn(async move {
+            worker.run().await;
+        });
 
         // Test queries to verify search works
         let test_queries = vec![
@@ -126,24 +159,20 @@ fn test_index_rust_mini_redis() {
             "hash map insert",
         ];
 
-        // Create search service
+        // Create search service with shared database client (reuses repository's pool!)
         let vector_storage = Arc::new(storage.clone()) as Arc<dyn VectorStorage>;
-        let db_config = codetriever_config::DatabaseConfig::from_env();
-        let pools = codetriever_meta_data::PoolManager::new(
-            &db_config,
-            codetriever_meta_data::PoolConfig::default(),
-        )
-        .await
-        .expect("Failed to create pool manager");
-        let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
+        let db_client = get_shared_db_client();
 
         let search_service =
-            codetriever_search::SearchService::new(embedding_service, vector_storage, db_client);
+            codetriever_search::Search::new(embedding_service, vector_storage, db_client);
+
+        // Track timing
+        let test_start = std::time::Instant::now();
 
         // Check if already indexed
         let correlation_id = codetriever_common::CorrelationId::new();
         let test_result = search_service
-            .search(test_queries[0], 1, &correlation_id)
+            .search(&tenant_id, test_queries[0], 1, &correlation_id)
             .await;
 
         if test_result.is_err() || test_result.unwrap().is_empty() {
@@ -163,7 +192,7 @@ fn test_index_rust_mini_redis() {
                 .expect("Failed to read directory");
 
             tracing::info!("📄 Read {} files from {:?}", files.len(), test_path);
-            tracing::info!("📝 Indexing using index_file_content() (real API)...");
+            tracing::info!("📝 Starting async indexing job (production flow)...");
 
             // Use unique project ID per run to avoid "Unchanged" detection from DB
             let timestamp = std::time::SystemTime::now()
@@ -172,21 +201,60 @@ fn test_index_rust_mini_redis() {
                 .as_millis();
             let unique_project_id = format!("mini-redis-{timestamp}:main");
 
-            // Index using the REAL API (not legacy index_directory)
-            let result = indexer
-                .index_file_content(&unique_project_id, files)
-                .await
-                .expect("Failed to index");
+            // Build commit context for mini-redis repo
+            let commit_context = test_utils::test_commit_context();
 
-            tracing::info!(
-                "✅ Indexed {} files, {} chunks created, {} stored",
-                result.files_indexed,
-                result.chunks_created,
-                result.chunks_stored
-            );
+            // Start indexing job (enqueues files, returns immediately - production API!)
+            let job_id = indexer
+                .start_indexing_job(
+                    storage.collection_name(),
+                    tenant_id,
+                    &unique_project_id,
+                    files,
+                    &commit_context,
+                )
+                .await
+                .expect("Failed to start indexing job");
+
+            tracing::info!(job_id = %job_id, "Job created, waiting for completion...");
+
+            // Wait for job completion by polling status
+            let mut attempts = 0;
+            loop {
+                let job_status = indexer
+                    .get_job_status(&job_id)
+                    .await
+                    .expect("Failed to get status")
+                    .expect("Job should exist");
+
+                match job_status.status {
+                    JobStatus::Completed => {
+                        eprintln!(
+                            "✅ Job completed in {:.2}s: {} files, {} chunks",
+                            test_start.elapsed().as_secs_f64(),
+                            job_status.files_processed,
+                            job_status.chunks_created
+                        );
+                        break;
+                    }
+                    JobStatus::Failed => {
+                        panic!("Job failed: {:?}", job_status.error_message);
+                    }
+                    _ => {
+                        // Still processing - wait
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        attempts += 1;
+                        if attempts > 600 {
+                            // 60 seconds timeout
+                            panic!("Job timed out after 60 seconds");
+                        }
+                    }
+                }
+            }
         }
 
         // Now run test queries to verify search works
+        let search_start = std::time::Instant::now();
         tracing::info!("Running test queries");
 
         for query in test_queries {
@@ -194,7 +262,7 @@ fn test_index_rust_mini_redis() {
 
             let correlation_id = codetriever_common::CorrelationId::new();
             let results = search_service
-                .search(query, 3, &correlation_id)
+                .search(&tenant_id, query, 3, &correlation_id)
                 .await
                 .expect("Search failed");
 
@@ -222,6 +290,16 @@ fn test_index_rust_mini_redis() {
                 }
             }
         }
+
+        eprintln!(
+            "✅ Search phase completed in {:.2}s",
+            search_start.elapsed().as_secs_f64()
+        );
+
+        // Shutdown worker before cleanup
+        tracing::info!("🛑 Shutting down worker...");
+        shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), worker_handle).await;
 
         cleanup_test_storage(&storage)
             .await

@@ -26,14 +26,16 @@
 //!     "codetriever".to_string()
 //! ).await?;
 //! let query_embedding = vec![0.1, 0.2, 0.3]; // Example embedding
+//! let tenant_id = uuid::Uuid::nil(); // Example tenant
 //! let correlation_id = CorrelationId::new();
-//! let results = storage.search(query_embedding, 10, &correlation_id).await?;
+//! let results = storage.search(&tenant_id, query_embedding, 10, &correlation_id).await?;
 //! # Ok(())
 //! # }
 //! ```
 
 use crate::{
     VectorDataError, VectorDataResult,
+    storage::traits::ChunkStorageContext,
     storage::{CodeChunk, StorageSearchResult, VectorStorage},
 };
 use anyhow::Context;
@@ -46,6 +48,7 @@ use qdrant_client::qdrant::{
 };
 use qdrant_client::{Payload, Qdrant};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Vector database client for storing and searching code embeddings using Qdrant.
 ///
@@ -76,6 +79,11 @@ pub struct QdrantStorage {
 }
 
 impl QdrantStorage {
+    /// Get the collection name (vector namespace) for this storage instance
+    pub fn collection_name(&self) -> &str {
+        &self.collection_name
+    }
+
     /// Creates a new `QdrantStorage` client instance and ensures collection exists.
     ///
     /// Initializes the Qdrant storage client with the given URL and collection name.
@@ -288,8 +296,20 @@ impl VectorStorage for QdrantStorage {
     ///         embedding: Some(vec![0.1; 768]), // 768-dim embedding
     ///     }
     /// ];
+    /// use codetriever_vector_data::ChunkStorageContext;
+    /// let context = ChunkStorageContext {
+    ///     tenant_id: uuid::Uuid::nil(),
+    ///     repository_id: "repo".to_string(),
+    ///     branch: "main".to_string(),
+    ///     generation: 1,
+    ///     repository_url: None,
+    ///     commit_sha: None,
+    ///     commit_message: None,
+    ///     commit_date: None,
+    ///     author: None,
+    /// };
     /// let correlation_id = CorrelationId::new();
-    /// let stored_ids = storage.store_chunks("repo", "main", &chunks, 1, &correlation_id).await?;
+    /// let stored_ids = storage.store_chunks(&context, &chunks, &correlation_id).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -326,8 +346,9 @@ impl VectorStorage for QdrantStorage {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let storage = QdrantStorage::new("http://localhost:6334".to_string(), "test".to_string()).await?;
     /// let query_vector = vec![0.1; 768]; // 768-dimensional query embedding
+    /// let tenant_id = uuid::Uuid::nil(); // Example tenant
     /// let correlation_id = CorrelationId::new();
-    /// let results = storage.search(query_vector, 5, &correlation_id).await?;
+    /// let results = storage.search(&tenant_id, query_vector, 5, &correlation_id).await?;
     ///
     /// for result in results {
     ///     println!("Found: {} (lines {}-{}) - score: {:.3}",
@@ -336,25 +357,47 @@ impl VectorStorage for QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(self, query), fields(query_dim = query.len(), limit))]
+    #[tracing::instrument(skip(self, query_embedding), fields(query_dim = query_embedding.len(), tenant_id = %tenant_id, limit))]
     async fn search(
         &self,
-        query: Vec<f32>,
+        tenant_id: &Uuid,
+        query_embedding: Vec<f32>,
         limit: usize,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<StorageSearchResult>> {
         // Log search operation with correlation ID for tracing
         tracing::info!(
             correlation_id = %correlation_id,
-            query_dim = query.len(),
+            tenant_id = %tenant_id,
+            query_dim = query_embedding.len(),
             limit = %limit,
             collection = %self.collection_name,
-            "Performing vector search"
+            "Performing vector search with tenant isolation"
         );
+
+        // Build tenant isolation filter
+        use qdrant_client::qdrant::{Condition, Filter};
+        let tenant_filter = Filter {
+            must: vec![Condition {
+                condition_one_of: Some(qdrant_client::qdrant::condition::ConditionOneOf::Field(
+                    qdrant_client::qdrant::FieldCondition {
+                        key: "tenant_id".to_string(),
+                        r#match: Some(qdrant_client::qdrant::Match {
+                            match_value: Some(qdrant_client::qdrant::r#match::MatchValue::Keyword(
+                                tenant_id.to_string(),
+                            )),
+                        }),
+                        ..Default::default()
+                    },
+                )),
+            }],
+            ..Default::default()
+        };
 
         let search_request = SearchPoints {
             collection_name: self.collection_name.clone(),
-            vector: query,
+            vector: query_embedding,
+            filter: Some(tenant_filter),
             limit: limit as u64,
             with_payload: Some(true.into()),
             ..Default::default()
@@ -429,6 +472,45 @@ impl VectorStorage for QdrantStorage {
                 .and_then(|v| v.as_integer())
                 .map(|v| v as usize);
 
+            // Extract repository and commit metadata from payload
+            let repository_id = payload
+                .get("repository_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
+            let branch = payload
+                .get("branch")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
+            let repository_url = payload
+                .get("repository_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let commit_sha = payload
+                .get("commit_sha")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let commit_message = payload
+                .get("commit_message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let commit_date = payload
+                .get("commit_date")
+                .and_then(|v| v.as_str())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+
+            let author = payload
+                .get("author")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             results.push(StorageSearchResult {
                 chunk: CodeChunk {
                     file_path: file_path.clone(),
@@ -443,21 +525,35 @@ impl VectorStorage for QdrantStorage {
                     token_count,
                     embedding: None, // Don't return embeddings to save memory
                 },
-                similarity, // Use the actual score from Qdrant!
+                similarity,
+                metadata: crate::storage::traits::RepositoryMetadata {
+                    repository_id,
+                    repository_url,
+                    branch,
+                    commit_sha,
+                    commit_message,
+                    commit_date,
+                    author,
+                },
             });
         }
 
         Ok(results)
     }
 
-    /// Store chunks with deterministic IDs based on repository, branch, file, and generation
-    #[tracing::instrument(skip(self, chunks), fields(repository_id, branch, chunk_count = chunks.len(), generation, elapsed_ms))]
+    /// Store chunks with full metadata context (tenant, repository, commit info)
+    #[tracing::instrument(skip(self, chunks, context), fields(
+        tenant_id = %context.tenant_id,
+        repository_id = %context.repository_id,
+        branch = %context.branch,
+        chunk_count = chunks.len(),
+        generation = context.generation,
+        elapsed_ms
+    ))]
     async fn store_chunks(
         &self,
-        repository_id: &str,
-        branch: &str,
+        context: &ChunkStorageContext,
         chunks: &[CodeChunk],
-        generation: i64,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<uuid::Uuid>> {
         let start = std::time::Instant::now();
@@ -470,10 +566,10 @@ impl VectorStorage for QdrantStorage {
             if let Some(ref embedding) = chunk.embedding {
                 // Use proper chunk ID generation from meta-data crate
                 let chunk_id = generate_chunk_id(
-                    repository_id,
-                    branch,
+                    &context.repository_id,
+                    &context.branch,
                     &chunk.file_path,
-                    generation,
+                    context.generation,
                     chunk.byte_start,
                     chunk.byte_end,
                 );
@@ -481,35 +577,58 @@ impl VectorStorage for QdrantStorage {
                 chunk_ids.push(chunk_id);
 
                 let mut payload = HashMap::new();
-                payload.insert("chunk_id".to_string(), Value::from(chunk_id.to_string()));
+
+                // === MULTI-TENANCY & REPOSITORY METADATA ===
+                // tenant_id is the PRIMARY isolation key (will have is_tenant: true index)
+                payload.insert(
+                    "tenant_id".to_string(),
+                    Value::from(context.tenant_id.to_string()),
+                );
                 payload.insert(
                     "repository_id".to_string(),
-                    Value::from(repository_id.to_string()),
+                    Value::from(context.repository_id.clone()),
                 );
-                payload.insert("branch".to_string(), Value::from(branch.to_string()));
-                payload.insert("generation".to_string(), Value::from(generation));
-                payload.insert("chunk_index".to_string(), Value::from(chunk_index as i64));
+                payload.insert("branch".to_string(), Value::from(context.branch.clone()));
                 payload.insert(
                     "file_path".to_string(),
                     Value::from(chunk.file_path.clone()),
                 );
+
+                // === GIT COMMIT METADATA (eliminates need for PostgreSQL enrichment!) ===
+                if let Some(ref url) = context.repository_url {
+                    payload.insert("repository_url".to_string(), Value::from(url.clone()));
+                }
+                if let Some(ref sha) = context.commit_sha {
+                    payload.insert("commit_sha".to_string(), Value::from(sha.clone()));
+                }
+                if let Some(ref msg) = context.commit_message {
+                    payload.insert("commit_message".to_string(), Value::from(msg.clone()));
+                }
+                if let Some(date) = context.commit_date {
+                    payload.insert("commit_date".to_string(), Value::from(date.to_rfc3339()));
+                }
+                if let Some(ref author) = context.author {
+                    payload.insert("author".to_string(), Value::from(author.clone()));
+                }
+
+                // === CHUNK METADATA ===
+                payload.insert("chunk_id".to_string(), Value::from(chunk_id.to_string()));
+                payload.insert("generation".to_string(), Value::from(context.generation));
+                payload.insert("chunk_index".to_string(), Value::from(chunk_index as i64));
                 payload.insert("content".to_string(), Value::from(chunk.content.clone()));
                 payload.insert(
                     "start_line".to_string(),
                     Value::from(chunk.start_line as i64),
                 );
                 payload.insert("end_line".to_string(), Value::from(chunk.end_line as i64));
-
-                // Add byte range information
                 payload.insert(
                     "byte_start".to_string(),
                     Value::from(chunk.byte_start as i64),
                 );
                 payload.insert("byte_end".to_string(), Value::from(chunk.byte_end as i64));
-
                 payload.insert("language".to_string(), Value::from(chunk.language.clone()));
 
-                // Store optional fields
+                // Optional chunk metadata
                 if let Some(ref kind) = chunk.kind {
                     payload.insert("kind".to_string(), Value::from(kind.clone()));
                 }
@@ -536,11 +655,12 @@ impl VectorStorage for QdrantStorage {
         // Log operation with correlation ID for tracing
         tracing::info!(
             correlation_id = %correlation_id,
-            repository_id = %repository_id,
-            branch = %branch,
-            generation = %generation,
+            tenant_id = %context.tenant_id,
+            repository_id = %context.repository_id,
+            branch = %context.branch,
+            generation = %context.generation,
             chunk_count = chunks.len(),
-            "Storing chunks with deterministic IDs"
+            "Storing chunks with full metadata context"
         );
 
         // Batch upsert points using new API

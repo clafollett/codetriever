@@ -99,12 +99,13 @@ impl DataClient {
     /// # Errors
     ///
     /// Returns error if database query fails
+    /// Returns tuple of (`repository_id`, branch, content) if found
     pub async fn get_file_content(
         &self,
-        repository_id: &str,
-        branch: &str,
+        repository_id: Option<&str>,
+        branch: Option<&str>,
         file_path: &str,
-    ) -> Result<Option<String>, crate::DatabaseError> {
+    ) -> Result<Option<(String, String, String)>, crate::DatabaseError> {
         self.repository
             .get_file_content(repository_id, branch, file_path)
             .await
@@ -118,6 +119,7 @@ impl DataClient {
     pub async fn enqueue_file(
         &self,
         job_id: &uuid::Uuid,
+        tenant_id: &uuid::Uuid,
         repository_id: &str,
         branch: &str,
         file_path: &str,
@@ -127,6 +129,7 @@ impl DataClient {
         self.repository
             .enqueue_file(
                 job_id,
+                tenant_id,
                 repository_id,
                 branch,
                 file_path,
@@ -136,18 +139,18 @@ impl DataClient {
             .await
     }
 
-    /// Dequeue next file from queue (atomic operation)
+    /// Dequeue next file from global queue (atomic operation)
     ///
-    /// Returns `None` if no files available
+    /// Returns file from ANY tenant - `tenant_id` is in the returned file payload.
+    /// Returns `None` if no files available in queue.
     ///
     /// # Errors
     ///
     /// Returns error if database query fails
     pub async fn dequeue_file(
         &self,
-        job_id: &uuid::Uuid,
-    ) -> Result<Option<(String, String, String)>, crate::DatabaseError> {
-        self.repository.dequeue_file(job_id).await
+    ) -> Result<Option<crate::models::DequeuedFile>, crate::DatabaseError> {
+        self.repository.dequeue_file().await
     }
 
     /// Get queue depth for a job
