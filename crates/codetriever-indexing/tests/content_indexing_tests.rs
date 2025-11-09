@@ -255,7 +255,6 @@ impl PostgresConnection {
 
         // Create unique tenant for this test
         let tenant_id = test_utils::create_test_tenant(&repository).await;
-        eprintln!("🏢 [INSTRUMENTATION] Created tenant_id: {tenant_id}");
 
         let (_job_id, job_status) = test_utils::index_files_async(
             &indexer,
@@ -272,27 +271,17 @@ impl PostgresConnection {
         .await;
 
         assert!(job_status.chunks_created > 0, "Should create chunks");
-        eprintln!(
-            "📊 [INSTRUMENTATION] Indexing complete: {} chunks created",
-            job_status.chunks_created
-        );
 
         // Add delay to ensure Qdrant has flushed writes
-        eprintln!("⏳ [INSTRUMENTATION] Waiting 500ms for Qdrant to flush...");
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         // First, verify data exists in Qdrant directly
         let correlation_id = CorrelationId::new();
-        eprintln!("🔍 [INSTRUMENTATION] Testing direct vector_storage.search()...");
         let test_embedding = vec![0.1; 768]; // Dummy embedding for existence check
         let direct_results = vector_storage
             .search(&tenant_id, test_embedding, 10, &correlation_id)
             .await
             .expect("Direct search failed");
-        eprintln!(
-            "🔍 [INSTRUMENTATION] Direct search found {} results",
-            direct_results.len()
-        );
 
         // Search for indexed content with REAL database integration
         // (use embedding_service and vector_storage from earlier)
@@ -300,34 +289,20 @@ impl PostgresConnection {
         // Reuse db_client from repository (prevents pool exhaustion!)
         let search_service =
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);
-        eprintln!("🔍 [INSTRUMENTATION] Searching with tenant_id: {tenant_id}");
         let results = search_service
             .search(&tenant_id, "postgres database query", 5, &correlation_id)
             .await
             .expect("Failed to search");
 
-        eprintln!("🔍 Search returned {} results", results.len());
-        if results.is_empty() {
-            eprintln!("❌ [INSTRUMENTATION] FAILED: Search returned 0 results!");
-            eprintln!("   - tenant_id used: {tenant_id}");
-            eprintln!("   - direct_results count: {}", direct_results.len());
-            eprintln!("   - chunks_created: {}", job_status.chunks_created);
-        }
         assert!(
             !results.is_empty(),
-            "Should find results for postgres query"
+            "Should find results for postgres query. Chunks created: {}, Direct results: {}",
+            job_status.chunks_created,
+            direct_results.len()
         );
 
         // Verify the result contains our content
         let first_result = &results[0];
-        eprintln!(
-            "🔍 First result content preview: {}",
-            &first_result.chunk.content[..100.min(first_result.chunk.content.len())]
-        );
-        eprintln!(
-            "🔍 First result file_path: {}",
-            first_result.chunk.file_path
-        );
 
         assert!(
             first_result.chunk.content.contains("PostgreSQL")

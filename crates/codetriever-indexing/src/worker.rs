@@ -522,12 +522,10 @@ async fn embedder_worker(
     tracing::debug!("Embedder worker {worker_id} starting");
 
     loop {
-        // Check shutdown - sleep briefly if shutdown signaled
+        // Check shutdown - exit immediately
         if shutdown.load(Ordering::Relaxed) {
-            tracing::debug!(
-                "Embedder worker {worker_id}: shutdown signal received, draining queue"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tracing::debug!("Embedder worker {worker_id}: shutdown signal received");
+            break;
         }
 
         // Dequeue chunks from PostgreSQL (SKIP LOCKED pattern)
@@ -643,6 +641,9 @@ async fn embedder_worker(
 
         tracing::info!("Embedder worker {worker_id}: stored {chunk_count} chunks");
     }
+
+    tracing::debug!("Embedder worker {worker_id} shutting down");
+    Ok(())
 }
 
 /// Parse a file and return chunks + generation, or None if skipped
