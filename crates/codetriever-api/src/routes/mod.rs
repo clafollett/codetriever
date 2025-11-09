@@ -21,9 +21,7 @@ use crate::AppState;
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .merge(health::routes())
-        .merge(index::routes_with_indexer(Arc::clone(
-            &state.indexer_service,
-        )))
+        .merge(index::routes_with_indexer(Arc::new(state.clone())))
         .merge(search::routes_with_search_service(Arc::clone(
             &state.search_service,
         ))) // Now includes both /search and /context

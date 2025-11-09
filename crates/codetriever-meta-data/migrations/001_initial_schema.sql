@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS indexing_jobs (
     commit_date TIMESTAMPTZ NOT NULL,
     author TEXT NOT NULL,
 
+    -- Vector storage namespace - workers use this to route to correct collection/index
+    -- Maps to: Qdrant collection, Pinecone index, Milvus collection, etc.
+    vector_namespace TEXT NOT NULL,
+
     started_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     error_message TEXT,

@@ -35,6 +35,8 @@ pub struct AppState {
     pub search_service: Arc<dyn SearchService>,
     /// Indexing service for processing and storing code chunks
     pub indexer_service: IndexerServiceHandle,
+    /// Vector storage namespace for job routing
+    pub vector_namespace: String,
 }
 
 impl AppState {
@@ -45,12 +47,14 @@ impl AppState {
         vector_storage: Arc<dyn VectorStorage>,
         search_service: Arc<dyn SearchService>,
         indexer_service: IndexerServiceHandle,
+        vector_namespace: String,
     ) -> Self {
         Self {
             db_client,
             vector_storage,
             search_service,
             indexer_service,
+            vector_namespace,
         }
     }
 }

@@ -396,6 +396,7 @@ use async_trait::async_trait;
 impl IndexerService for Indexer {
     async fn start_indexing_job(
         &self,
+        vector_namespace: &str,
         tenant_id: uuid::Uuid,
         project_id: &str,
         files: Vec<ServiceFileContent>,
@@ -422,7 +423,13 @@ impl IndexerService for Indexer {
         // Create job in database with full commit context
         let job = self
             .repository
-            .create_indexing_job(&tenant_id, repository_id, branch, commit_context)
+            .create_indexing_job(
+                vector_namespace,
+                &tenant_id,
+                repository_id,
+                branch,
+                commit_context,
+            )
             .await?;
 
         // Enqueue all files to persistent queue (skip binary files)
@@ -570,6 +577,7 @@ mod tests {
 
         let job_id = indexer
             .start_indexing_job(
+                "test_namespace",
                 TEST_TENANT,
                 "test_repo:main",
                 vec![file_content],

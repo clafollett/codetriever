@@ -317,16 +317,23 @@ impl DbFileRepository {
 
         let row = sqlx::query(
             r"
-            UPDATE indexing_job_file_queue
-            SET status = 'processing', started_at = NOW()
-            WHERE id = (
-                SELECT id FROM indexing_job_file_queue
-                WHERE status = 'queued'
-                ORDER BY priority DESC, created_at ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
+            WITH updated AS (
+                UPDATE indexing_job_file_queue
+                SET status = 'processing', started_at = NOW()
+                WHERE id = (
+                    SELECT id FROM indexing_job_file_queue
+                    WHERE status = 'queued'
+                    ORDER BY priority DESC, created_at ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING tenant_id, job_id, file_path, file_content, content_hash
             )
-            RETURNING tenant_id, job_id, file_path, file_content, content_hash
+            SELECT
+                u.tenant_id, u.job_id, u.file_path, u.file_content, u.content_hash,
+                j.vector_namespace
+            FROM updated u
+            JOIN indexing_jobs j ON j.job_id = u.job_id
             ",
         )
         .fetch_optional(pool)
@@ -339,6 +346,7 @@ impl DbFileRepository {
             file_path: r.get("file_path"),
             file_content: r.get("file_content"),
             content_hash: r.get("content_hash"),
+            vector_namespace: r.get("vector_namespace"),
         }))
     }
 
@@ -468,7 +476,7 @@ impl DbFileRepository {
             r"
             SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                    chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
-                   started_at, completed_at, error_message
+                   vector_namespace, started_at, completed_at, error_message
             FROM indexing_jobs
             WHERE job_id = $1
             ",
@@ -494,6 +502,7 @@ impl DbFileRepository {
                 commit_message: r.get("commit_message"),
                 commit_date: r.get("commit_date"),
                 author: r.get("author"),
+                vector_namespace: r.get("vector_namespace"),
                 started_at: r.get("started_at"),
                 completed_at: r.get("completed_at"),
                 error_message: r.get("error_message"),
@@ -525,7 +534,7 @@ impl DbFileRepository {
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                            chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
-                           started_at, completed_at, error_message
+                           vector_namespace, started_at, completed_at, error_message
                     FROM indexing_jobs
                     WHERE tenant_id = $1 AND repository_id = $2
                     ORDER BY started_at DESC
@@ -541,7 +550,7 @@ impl DbFileRepository {
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                            chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
-                           started_at, completed_at, error_message
+                           vector_namespace, started_at, completed_at, error_message
                     FROM indexing_jobs
                     WHERE tenant_id = $1
                     ORDER BY started_at DESC
@@ -556,7 +565,7 @@ impl DbFileRepository {
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                            chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
-                           started_at, completed_at, error_message
+                           vector_namespace, started_at, completed_at, error_message
                     FROM indexing_jobs
                     ORDER BY started_at DESC
                     LIMIT 100
@@ -585,6 +594,7 @@ impl DbFileRepository {
                     commit_message: r.get("commit_message"),
                     commit_date: r.get("commit_date"),
                     author: r.get("author"),
+                    vector_namespace: r.get("vector_namespace"),
                     started_at: r.get("started_at"),
                     completed_at: r.get("completed_at"),
                     error_message: r.get("error_message"),
@@ -957,6 +967,7 @@ impl FileRepository for DbFileRepository {
 
     async fn create_indexing_job(
         &self,
+        vector_namespace: &str,
         tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
@@ -978,9 +989,10 @@ impl FileRepository for DbFileRepository {
                 job_id, tenant_id, repository_id, branch, status,
                 files_processed, chunks_created,
                 repository_url, commit_sha, commit_message, commit_date, author,
+                vector_namespace,
                 started_at
             )
-            VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, $8, $9, $10, NOW())
+            VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, $8, $9, $10, $11, NOW())
             RETURNING *
             ",
         )
@@ -994,6 +1006,7 @@ impl FileRepository for DbFileRepository {
         .bind(&commit_context.commit_message)
         .bind(commit_context.commit_date)
         .bind(&commit_context.author)
+        .bind(vector_namespace)
         .fetch_one(pool)
         .await
         .map_db_err(operation, correlation_id)?;
@@ -1012,6 +1025,7 @@ impl FileRepository for DbFileRepository {
             commit_message: row.get("commit_message"),
             commit_date: row.get("commit_date"),
             author: row.get("author"),
+            vector_namespace: row.get("vector_namespace"),
             started_at: row.get("started_at"),
             completed_at: row.get("completed_at"),
             error_message: row.get("error_message"),

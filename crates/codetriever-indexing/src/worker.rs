@@ -39,6 +39,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
 
+/// Type alias for storage cache - maps vector namespace to cached QdrantStorage instances
+type StorageCache = dashmap::DashMap<String, Arc<codetriever_vector_data::QdrantStorage>>;
+
 /// Result of encoding detection and conversion
 struct EncodingResult {
     content: String,
@@ -123,25 +126,27 @@ impl WorkerConfig {
 pub struct BackgroundWorker {
     repository: Arc<dyn FileRepository>,
     embedding_service: Arc<dyn EmbeddingService>,
-    vector_storage: Arc<dyn VectorStorage>,
+    qdrant_url: String,
+    storage_cache: StorageCache,
     code_parser: Arc<CodeParser>,
     config: WorkerConfig,
     shutdown_signal: Arc<AtomicBool>,
 }
 
 impl BackgroundWorker {
-    /// Create a new background worker
+    /// Create a new background worker with dynamic storage routing
     pub fn new(
         repository: Arc<dyn FileRepository>,
         embedding_service: Arc<dyn EmbeddingService>,
-        vector_storage: Arc<dyn VectorStorage>,
+        qdrant_url: String,
         code_parser: Arc<CodeParser>,
         config: WorkerConfig,
     ) -> Self {
         Self {
             repository,
             embedding_service,
-            vector_storage,
+            qdrant_url,
+            storage_cache: dashmap::DashMap::new(),
             code_parser,
             config,
             shutdown_signal: Arc::new(AtomicBool::new(false)),
@@ -151,6 +156,43 @@ impl BackgroundWorker {
     /// Get a handle for graceful shutdown
     pub fn shutdown_handle(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.shutdown_signal)
+    }
+
+    /// Get or create a cached QdrantStorage instance for the given vector namespace
+    ///
+    /// Uses DashMap for lock-free concurrent access to the storage cache.
+    /// Creates new storage on cache miss and reuses existing instances.
+    async fn get_or_create_storage(
+        &self,
+        vector_namespace: &str,
+    ) -> IndexerResult<Arc<codetriever_vector_data::QdrantStorage>> {
+        // Check cache first (lock-free read)
+        if let Some(storage) = self.storage_cache.get(vector_namespace) {
+            tracing::debug!("✅ Cache hit for namespace: {}", vector_namespace);
+            return Ok(storage.clone());
+        }
+
+        // Cache miss - create new storage
+        tracing::info!(
+            "📦 Creating new storage for namespace: {}",
+            vector_namespace
+        );
+        let start = std::time::Instant::now();
+        let storage = codetriever_vector_data::QdrantStorage::new(
+            self.qdrant_url.clone(),
+            vector_namespace.to_string(),
+        )
+        .await
+        .map_err(|e| IndexerError::Other(format!("Failed to create storage: {e}")))?;
+        tracing::info!("✅ Storage created in {}ms", start.elapsed().as_millis());
+
+        let storage = Arc::new(storage);
+
+        // Insert into cache
+        self.storage_cache
+            .insert(vector_namespace.to_string(), storage.clone());
+
+        Ok(storage)
     }
 
     /// Main worker loop - continuously processes files from global queue
@@ -314,7 +356,10 @@ impl BackgroundWorker {
 
         let generation = match state {
             codetriever_meta_data::models::FileState::Unchanged => {
-                tracing::debug!("Skipping unchanged file {}", dequeued.file_path);
+                eprintln!(
+                    "⏭️  [WORKER] Skipping unchanged file {} (tenant: {})",
+                    dequeued.file_path, job.tenant_id
+                );
                 return Ok(0); // No chunks needed
             }
             codetriever_meta_data::models::FileState::New { generation }
@@ -380,7 +425,10 @@ impl BackgroundWorker {
                 .parse(&utf8_content, language, &dequeued.file_path)?;
 
         if parsing_chunks.is_empty() {
-            tracing::warn!("File {} produced zero chunks", dequeued.file_path);
+            eprintln!(
+                "⚠️  [WORKER] File {} produced zero chunks (tenant: {})",
+                dequeued.file_path, job.tenant_id
+            );
             return Ok(0);
         }
 
@@ -429,10 +477,16 @@ impl BackgroundWorker {
         };
 
         let correlation_id = CorrelationId::new();
-        let chunk_ids = self
-            .vector_storage
-            .store_chunks(&storage_context, &vector_chunks, &correlation_id)
+
+        // Get storage for this job's vector namespace (uses cache)
+        let storage = self
+            .get_or_create_storage(&dequeued.vector_namespace)
             .await?;
+
+        let chunk_ids = storage
+            .store_chunks(&storage_context, &vector_chunks, &correlation_id)
+            .await
+            .map_err(|e| IndexerError::Other(format!("Failed to store chunks: {e}")))?;
 
         // 7. Store chunk metadata in PostgreSQL
         let chunk_metadata: Vec<codetriever_meta_data::models::ChunkMetadata> = parsing_chunks

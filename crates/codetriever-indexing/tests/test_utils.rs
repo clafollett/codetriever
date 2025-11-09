@@ -70,19 +70,20 @@ pub async fn index_files_async(
     indexer: &Arc<dyn IndexerService>,
     repository: Arc<dyn FileRepository>,
     embedding_service: Arc<dyn EmbeddingService>,
-    vector_storage: Arc<dyn VectorStorage>,
+    qdrant_url: String,
+    vector_namespace: String,
     code_parser: Arc<CodeParser>,
     config: &ApplicationConfig,
     tenant_id: Uuid,
     project_id: &str,
     files: Vec<FileContent>,
 ) -> (Uuid, codetriever_meta_data::models::IndexingJob) {
-    // Create background worker (clone Arcs so caller can reuse them)
+    // Create background worker with dynamic storage routing
     let worker = BackgroundWorker::new(
         Arc::clone(&repository),
         Arc::clone(&embedding_service),
-        Arc::clone(&vector_storage),
-        Arc::clone(&code_parser),
+        qdrant_url,
+        code_parser,
         WorkerConfig::from_app_config(config),
     );
 
@@ -97,7 +98,13 @@ pub async fn index_files_async(
     // Start indexing job with commit context
     let commit_context = test_commit_context();
     let job_id = indexer
-        .start_indexing_job(tenant_id, project_id, files, &commit_context)
+        .start_indexing_job(
+            &vector_namespace,
+            tenant_id,
+            project_id,
+            files,
+            &commit_context,
+        )
         .await
         .expect("Failed to start indexing job");
 

@@ -65,12 +65,14 @@ use utoipa::ToSchema;
 ///
 /// // Basic search
 /// let request = SearchRequest {
+///     tenant_id: uuid::Uuid::nil(),
 ///     query: "error handling".to_string(),
 ///     limit: None,
 /// };
 ///
 /// // Limited search
 /// let request = SearchRequest {
+///     tenant_id: uuid::Uuid::nil(),
 ///     query: "database connection pool".to_string(),
 ///     limit: Some(5),
 /// };

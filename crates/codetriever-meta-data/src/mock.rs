@@ -234,6 +234,7 @@ impl FileRepository for MockFileRepository {
 
     async fn create_indexing_job(
         &self,
+        vector_namespace: &str,
         tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,
@@ -256,6 +257,7 @@ impl FileRepository for MockFileRepository {
             commit_message: commit_context.commit_message.clone(),
             commit_date: commit_context.commit_date,
             author: commit_context.author.clone(),
+            vector_namespace: vector_namespace.to_string(),
             started_at: Utc::now(),
             completed_at: None,
             error_message: None,

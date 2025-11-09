@@ -1,6 +1,7 @@
 use super::response::ResponseStatus;
 use crate::impl_has_status;
 use crate::middleware::RequestContext;
+use crate::state::AppState;
 use crate::{ApiError, ApiResult};
 use axum::{
     Router,
@@ -8,7 +9,6 @@ use axum::{
     routing::post,
 };
 use codetriever_common::CorrelationId;
-use codetriever_indexing::IndexerService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,16 +16,13 @@ use tracing::{error, info, instrument, warn};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-// Type alias for indexer service (no mutex needed!)
-type IndexerServiceHandle = Arc<dyn IndexerService>;
-
-/// Create routes with a specific indexer service
-pub fn routes_with_indexer(indexer: IndexerServiceHandle) -> Router {
+/// Create routes with application state
+pub fn routes_with_indexer(state: Arc<AppState>) -> Router {
     use axum::routing::get;
     Router::new()
         .route("/index", post(index_handler))
         .route("/index/jobs/{job_id}", get(get_job_status_handler))
-        .with_state(indexer)
+        .with_state(state)
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -116,9 +113,9 @@ impl IndexResponse {
         (status = 500, description = "Internal server error", body = IndexResponse)
     )
 )]
-#[instrument(skip(indexer), fields(correlation_id))]
+#[instrument(skip(state), fields(correlation_id))]
 pub async fn index_handler(
-    State(indexer): State<IndexerServiceHandle>,
+    State(state): State<Arc<AppState>>,
     context: Option<Extension<RequestContext>>,
     Json(request): Json<IndexRequest>,
 ) -> ApiResult<Json<IndexResponse>> {
@@ -177,7 +174,8 @@ pub async fn index_handler(
     // Start async indexing job (returns immediately - no lock needed!)
     let job_id = match tokio::time::timeout(
         Duration::from_secs(5), // Job creation should be fast
-        indexer.start_indexing_job(
+        state.indexer_service.start_indexing_job(
+            &state.vector_namespace,
             tenant_id,
             &request.project_id,
             files,
@@ -259,9 +257,9 @@ pub struct JobStatusResponse {
         (status = 500, description = "Internal server error")
     )
 )]
-#[instrument(skip(indexer), fields(correlation_id, job_id))]
+#[instrument(skip(state), fields(correlation_id, job_id))]
 pub async fn get_job_status_handler(
-    State(indexer): State<IndexerServiceHandle>,
+    State(state): State<Arc<AppState>>,
     context: Option<Extension<RequestContext>>,
     axum::extract::Path(job_id): axum::extract::Path<Uuid>,
 ) -> ApiResult<Json<JobStatusResponse>> {
@@ -284,7 +282,7 @@ pub async fn get_job_status_handler(
     // Get job status from indexer
     let job = match tokio::time::timeout(
         Duration::from_secs(5), // Job status query should be fast
-        indexer.get_job_status(&job_id),
+        state.indexer_service.get_job_status(&job_id),
     )
     .await
     {
@@ -353,14 +351,41 @@ mod tests {
     use crate::test_utils::TestResult;
     use axum::body::Body;
     use axum::http::{StatusCode, header};
-    use codetriever_indexing::test_mocks::MockIndexerService;
+    use codetriever_indexing::{IndexerService, test_mocks::MockIndexerService};
     use tower::ServiceExt;
+
+    #[allow(clippy::expect_used)] // Test helper - expect is acceptable in tests
+    async fn create_test_state(indexer: Arc<dyn IndexerService>) -> Arc<AppState> {
+        use codetriever_config::DatabaseConfig;
+        use codetriever_meta_data::PoolManager;
+        use codetriever_search::test_mocks::MockSearch;
+        use codetriever_vector_data::MockStorage;
+
+        // Create real DB pools for testing (index routes need DB access)
+        let db_config = DatabaseConfig::from_env();
+        let pools = PoolManager::new(&db_config, codetriever_meta_data::PoolConfig::default())
+            .await
+            .expect("Failed to create pools");
+        let db_client = Arc::new(codetriever_meta_data::DataClient::new(pools));
+        let vector_storage =
+            Arc::new(MockStorage::new()) as Arc<dyn codetriever_vector_data::VectorStorage>;
+        let search_service =
+            Arc::new(MockSearch::empty()) as Arc<dyn codetriever_search::SearchService>;
+
+        Arc::new(AppState::new(
+            db_client,
+            vector_storage,
+            search_service,
+            indexer,
+            "test_namespace".to_string(),
+        ))
+    }
 
     #[tokio::test]
     async fn test_index_endpoint_accepts_content() -> TestResult {
         // Use mock indexer that returns predictable results
         let mock_indexer = Arc::new(MockIndexerService::new(2, 10)) as Arc<dyn IndexerService>;
-        let app = routes_with_indexer(mock_indexer);
+        let app = routes_with_indexer(create_test_state(mock_indexer).await);
 
         let request_body = r#"{
             "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
@@ -403,7 +428,7 @@ mod tests {
     async fn test_index_with_recursive_flag() -> TestResult {
         // Mock returns 5 files and 10 chunks
         let mock_indexer = Arc::new(MockIndexerService::new(5, 10)) as Arc<dyn IndexerService>;
-        let app = routes_with_indexer(mock_indexer);
+        let app = routes_with_indexer(create_test_state(mock_indexer).await);
 
         let request_body = r#"{
             "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
@@ -431,7 +456,7 @@ mod tests {
     async fn test_index_endpoint_validates_json() -> TestResult {
         // Use mock indexer (test validates JSON schema, not indexing logic)
         let mock_indexer = Arc::new(MockIndexerService::new(0, 0)) as Arc<dyn IndexerService>;
-        let app = routes_with_indexer(mock_indexer);
+        let app = routes_with_indexer(create_test_state(mock_indexer).await);
 
         let request_body = r#"{"invalid": "json_structure"}"#;
 
@@ -454,7 +479,7 @@ mod tests {
     async fn test_index_endpoint_handles_empty_files() -> TestResult {
         // Use mock indexer that returns predictable results
         let mock_indexer = Arc::new(MockIndexerService::new(0, 0)) as Arc<dyn IndexerService>;
-        let app = routes_with_indexer(mock_indexer);
+        let app = routes_with_indexer(create_test_state(mock_indexer).await);
 
         let request_body = r#"{
             "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
@@ -480,7 +505,7 @@ mod tests {
     async fn test_index_endpoint_handles_no_content() -> TestResult {
         // Use mock indexer that returns predictable results
         let mock_indexer = Arc::new(MockIndexerService::new(0, 0)) as Arc<dyn IndexerService>;
-        let app = routes_with_indexer(mock_indexer);
+        let app = routes_with_indexer(create_test_state(mock_indexer).await);
 
         let request_body = r#"{
             "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
@@ -517,7 +542,7 @@ mod tests {
     async fn test_index_returns_file_count() -> TestResult {
         // Mock returns 3 files and 7 chunks
         let mock_indexer = Arc::new(MockIndexerService::new(3, 7)) as Arc<dyn IndexerService>;
-        let app = routes_with_indexer(mock_indexer);
+        let app = routes_with_indexer(create_test_state(mock_indexer).await);
 
         let request_body = r#"{
             "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
@@ -574,7 +599,7 @@ mod tests {
     async fn test_index_creates_chunks() -> TestResult {
         // Mock returns 1 file and 5 chunks
         let mock_indexer = Arc::new(MockIndexerService::new(1, 5)) as Arc<dyn IndexerService>;
-        let app = routes_with_indexer(mock_indexer);
+        let app = routes_with_indexer(create_test_state(mock_indexer).await);
 
         let request_body = r#"{
             "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",
@@ -611,7 +636,7 @@ mod tests {
         // The error would show up when checking job status, not during job creation
         // For now, mock returns success for start_indexing_job()
         let mock_indexer = Arc::new(MockIndexerService::new(0, 0)) as Arc<dyn IndexerService>;
-        let app = routes_with_indexer(mock_indexer);
+        let app = routes_with_indexer(create_test_state(mock_indexer).await);
 
         let request_body = r#"{
             "commit_context": {"repository_url": "https://github.com/test/repo", "commit_sha": "abc123", "commit_message": "Test", "commit_date": "2025-01-01T00:00:00Z", "author": "Test"}, "project_id": "test-project",

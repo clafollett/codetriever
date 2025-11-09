@@ -121,7 +121,7 @@ fn test_index_rust_mini_redis() {
         let worker = BackgroundWorker::new(
             repository,
             embedding_service.clone(),
-            Arc::new(storage.clone()) as Arc<dyn VectorStorage>,
+            config.vector_storage.url.clone(),
             code_parser,
             WorkerConfig::from_app_config(&config),
         );
@@ -162,6 +162,9 @@ fn test_index_rust_mini_redis() {
         let search_service =
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);
 
+        // Track timing
+        let test_start = std::time::Instant::now();
+
         // Check if already indexed
         let correlation_id = codetriever_common::CorrelationId::new();
         let test_result = search_service
@@ -199,7 +202,13 @@ fn test_index_rust_mini_redis() {
 
             // Start indexing job (enqueues files, returns immediately - production API!)
             let job_id = indexer
-                .start_indexing_job(tenant_id, &unique_project_id, files, &commit_context)
+                .start_indexing_job(
+                    storage.collection_name(),
+                    tenant_id,
+                    &unique_project_id,
+                    files,
+                    &commit_context,
+                )
                 .await
                 .expect("Failed to start indexing job");
 
@@ -216,8 +225,9 @@ fn test_index_rust_mini_redis() {
 
                 match job_status.status {
                     JobStatus::Completed => {
-                        tracing::info!(
-                            "✅ Job completed: {} files, {} chunks",
+                        eprintln!(
+                            "✅ Job completed in {:.2}s: {} files, {} chunks",
+                            test_start.elapsed().as_secs_f64(),
                             job_status.files_processed,
                             job_status.chunks_created
                         );
@@ -240,6 +250,7 @@ fn test_index_rust_mini_redis() {
         }
 
         // Now run test queries to verify search works
+        let search_start = std::time::Instant::now();
         tracing::info!("Running test queries");
 
         for query in test_queries {
@@ -275,6 +286,11 @@ fn test_index_rust_mini_redis() {
                 }
             }
         }
+
+        eprintln!(
+            "✅ Search phase completed in {:.2}s",
+            search_start.elapsed().as_secs_f64()
+        );
 
         // Shutdown worker before cleanup
         tracing::info!("🛑 Shutting down worker...");

@@ -45,7 +45,7 @@ pub async fn setup_vector_storage(
     let storage = Arc::new(
         QdrantStorage::new(
             config.vector_storage.url.clone(),
-            config.vector_storage.collection_name.clone(),
+            config.vector_storage.namespace.clone(),
         )
         .await?,
     ) as Arc<dyn codetriever_vector_data::VectorStorage>;
@@ -147,13 +147,8 @@ pub async fn initialize_app_state(config: &ApplicationConfig) -> BootstrapResult
     let indexer_service = setup_indexer_service(&embedding_service, &vector_storage, &pools)?;
 
     // 6. Spawn background worker for processing indexing jobs
-    let _shutdown_handle = spawn_background_worker(
-        config,
-        Arc::clone(&embedding_service),
-        Arc::clone(&vector_storage),
-        &pools,
-    )
-    .await?;
+    let _shutdown_handle =
+        spawn_background_worker(config, Arc::clone(&embedding_service), &pools).await?;
 
     // 7. Create application state
     let state = AppState::new(
@@ -161,6 +156,7 @@ pub async fn initialize_app_state(config: &ApplicationConfig) -> BootstrapResult
         Arc::clone(&vector_storage),
         Arc::clone(&search_service),
         Arc::clone(&indexer_service),
+        config.vector_storage.namespace.clone(),
     );
 
     info!("Application state initialized successfully");
@@ -180,10 +176,10 @@ pub async fn initialize_app_state(config: &ApplicationConfig) -> BootstrapResult
 /// # Errors
 ///
 /// Returns error if tokenizer loading fails
+#[allow(clippy::significant_drop_tightening)] // Worker is spawned, not dropped
 pub async fn spawn_background_worker(
     config: &ApplicationConfig,
     embedding_service: Arc<dyn codetriever_embeddings::EmbeddingService>,
-    vector_storage: Arc<dyn codetriever_vector_data::VectorStorage>,
     pools: &PoolManager,
 ) -> BootstrapResult<Arc<AtomicBool>> {
     info!("🚀 Spawning background indexing worker...");
@@ -203,18 +199,18 @@ pub async fn spawn_background_worker(
     // Create worker config
     let worker_config = WorkerConfig::from_app_config(config);
 
-    // Create background worker
+    // Create background worker with dynamic storage routing
     let worker = BackgroundWorker::new(
         file_repository,
         Arc::clone(&embedding_service),
-        Arc::clone(&vector_storage),
+        config.vector_storage.url.clone(),
         code_parser,
         worker_config,
     );
 
     let shutdown_handle = worker.shutdown_handle();
 
-    // Spawn worker in background thread
+    // Spawn worker in background thread (worker is moved here)
     tokio::spawn(async move {
         worker.run().await;
     });

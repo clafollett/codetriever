@@ -23,6 +23,7 @@ pub trait IndexerService: Send + Sync {
     /// - `Uuid`: Job ID for tracking progress via `get_job_status()`
     async fn start_indexing_job(
         &self,
+        vector_namespace: &str,
         tenant_id: Uuid,
         project_id: &str,
         files: Vec<FileContent>,
@@ -88,6 +89,7 @@ pub mod test_utils {
     impl IndexerService for MockIndexerService {
         async fn start_indexing_job(
             &self,
+            _vector_namespace: &str,
             _tenant_id: Uuid,
             _project_id: &str,
             _files: Vec<FileContent>,

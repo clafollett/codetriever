@@ -62,6 +62,7 @@ pub trait FileRepository: Send + Sync {
     /// Create new indexing job with commit context
     async fn create_indexing_job(
         &self,
+        vector_namespace: &str,
         tenant_id: &Uuid,
         repository_id: &str,
         branch: &str,

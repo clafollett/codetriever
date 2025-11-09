@@ -17,6 +17,8 @@ pub struct DequeuedFile {
     pub file_content: String,
     /// SHA256 hash of content
     pub content_hash: String,
+    /// Vector storage namespace - tells worker where to store chunks
+    pub vector_namespace: String,
 }
 
 /// Represents a repository/branch combination (per tenant)
@@ -94,6 +96,9 @@ pub struct IndexingJob {
     pub commit_message: String,
     pub commit_date: DateTime<Utc>,
     pub author: String,
+
+    // Vector storage namespace - workers use this to route to correct collection/index
+    pub vector_namespace: String,
 
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,

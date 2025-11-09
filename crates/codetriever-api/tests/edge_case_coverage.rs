@@ -274,7 +274,7 @@ fn test_index_with_very_large_file_content() -> test_utils::TestResult {
         eprintln!("📦 [Large File Test] App state created");
 
         // Spawn BackgroundWorker for this test (async job pattern requires it!)
-        let _worker_shutdown = test_utils::spawn_test_worker(&test_state).await?;
+        let _worker_shutdown = test_utils::spawn_test_worker().await?;
         eprintln!("📦 [Large File Test] BackgroundWorker spawned");
 
         let app = create_router(test_state.state().clone());

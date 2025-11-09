@@ -26,8 +26,9 @@
 //!     "codetriever".to_string()
 //! ).await?;
 //! let query_embedding = vec![0.1, 0.2, 0.3]; // Example embedding
+//! let tenant_id = uuid::Uuid::nil(); // Example tenant
 //! let correlation_id = CorrelationId::new();
-//! let results = storage.search(query_embedding, 10, &correlation_id).await?;
+//! let results = storage.search(&tenant_id, query_embedding, 10, &correlation_id).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -78,6 +79,11 @@ pub struct QdrantStorage {
 }
 
 impl QdrantStorage {
+    /// Get the collection name (vector namespace) for this storage instance
+    pub fn collection_name(&self) -> &str {
+        &self.collection_name
+    }
+
     /// Creates a new `QdrantStorage` client instance and ensures collection exists.
     ///
     /// Initializes the Qdrant storage client with the given URL and collection name.
@@ -290,8 +296,20 @@ impl VectorStorage for QdrantStorage {
     ///         embedding: Some(vec![0.1; 768]), // 768-dim embedding
     ///     }
     /// ];
+    /// use codetriever_vector_data::ChunkStorageContext;
+    /// let context = ChunkStorageContext {
+    ///     tenant_id: uuid::Uuid::nil(),
+    ///     repository_id: "repo".to_string(),
+    ///     branch: "main".to_string(),
+    ///     generation: 1,
+    ///     repository_url: None,
+    ///     commit_sha: None,
+    ///     commit_message: None,
+    ///     commit_date: None,
+    ///     author: None,
+    /// };
     /// let correlation_id = CorrelationId::new();
-    /// let stored_ids = storage.store_chunks("repo", "main", &chunks, 1, &correlation_id).await?;
+    /// let stored_ids = storage.store_chunks(&context, &chunks, &correlation_id).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -328,8 +346,9 @@ impl VectorStorage for QdrantStorage {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let storage = QdrantStorage::new("http://localhost:6334".to_string(), "test".to_string()).await?;
     /// let query_vector = vec![0.1; 768]; // 768-dimensional query embedding
+    /// let tenant_id = uuid::Uuid::nil(); // Example tenant
     /// let correlation_id = CorrelationId::new();
-    /// let results = storage.search(query_vector, 5, &correlation_id).await?;
+    /// let results = storage.search(&tenant_id, query_vector, 5, &correlation_id).await?;
     ///
     /// for result in results {
     ///     println!("Found: {} (lines {}-{}) - score: {:.3}",

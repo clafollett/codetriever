@@ -94,7 +94,7 @@ fn test_full_stack_indexing_with_postgres_and_qdrant() {
         let worker = BackgroundWorker::new(
             Arc::clone(&repository),
             Arc::clone(&embedding_service),
-            Arc::clone(&vector_storage),
+            config.vector_storage.url.clone(),
             code_parser,
             WorkerConfig::from_app_config(&config),
         );
@@ -158,7 +158,13 @@ pub fn process_data(input: &str) -> String {
 
         // Start indexing job (async pattern)
         let job_id = indexer
-            .start_indexing_job(tenant_id, &project_id, vec![file], &commit_context)
+            .start_indexing_job(
+                storage.collection_name(),
+                tenant_id,
+                &project_id,
+                vec![file],
+                &commit_context,
+            )
             .await
             .expect("Failed to start indexing job");
 
@@ -204,7 +210,7 @@ pub fn process_data(input: &str) -> String {
 
         // Verify chunks in PostgreSQL
         let chunks: Vec<(uuid::Uuid,)> = sqlx::query_as(
-            "SELECT chunk_id FROM code_chunks WHERE repository_id = $1 AND branch = $2",
+            "SELECT chunk_id FROM chunk_metadata WHERE repository_id = $1 AND branch = $2",
         )
         .bind(test_repo)
         .bind(test_branch)
@@ -222,7 +228,7 @@ pub fn process_data(input: &str) -> String {
             .expect("Failed to generate query embedding");
 
         let search_results = storage
-            .search(&TEST_TENANT, query_embedding[0].clone(), 5, &correlation_id)
+            .search(&tenant_id, query_embedding[0].clone(), 5, &correlation_id)
             .await
             .expect("Failed to search");
 

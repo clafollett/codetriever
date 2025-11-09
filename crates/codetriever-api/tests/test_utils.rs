@@ -78,10 +78,9 @@ async fn init_shared_resources() -> Result<SharedResources, Box<dyn std::error::
 /// # Errors
 ///
 /// Returns error if worker initialization fails (embedding service, tokenizer, etc.)
-#[allow(dead_code)]
-pub async fn spawn_test_worker(
-    test_state: &TestAppState,
-) -> Result<std::sync::Arc<std::sync::atomic::AtomicBool>, Box<dyn std::error::Error>> {
+#[allow(dead_code, clippy::significant_drop_tightening)] // Worker is spawned into tokio task
+pub async fn spawn_test_worker()
+-> Result<std::sync::Arc<std::sync::atomic::AtomicBool>, Box<dyn std::error::Error>> {
     use codetriever_config::ApplicationConfig;
     use codetriever_indexing::{BackgroundWorker, WorkerConfig};
 
@@ -100,9 +99,7 @@ pub async fn spawn_test_worker(
     let worker = BackgroundWorker::new(
         std::sync::Arc::clone(&shared.file_repository),
         std::sync::Arc::clone(&shared.embedding_service),
-        Arc::<dyn codetriever_vector_data::VectorStorage>::clone(
-            &test_state.state().vector_storage,
-        ),
+        config.vector_storage.url.clone(),
         code_parser,
         WorkerConfig::from_app_config(&config),
     );
@@ -259,6 +256,7 @@ pub async fn app_state() -> Result<Arc<TestAppState>, Box<dyn std::error::Error>
         vector_storage_trait,
         search_service,
         indexer_service,
+        collection_name.clone(),
     );
 
     let test_state = Arc::new(TestAppState {

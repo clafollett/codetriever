@@ -528,8 +528,8 @@ pub struct VectorStorageConfig {
     /// Qdrant server URL
     pub url: String,
 
-    /// Collection name
-    pub collection_name: String,
+    /// Vector storage namespace (maps to: Qdrant collection, Pinecone index, etc.)
+    pub namespace: String,
 
     /// Vector dimensions
     pub vector_dimension: usize,
@@ -544,7 +544,8 @@ impl VectorStorageConfig {
         let url = std::env::var("CODETRIEVER_VECTOR_STORAGE_URL")
             .unwrap_or_else(|_| DEFAULT_QDRANT_URL.to_string());
 
-        let collection_name = std::env::var("CODETRIEVER_VECTOR_STORAGE_COLLECTION_NAME")
+        let namespace = std::env::var("CODETRIEVER_VECTOR_STORAGE_NAMESPACE")
+            .or_else(|_| std::env::var("CODETRIEVER_VECTOR_STORAGE_COLLECTION_NAME")) // Legacy env var
             .unwrap_or_else(|_| "codetriever".to_string());
 
         let vector_dimension = std::env::var("CODETRIEVER_VECTOR_STORAGE_DIMENSION")
@@ -559,7 +560,7 @@ impl VectorStorageConfig {
 
         Self {
             url,
-            collection_name,
+            namespace,
             vector_dimension,
             timeout_seconds,
         }
@@ -569,7 +570,7 @@ impl VectorStorageConfig {
 impl validation::Validate for VectorStorageConfig {
     fn validate(&self) -> ConfigResult<()> {
         validation::validate_url(&self.url, "url")?;
-        validation::validate_non_empty(&self.collection_name, "collection_name")?;
+        validation::validate_non_empty(&self.namespace, "vector_namespace")?;
         validation::validate_range(self.vector_dimension as u64, 1, 10_000, "vector_dimension")?;
         validation::validate_range(self.timeout_seconds, 1, 3600, "timeout_seconds")?;
         Ok(())
