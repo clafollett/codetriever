@@ -217,10 +217,6 @@ impl BackgroundWorker {
     /// Set the shutdown signal to trigger graceful shutdown. The worker will
     /// close queues, wait for all workers to finish, then exit.
     pub async fn run(&self) {
-        eprintln!(
-            "🚀 [WORKER] Starting two-level architecture: {} parser workers, {} embedder workers",
-            self.config.parser_concurrency, self.config.embedder_concurrency
-        );
         info!(
             "🚀 Background indexing worker started (parsers: {}, embedders: {})",
             self.config.parser_concurrency, self.config.embedder_concurrency
@@ -404,7 +400,6 @@ async fn parser_worker(
     chunks_created: Arc<AtomicUsize>,
     poll_interval_ms: u64,
 ) -> IndexerResult<()> {
-    eprintln!("🔧 [PARSER-{worker_id}] Worker started");
     tracing::debug!("Parser worker {worker_id} starting");
 
     loop {
@@ -439,9 +434,6 @@ async fn parser_worker(
                         let chunk_count = chunks.len();
                         chunks_created.fetch_add(chunk_count, Ordering::Relaxed);
 
-                        eprintln!(
-                            "📄 [PARSER-{worker_id}] Parsed {chunk_count} chunks from {file_path}"
-                        );
                         tracing::info!(
                             "Parser worker {worker_id}: parsed {chunk_count} chunks from {file_path}"
                         );
@@ -511,7 +503,6 @@ async fn parser_worker(
         }
     }
 
-    eprintln!("🛑 [PARSER-{worker_id}] Worker shutting down");
     tracing::debug!("Parser worker {worker_id} shutting down");
     Ok(())
 }
@@ -528,7 +519,6 @@ async fn embedder_worker(
     shutdown: Arc<AtomicBool>,
     batch_size: usize,
 ) -> IndexerResult<()> {
-    eprintln!("⚡ [EMBEDDER-{worker_id}] Worker started");
     tracing::debug!("Embedder worker {worker_id} starting");
 
     loop {
@@ -651,7 +641,6 @@ async fn embedder_worker(
             }
         }
 
-        eprintln!("💾 [EMBEDDER-{worker_id}] Embedded and stored {chunk_count} chunks",);
         tracing::info!("Embedder worker {worker_id}: stored {chunk_count} chunks");
     }
 }
