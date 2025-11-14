@@ -212,6 +212,7 @@ fn test_index_rust_mini_redis() {
                     &unique_project_id,
                     files,
                     &commit_context,
+                    &correlation_id,
                 )
                 .await
                 .expect("Failed to start indexing job");

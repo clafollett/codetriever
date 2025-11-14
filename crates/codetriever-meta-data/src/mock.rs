@@ -239,6 +239,7 @@ impl FileRepository for MockFileRepository {
         repository_id: &str,
         branch: &str,
         commit_context: &CommitContext,
+        correlation_id: Uuid,
     ) -> DatabaseResult<IndexingJob> {
         self.check_fail()?;
 
@@ -258,6 +259,7 @@ impl FileRepository for MockFileRepository {
             commit_date: commit_context.commit_date,
             author: commit_context.author.clone(),
             vector_namespace: vector_namespace.to_string(),
+            correlation_id,
             started_at: Utc::now(),
             completed_at: None,
             error_message: None,

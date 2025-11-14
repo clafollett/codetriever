@@ -1,6 +1,7 @@
 //! Indexer service trait for dependency injection and testing
 
 use async_trait::async_trait;
+use codetriever_common::CorrelationId;
 use codetriever_meta_data::models::IndexingJob;
 use uuid::Uuid;
 
@@ -18,6 +19,7 @@ pub trait IndexerService: Send + Sync {
     /// - `project_id`: Project identifier (format: "repository_id:branch")
     /// - `files`: Files to index
     /// - `commit_context`: Git commit metadata (required - extracted by CLI/MCP from user's repo)
+    /// - `correlation_id`: Request correlation ID for distributed tracing
     ///
     /// # Returns
     /// - `Uuid`: Job ID for tracking progress via `get_job_status()`
@@ -28,6 +30,7 @@ pub trait IndexerService: Send + Sync {
         project_id: &str,
         files: Vec<FileContent>,
         commit_context: &codetriever_meta_data::models::CommitContext,
+        correlation_id: &CorrelationId,
     ) -> crate::IndexerResult<Uuid>;
 
     /// Get the current status of an indexing job
@@ -94,6 +97,7 @@ pub mod test_utils {
             _project_id: &str,
             _files: Vec<FileContent>,
             _commit_context: &codetriever_meta_data::models::CommitContext,
+            _correlation_id: &codetriever_common::CorrelationId,
         ) -> crate::IndexerResult<Uuid> {
             // Mock returns a test job ID
             Ok(Uuid::new_v4())

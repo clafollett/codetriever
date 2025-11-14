@@ -67,6 +67,7 @@ pub trait FileRepository: Send + Sync {
         repository_id: &str,
         branch: &str,
         commit_context: &CommitContext,
+        correlation_id: Uuid,
     ) -> DatabaseResult<IndexingJob>;
 
     /// Update indexing job progress

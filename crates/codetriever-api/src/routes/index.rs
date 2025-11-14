@@ -12,7 +12,7 @@ use codetriever_common::CorrelationId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -113,7 +113,7 @@ impl IndexResponse {
         (status = 500, description = "Internal server error", body = IndexResponse)
     )
 )]
-#[instrument(skip(state), fields(correlation_id))]
+#[instrument(skip(state, request), fields(correlation_id))]
 pub async fn index_handler(
     State(state): State<Arc<AppState>>,
     context: Option<Extension<RequestContext>>,
@@ -180,6 +180,7 @@ pub async fn index_handler(
             &request.project_id,
             files,
             &request.commit_context,
+            &correlation_id,
         ),
     )
     .await
@@ -273,7 +274,7 @@ pub async fn get_job_status_handler(
     tracing::Span::current().record("correlation_id", correlation_id.to_string());
     tracing::Span::current().record("job_id", job_id.to_string());
 
-    info!(
+    debug!(
         correlation_id = %correlation_id,
         job_id = %job_id,
         "Querying job status"

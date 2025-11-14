@@ -100,6 +100,9 @@ pub struct IndexingJob {
     // Vector storage namespace - workers use this to route to correct collection/index
     pub vector_namespace: String,
 
+    // Correlation ID for distributed tracing (from original API request)
+    pub correlation_id: Uuid,
+
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub error_message: Option<String>,
