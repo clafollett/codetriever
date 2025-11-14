@@ -99,6 +99,8 @@ impl Search {
     async fn try_search(
         &self,
         tenant_id: &uuid::Uuid,
+        repository_id: Option<&str>,
+        branch: Option<&str>,
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,
@@ -128,10 +130,25 @@ impl Search {
                 .search(tenant_id, query_embedding, limit, correlation_id)
                 .await?;
 
-            // Convert StorageSearchResult to SearchMatch
+            // Convert StorageSearchResult to SearchMatch and apply filters
             // Metadata is now complete from Qdrant payload - no enrichment needed!
             let results: Vec<SearchMatch> = storage_results
                 .into_iter()
+                .filter(|r| {
+                    // Apply repository_id filter if specified
+                    if let Some(repo) = repository_id
+                        && r.metadata.repository_id != repo
+                    {
+                        return false;
+                    }
+                    // Apply branch filter if specified
+                    if let Some(b) = branch
+                        && r.metadata.branch != b
+                    {
+                        return false;
+                    }
+                    true
+                })
                 .map(|r| {
                     // Convert vector-data RepositoryMetadata to search RepositoryMetadata
                     let repo_metadata = RepositoryMetadata {
@@ -151,7 +168,10 @@ impl Search {
                     }
                 })
                 .collect();
-            tracing::debug!("Search returned {} results with metadata", results.len());
+            tracing::debug!(
+                "Search returned {} results with metadata (after filters)",
+                results.len()
+            );
 
             Ok(results)
         })
@@ -174,20 +194,34 @@ impl Search {
 
 #[async_trait]
 impl SearchService for Search {
-    #[tracing::instrument(skip(self), fields(tenant_id = %tenant_id, query, limit, correlation_id, cached = false))]
+    #[tracing::instrument(skip(self), fields(tenant_id = %tenant_id, repository_id, branch, query, limit, correlation_id, cached = false))]
     async fn search(
         &self,
         tenant_id: &uuid::Uuid,
+        repository_id: Option<&str>,
+        branch: Option<&str>,
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,
     ) -> SearchResult<Vec<SearchMatch>> {
         tracing::Span::current().record("correlation_id", correlation_id.to_string());
+        if let Some(repo) = repository_id {
+            tracing::Span::current().record("repository_id", repo);
+        }
+        if let Some(b) = branch {
+            tracing::Span::current().record("branch", b);
+        }
 
         let _start_time = std::time::Instant::now(); // TODO: Use for metrics once enabled
 
-        // Check cache first
-        let cache_key = format!("{query}:{limit}");
+        // Check cache first (include filters in cache key for correctness)
+        let cache_key = format!(
+            "{}:{}:{}:{}",
+            repository_id.unwrap_or("all"),
+            branch.unwrap_or("all"),
+            query,
+            limit
+        );
         if let Ok(mut cache) = self.cache.lock()
             && let Some(cached_results) = cache.get(&cache_key)
         {
@@ -202,7 +236,14 @@ impl SearchService for Search {
         // Retry search with exponential backoff for resilience
         for attempt in 0..=self.max_retries {
             match self
-                .try_search(tenant_id, query, limit, correlation_id)
+                .try_search(
+                    tenant_id,
+                    repository_id,
+                    branch,
+                    query,
+                    limit,
+                    correlation_id,
+                )
                 .await
             {
                 Ok(results) => {

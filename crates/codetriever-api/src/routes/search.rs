@@ -82,6 +82,10 @@ pub struct SearchRequest {
     /// Tenant ID for multi-tenancy isolation
     #[schema(value_type = String)]
     pub tenant_id: uuid::Uuid,
+    /// Optional repository filter - only search within this repository
+    pub repository_id: Option<String>,
+    /// Optional branch filter - only search within this branch
+    pub branch: Option<String>,
     /// The search query string - can be natural language or specific code terms
     pub query: String,
     /// Optional limit on the number of search results returned
@@ -389,7 +393,14 @@ async fn search_handler_impl(
     // Perform search with tenant isolation and proper error handling
     let results = match tokio::time::timeout(
         Duration::from_secs(30), // 30-second timeout for search operations
-        search_service.search(&req.tenant_id, &query, limit, &correlation_id),
+        search_service.search(
+            &req.tenant_id,
+            req.repository_id.as_deref(),
+            req.branch.as_deref(),
+            &query,
+            limit,
+            &correlation_id,
+        ),
     )
     .await
     {
@@ -489,7 +500,11 @@ async fn search_handler_impl(
                     });
 
             Match {
-                file: file_path.clone(),
+                file: std::path::Path::new(&file_path)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(&file_path)
+                    .to_string(),
                 path: file_path,
                 repository,
                 content: chunk_content.clone(),
@@ -849,7 +864,14 @@ mod tests {
         let results = match search_service
             .lock()
             .await
-            .search(&req.tenant_id, &query, limit, &correlation_id)
+            .search(
+                &req.tenant_id,
+                req.repository_id.as_deref(),
+                req.branch.as_deref(),
+                &query,
+                limit,
+                &correlation_id,
+            )
             .await
         {
             Ok(results) => results,
@@ -866,7 +888,11 @@ mod tests {
             .map(|result| {
                 let file_path = result.chunk.file_path.clone();
                 Match {
-                    file: file_path.clone(),
+                    file: std::path::Path::new(&file_path)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or(&file_path)
+                        .to_string(),
                     path: file_path,
                     repository: None,
                     content: result.chunk.content,
@@ -990,7 +1016,14 @@ mod tests {
         // Verify that we can use the search service
         let test_tenant = uuid::Uuid::nil(); // Test tenant ID
         let results = mock_search_service
-            .search(&test_tenant, "test query", 5, &CorrelationId::new())
+            .search(
+                &test_tenant,
+                None,
+                None,
+                "test query",
+                5,
+                &CorrelationId::new(),
+            )
             .await;
         assert!(results.is_ok());
 

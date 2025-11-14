@@ -166,11 +166,12 @@ def poll_job_until_complete(job_id, max_wait_seconds=60, poll_interval=3):
     print(f"\n⏱️  Timeout waiting for job completion ({poll_count} status checks)")
     return None
 
-def search_semantic(query, tenant_id="13e6e848-1183-4f2d-aa5a-6d5b69d0cb47", project_id="codetriever", limit=3):
+def search_semantic(query, tenant_id="13e6e848-1183-4f2d-aa5a-6d5b69d0cb47", repository_id="codetriever", branch="main", limit=3):
     """Perform semantic search"""
     payload = {
         "tenant_id": tenant_id,
-        "project_id": project_id,
+        "repository_id": repository_id,
+        "branch": branch,
         "query": query,
         "limit": limit
     }
@@ -204,20 +205,22 @@ def run_search_tests():
     print("🔍 SEMANTIC SEARCH TESTS")
     print("="*50)
 
-    # Positive test cases - should find results
+    # Positive test cases - should find results (natural language questions/commands)
     positive_tests = [
-        "embedding vectors and semantic similarity",
-        "parse rust source code into chunks",
-        "postgres database queue implementation",
-        "worker pool processing files"
+        "Where is the Qdrant database connection created?",
+        "Show me how files are parsed into code chunks",
+        "How does the PostgreSQL chunk queue work?",
+        "Find the worker pool that processes indexing jobs",
+        "Where are embeddings generated for semantic search?",
+        "Show me the code that handles unchanged file detection"
     ]
 
-    # Negative test cases - should NOT find results
+    # Negative test cases - should NOT find high-confidence results
     negative_tests = [
-        "kubernetes pod deployment yaml",
-        "react component state management hooks",
-        "tensorflow neural network training",
-        "swift iOS mobile app development"
+        "How do I deploy a Kubernetes pod with this YAML?",
+        "Show me React hooks for managing component state",
+        "Where is the TensorFlow neural network training code?",
+        "Find the Swift code for iOS mobile app navigation"
     ]
 
     print("\n✅ POSITIVE TESTS (should find results):")
@@ -227,16 +230,16 @@ def run_search_tests():
         print(f"\n🔎 Query: \"{query}\"")
         response = search_semantic(query, limit=2)
 
-        if response and response.get("status") == "success":
+        if response and "matches" in response:
             matches = response.get("matches", [])
             print(f"   Found {len(matches)} matches")
 
             for i, match in enumerate(matches, 1):
-                file_path = match.get("file_path", "unknown")
-                score = match.get("score", 0.0)
-                line_range = match.get("line_range", {})
-                start = line_range.get("start", "?")
-                end = line_range.get("end", "?")
+                file_path = match.get("path", match.get("file", "unknown"))
+                score = match.get("similarity", 0.0)
+                lines = match.get("lines", {})
+                start = lines.get("start", "?")
+                end = lines.get("end", "?")
                 print(f"   {i}. {file_path}:{start}-{end} (score: {score:.3f})")
         else:
             print(f"   ❌ Search failed or returned no matches")
@@ -248,16 +251,18 @@ def run_search_tests():
         print(f"\n🔎 Query: \"{query}\"")
         response = search_semantic(query, limit=2)
 
-        if response and response.get("status") == "success":
+        if response and "matches" in response:
             matches = response.get("matches", [])
+            # Filter matches by similarity threshold (< 0.5 = noise)
+            high_confidence_matches = [m for m in matches if m.get("similarity", 0.0) >= 0.5]
 
-            if len(matches) == 0:
-                print(f"   ✅ Correctly returned 0 matches")
+            if len(high_confidence_matches) == 0:
+                print(f"   ✅ No high-confidence matches (found {len(matches)} low-confidence noise)")
             else:
-                print(f"   ⚠️  Unexpectedly found {len(matches)} matches:")
-                for i, match in enumerate(matches, 1):
-                    file_path = match.get("file_path", "unknown")
-                    score = match.get("score", 0.0)
+                print(f"   ⚠️  Unexpectedly found {len(high_confidence_matches)} high-confidence matches:")
+                for i, match in enumerate(high_confidence_matches, 1):
+                    file_path = match.get("path", match.get("file", "unknown"))
+                    score = match.get("similarity", 0.0)
                     print(f"   {i}. {file_path} (score: {score:.3f})")
         else:
             print(f"   ❌ Search failed")
