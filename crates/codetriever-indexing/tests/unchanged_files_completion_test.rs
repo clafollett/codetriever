@@ -95,7 +95,7 @@ fn test_unchanged_files_job_completion() {
             Arc::clone(&code_parser),
             &config,
             tenant_id,
-            &format!("{}:{}", repository_id, branch),
+            &format!("{repository_id}:{branch}"),
             files.clone(),
         )
         .await;
@@ -125,7 +125,7 @@ fn test_unchanged_files_job_completion() {
             Arc::clone(&code_parser),
             &config,
             tenant_id,
-            &format!("{}:{}", repository_id, branch),
+            &format!("{repository_id}:{branch}"),
             files, // Same files!
         )
         .await;
@@ -217,7 +217,7 @@ fn test_mixed_changed_unchanged_files() {
             Arc::clone(&code_parser),
             &config,
             tenant_id,
-            &format!("{}:{}", repository_id, branch),
+            &format!("{repository_id}:{branch}"),
             initial_files,
         )
         .await;
@@ -240,7 +240,7 @@ fn test_mixed_changed_unchanged_files() {
         for row in &indexed_files {
             let path: String = row.get("file_path");
             let hash: String = row.get("content_hash");
-            println!("  {} -> {}", path, hash);
+            println!("  {path} -> {hash}");
         }
 
         // Second index: one file changed, one unchanged
@@ -269,7 +269,7 @@ fn test_mixed_changed_unchanged_files() {
             Arc::clone(&code_parser),
             &config,
             tenant_id,
-            &format!("{}:{}", repository_id, branch),
+            &format!("{repository_id}:{branch}"),
             mixed_files,
         )
         .await;
@@ -287,7 +287,7 @@ fn test_mixed_changed_unchanged_files() {
         for row in queued_files {
             let path: String = row.get("file_path");
             let status: String = row.get("status");
-            println!("  {} -> {}", path, status);
+            println!("  {path} -> {status}");
         }
 
         println!(

@@ -66,13 +66,17 @@ use utoipa::ToSchema;
 /// // Basic search
 /// let request = SearchRequest {
 ///     tenant_id: uuid::Uuid::nil(),
+///     repository_id: None,
+///     branch: None,
 ///     query: "error handling".to_string(),
 ///     limit: None,
 /// };
 ///
-/// // Limited search
+/// // Limited search with repository filter
 /// let request = SearchRequest {
 ///     tenant_id: uuid::Uuid::nil(),
+///     repository_id: Some("my-repo".to_string()),
+///     branch: Some("main".to_string()),
 ///     query: "database connection pool".to_string(),
 ///     limit: Some(5),
 /// };
@@ -1105,7 +1109,7 @@ mod tests {
 
         // Verify first match has all required fields
         let first_match = matches.first().expect("at least one match");
-        assert_eq!(first_match.get("file"), Some(&json!("src/auth.rs")));
+        assert_eq!(first_match.get("file"), Some(&json!("auth.rs"))); // basename only
         assert_eq!(first_match.get("path"), Some(&json!("src/auth.rs")));
         assert_eq!(
             first_match.get("content"),
@@ -1179,7 +1183,7 @@ mod tests {
 
         // Verify first match structure
         let first_match = matches.first().expect("at least one match");
-        assert_eq!(first_match.get("file"), Some(&json!("src/auth.rs")));
+        assert_eq!(first_match.get("file"), Some(&json!("auth.rs"))); // basename only
         assert_eq!(
             first_match.get("content"),
             Some(&json!("fn authenticate() {}"))
@@ -1335,7 +1339,7 @@ mod tests {
         assert!(first_match.get("commit").is_none());
 
         // Verify the basic match structure is correct
-        assert_eq!(first_match.get("file"), Some(&json!("src/auth.rs")));
+        assert_eq!(first_match.get("file"), Some(&json!("auth.rs"))); // basename only
         assert_eq!(
             first_match.get("content"),
             Some(&json!("fn authenticate() {}"))
