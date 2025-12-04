@@ -91,6 +91,7 @@ impl IndexerService for Indexer {
         project_id: &str,
         files: Vec<ServiceFileContent>,
         commit_context: &codetriever_meta_data::models::CommitContext,
+        correlation_id: &codetriever_common::CorrelationId,
     ) -> crate::IndexerResult<uuid::Uuid> {
         // Parse project_id as "repository_id:branch"
         let (repository_id, branch) = project_id.split_once(':').unwrap_or((project_id, "main"));
@@ -119,10 +120,12 @@ impl IndexerService for Indexer {
                 repository_id,
                 branch,
                 commit_context,
+                correlation_id.to_uuid(),
             )
             .await?;
 
         // Enqueue all files to persistent queue (skip binary files)
+        let mut enqueued_count = 0;
         for file in files {
             // Skip files with null bytes (binary files) - PostgreSQL text columns reject them
             if file.content.as_bytes().contains(&0) {
@@ -141,7 +144,15 @@ impl IndexerService for Indexer {
                     &file.hash,
                 )
                 .await?;
+            enqueued_count += 1;
         }
+
+        tracing::info!(
+            correlation_id = %correlation_id,
+            job_id = %job.job_id,
+            files_enqueued = enqueued_count,
+            "Files enqueued to job"
+        );
 
         Ok(job.job_id)
     }
@@ -245,6 +256,7 @@ mod tests {
         let mock_repo = Arc::new(MockFileRepository::new()) as Arc<dyn FileRepository>;
         let mock_storage = Arc::new(MockStorage::new()) as Arc<dyn VectorStorage>;
         let mock_embedding_service = Arc::new(MockEmbeddingService);
+        let correlation_id = codetriever_common::CorrelationId::new();
 
         // Create indexer with required dependencies
         let indexer = Indexer::new(mock_embedding_service, mock_storage, mock_repo.clone());
@@ -272,6 +284,7 @@ mod tests {
                 "test_repo:main",
                 vec![file_content],
                 &commit_context,
+                &correlation_id,
             )
             .await;
 

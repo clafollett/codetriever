@@ -95,12 +95,14 @@ fn test_indexer_stores_chunks_in_qdrant() {
 
         println!("Read {} files from test repo", files.len());
 
-        // Use unique project ID per run to avoid DB state conflicts
+        // Use unique repository ID per run to avoid DB state conflicts
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        let project_id = format!("test-indexer-{timestamp}:main");
+        let repository_id = format!("test-indexer-{timestamp}");
+        let branch = "main";
+        let project_id = format!("{repository_id}:{branch}");
 
         // Use async job pattern with BackgroundWorker
         let code_parser = Arc::new(create_code_parser_with_tokenizer(&embedding_service).await);
@@ -154,7 +156,14 @@ fn test_indexer_stores_chunks_in_qdrant() {
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);
         let correlation_id = codetriever_common::CorrelationId::new();
         let search_results = search_service
-            .search(&tenant_id, query, 5, &correlation_id)
+            .search(
+                &tenant_id,
+                Some(&repository_id),
+                Some(branch),
+                query,
+                5,
+                &correlation_id,
+            )
             .await
             .expect("Failed to search");
 

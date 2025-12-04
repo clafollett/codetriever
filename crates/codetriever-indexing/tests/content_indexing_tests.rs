@@ -290,7 +290,14 @@ impl PostgresConnection {
         let search_service =
             codetriever_search::Search::new(embedding_service, vector_storage, db_client);
         let results = search_service
-            .search(&tenant_id, "postgres database query", 5, &correlation_id)
+            .search(
+                &tenant_id,
+                None,
+                None,
+                "postgres database query",
+                5,
+                &correlation_id,
+            )
             .await
             .expect("Failed to search");
 

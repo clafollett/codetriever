@@ -33,6 +33,7 @@ pub struct ChunkWithMetadata {
 
     // Job context (needed for progress tracking and storage)
     pub job_id: uuid::Uuid,
+    pub correlation_id: uuid::Uuid, // For distributed tracing from API request through workers
     pub tenant_id: uuid::Uuid,
     pub repository_id: String,
     pub branch: String,

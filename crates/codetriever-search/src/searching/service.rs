@@ -21,9 +21,14 @@ pub struct ContextResult {
 #[async_trait]
 pub trait SearchService: Send + Sync {
     /// Search for code chunks matching the query with tenant isolation
+    ///
+    /// Optionally filter by repository_id and/or branch to narrow search scope.
+    /// Parameters ordered from least to most specific: tenant → repository → branch
     async fn search(
         &self,
         tenant_id: &Uuid,
+        repository_id: Option<&str>,
+        branch: Option<&str>,
         query: &str,
         limit: usize,
         correlation_id: &CorrelationId,

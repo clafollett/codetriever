@@ -514,7 +514,7 @@ impl DbFileRepository {
             r"
             SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                    chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
-                   vector_namespace, started_at, completed_at, error_message
+                   vector_namespace, correlation_id, started_at, completed_at, error_message
             FROM indexing_jobs
             WHERE job_id = $1
             ",
@@ -541,6 +541,7 @@ impl DbFileRepository {
                 commit_date: r.get("commit_date"),
                 author: r.get("author"),
                 vector_namespace: r.get("vector_namespace"),
+                correlation_id: r.get("correlation_id"),
                 started_at: r.get("started_at"),
                 completed_at: r.get("completed_at"),
                 error_message: r.get("error_message"),
@@ -572,7 +573,7 @@ impl DbFileRepository {
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                            chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
-                           vector_namespace, started_at, completed_at, error_message
+                           vector_namespace, correlation_id, started_at, completed_at, error_message
                     FROM indexing_jobs
                     WHERE tenant_id = $1 AND repository_id = $2
                     ORDER BY started_at DESC
@@ -588,7 +589,7 @@ impl DbFileRepository {
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                            chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
-                           vector_namespace, started_at, completed_at, error_message
+                           vector_namespace, correlation_id, started_at, completed_at, error_message
                     FROM indexing_jobs
                     WHERE tenant_id = $1
                     ORDER BY started_at DESC
@@ -603,7 +604,7 @@ impl DbFileRepository {
                 r"
                     SELECT job_id, tenant_id, repository_id, branch, status, files_total, files_processed,
                            chunks_created, repository_url, commit_sha, commit_message, commit_date, author,
-                           vector_namespace, started_at, completed_at, error_message
+                           vector_namespace, correlation_id, started_at, completed_at, error_message
                     FROM indexing_jobs
                     ORDER BY started_at DESC
                     LIMIT 100
@@ -633,6 +634,7 @@ impl DbFileRepository {
                     commit_date: r.get("commit_date"),
                     author: r.get("author"),
                     vector_namespace: r.get("vector_namespace"),
+                    correlation_id: r.get("correlation_id"),
                     started_at: r.get("started_at"),
                     completed_at: r.get("completed_at"),
                     error_message: r.get("error_message"),
@@ -1010,11 +1012,11 @@ impl FileRepository for DbFileRepository {
         repository_id: &str,
         branch: &str,
         commit_context: &CommitContext,
+        correlation_id: Uuid,
     ) -> DatabaseResult<IndexingJob> {
         // Use write pool for INSERT
         let pool = self.pools.write_pool();
         let job_id = Uuid::new_v4();
-        let correlation_id = None; // Will be passed from upper layers in future
 
         let operation = DatabaseOperation::CreateIndexingJob {
             repository_id: repository_id.to_string(),
@@ -1028,9 +1030,10 @@ impl FileRepository for DbFileRepository {
                 files_processed, chunks_created,
                 repository_url, commit_sha, commit_message, commit_date, author,
                 vector_namespace,
+                correlation_id,
                 started_at
             )
-            VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, $8, $9, $10, $11, NOW())
+            VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7, $8, $9, $10, $11, $12, NOW())
             RETURNING *
             ",
         )
@@ -1045,9 +1048,10 @@ impl FileRepository for DbFileRepository {
         .bind(commit_context.commit_date)
         .bind(&commit_context.author)
         .bind(vector_namespace)
+        .bind(correlation_id)
         .fetch_one(pool)
         .await
-        .map_db_err(operation, correlation_id)?;
+        .map_db_err(operation, Some(correlation_id.to_string()))?;
 
         Ok(IndexingJob {
             job_id: row.get("job_id"),
@@ -1064,6 +1068,7 @@ impl FileRepository for DbFileRepository {
             commit_date: row.get("commit_date"),
             author: row.get("author"),
             vector_namespace: row.get("vector_namespace"),
+            correlation_id: row.get("correlation_id"),
             started_at: row.get("started_at"),
             completed_at: row.get("completed_at"),
             error_message: row.get("error_message"),

@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS indexing_jobs (
     -- Maps to: Qdrant collection, Pinecone index, Milvus collection, etc.
     vector_namespace TEXT NOT NULL,
 
+    -- Correlation ID for request tracing (from original API request)
+    correlation_id UUID NOT NULL,
+
     started_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     error_message TEXT,
@@ -118,6 +121,9 @@ CREATE TABLE IF NOT EXISTS indexing_jobs (
 
 -- Index for efficient tenant-based job queries
 CREATE INDEX IF NOT EXISTS idx_indexing_jobs_tenant ON indexing_jobs(tenant_id);
+
+-- Index for correlation ID lookups (request tracing)
+CREATE INDEX IF NOT EXISTS idx_indexing_jobs_correlation_id ON indexing_jobs(correlation_id);
 
 -- Per-file indexing job queue (persistent, survives restarts)
 -- Uses UUID v7 for time-ordered primary keys (better insert performance than random UUIDs)

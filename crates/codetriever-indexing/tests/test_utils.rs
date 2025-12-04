@@ -109,6 +109,7 @@ pub async fn index_files_async(
 
     // Start indexing job with commit context
     let commit_context = test_commit_context();
+    let correlation_id = codetriever_common::CorrelationId::new(); // Generate test correlation ID
     let job_id = indexer
         .start_indexing_job(
             &vector_namespace,
@@ -116,6 +117,7 @@ pub async fn index_files_async(
             project_id,
             files,
             &commit_context,
+            &correlation_id,
         )
         .await
         .expect("Failed to start indexing job");

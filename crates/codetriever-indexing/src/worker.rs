@@ -338,6 +338,7 @@ impl BackgroundWorker {
                             generation,
                             file_chunk_index: idx,
                             job_id,
+                            correlation_id: job.correlation_id,
                             tenant_id: job.tenant_id,
                             repository_id: job.repository_id.clone(),
                             branch: job.branch.clone(),
@@ -448,6 +449,7 @@ async fn parser_worker(
                                     generation,
                                     file_chunk_index: idx,
                                     job_id,
+                                    correlation_id: job.correlation_id,
                                     tenant_id: job.tenant_id,
                                     repository_id: job.repository_id.clone(),
                                     branch: job.branch.clone(),
@@ -485,7 +487,44 @@ async fn parser_worker(
                     }
                     Ok(None) => {
                         // File was skipped (binary, unchanged, etc.)
+                        // Still need to mark it as completed and check job completion
+
+                        // Mark file as completed
+                        if let Err(e) = repository.mark_file_completed(&job_id, &file_path).await {
+                            error!("Failed to mark skipped file completed: {e}");
+                        }
+
+                        // Increment files processed counter in DB
+                        if let Err(e) = repository.increment_files_processed(&job_id, 1).await {
+                            error!("Failed to increment files processed for skipped file: {e}");
+                        }
+
                         files_processed.fetch_add(1, Ordering::Relaxed);
+
+                        // Check if all files AND chunks are done (important for all-unchanged case!)
+                        // Must check BOTH file queue and chunk queue to avoid premature completion
+                        let files_done = repository
+                            .check_job_complete(&job_id)
+                            .await
+                            .unwrap_or(false);
+                        let chunks_done = chunk_queue
+                            .check_job_complete(job_id)
+                            .await
+                            .unwrap_or(false);
+
+                        if files_done && chunks_done {
+                            info!(
+                                correlation_id = %job.correlation_id,
+                                job_id = %job_id,
+                                "Parser worker {worker_id}: Job complete (all files and chunks processed)"
+                            );
+                            if let Err(e) = repository
+                                .complete_job(&job_id, JobStatus::Completed, None)
+                                .await
+                            {
+                                error!("Failed to mark job complete: {e}");
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("Parser worker {worker_id}: failed to parse {file_path}: {e}");
@@ -614,6 +653,12 @@ async fn embedder_worker(
         }
 
         for (job_id, chunk_count) in job_chunks {
+            // Get correlation_id for this job (all chunks in same job have same correlation_id)
+            let correlation_id = chunks
+                .iter()
+                .find(|c| c.job_id == job_id)
+                .map(|c| c.correlation_id);
+
             if let Err(e) = repository
                 .increment_chunks_created(&job_id, chunk_count)
                 .await
@@ -624,7 +669,16 @@ async fn embedder_worker(
             // Check if job is complete (all chunks processed)
             match chunk_queue.check_job_complete(job_id).await {
                 Ok(true) => {
-                    info!("Embedder worker {worker_id}: Job {job_id} complete!");
+                    if let Some(corr_id) = correlation_id {
+                        info!(
+                            correlation_id = %corr_id,
+                            job_id = %job_id,
+                            worker_id = worker_id,
+                            "Embedder worker: Job complete!"
+                        );
+                    } else {
+                        info!("Embedder worker {worker_id}: Job {job_id} complete!");
+                    }
                     if let Err(e) = repository
                         .complete_job(&job_id, JobStatus::Completed, None)
                         .await
@@ -639,7 +693,19 @@ async fn embedder_worker(
             }
         }
 
-        tracing::info!("Embedder worker {worker_id}: stored {chunk_count} chunks");
+        // Extract correlation_id from first chunk (all chunks in batch have same correlation_id)
+        let correlation_id = chunks.first().map(|c| c.correlation_id);
+
+        if let Some(corr_id) = correlation_id {
+            tracing::debug!(
+                correlation_id = %corr_id,
+                worker_id = worker_id,
+                chunk_count = chunk_count,
+                "Embedder worker stored chunks"
+            );
+        } else {
+            tracing::debug!("Embedder worker {worker_id}: stored {chunk_count} chunks");
+        }
     }
 
     tracing::debug!("Embedder worker {worker_id} shutting down");
@@ -681,7 +747,11 @@ async fn parse_file(
 
     let generation = match state {
         codetriever_meta_data::models::FileState::Unchanged => {
-            tracing::debug!("Skipping unchanged file {}", dequeued.file_path);
+            tracing::debug!(
+                file = %dequeued.file_path,
+                hash = %content_hash,
+                "Skipping unchanged file"
+            );
             return Ok(None);
         }
         codetriever_meta_data::models::FileState::New { generation }
