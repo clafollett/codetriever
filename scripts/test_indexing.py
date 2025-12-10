@@ -117,6 +117,8 @@ def ensure_tenant_exists(tenant_id, tenant_name):
     safe_tenant_name = escape_sql_string(tenant_name)
 
     # Check if tenant exists
+    # NOTE: We use string interpolation here because `just db-query` runs raw SQL via psql
+    # and doesn't support parameterized queries. UUID validation above ensures tenant_id is safe.
     check_result = subprocess.run(
         ["just", "db-query", f"SELECT tenant_id FROM tenants WHERE tenant_id = '{tenant_id}';"],
         capture_output=True,
@@ -129,6 +131,8 @@ def ensure_tenant_exists(tenant_id, tenant_name):
         return True
 
     # Create tenant
+    # NOTE: String interpolation used because `just db-query` doesn't support parameterized queries.
+    # tenant_id is UUID-validated above, tenant_name is SQL-escaped via escape_sql_string().
     print(f"  ⚠️  Tenant not found, creating...")
     create_result = subprocess.run(
         ["just", "db-query", f"INSERT INTO tenants (tenant_id, name) VALUES ('{tenant_id}', '{safe_tenant_name}') RETURNING tenant_id, name;"],
