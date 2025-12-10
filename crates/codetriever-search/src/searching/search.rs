@@ -130,8 +130,14 @@ impl Search {
                 .search(tenant_id, query_embedding, limit, correlation_id)
                 .await?;
 
-            // Convert StorageSearchResult to SearchMatch and apply filters
+            // Convert StorageSearchResult to SearchMatch and apply post-filters
             // Metadata is now complete from Qdrant payload - no enrichment needed!
+            //
+            // NOTE: Post-filtering limitation - results are filtered AFTER vector search,
+            // which means fewer results may be returned than the requested limit if many
+            // results are filtered out. For better efficiency with large multi-repo tenants,
+            // consider implementing Qdrant payload filters in the vector search itself.
+            // See: https://qdrant.tech/documentation/concepts/filtering/
             let results: Vec<SearchMatch> = storage_results
                 .into_iter()
                 .filter(|r| {
@@ -214,9 +220,10 @@ impl SearchService for Search {
 
         let _start_time = std::time::Instant::now(); // TODO: Use for metrics once enabled
 
-        // Check cache first (include filters in cache key for correctness)
+        // Check cache first (include tenant_id and filters in cache key for security/correctness)
         let cache_key = format!(
-            "{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}",
+            tenant_id,
             repository_id.unwrap_or("all"),
             branch.unwrap_or("all"),
             query,

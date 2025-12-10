@@ -507,7 +507,7 @@ async fn search_handler_impl(
                 file: std::path::Path::new(&file_path)
                     .file_name()
                     .and_then(|f| f.to_str())
-                    .unwrap_or(&file_path)
+                    .unwrap_or("unknown")
                     .to_string(),
                 path: file_path,
                 repository,
@@ -895,7 +895,7 @@ mod tests {
                     file: std::path::Path::new(&file_path)
                         .file_name()
                         .and_then(|f| f.to_str())
-                        .unwrap_or(&file_path)
+                        .unwrap_or("unknown")
                         .to_string(),
                     path: file_path,
                     repository: None,
@@ -1345,6 +1345,127 @@ mod tests {
             Some(&json!("fn authenticate() {}"))
         );
         assert_eq!(first_match.get("similarity"), Some(&json!(0.95)));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_with_repository_filter() -> TestResult {
+        // Test that repository_id filter is accepted and passed through
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![(
+            "src/lib.rs".to_string(),
+            "pub fn main() {}".to_string(),
+            0.9,
+        )])));
+
+        let app = routes_with_mock(mock_service);
+
+        let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
+            "repository_id": "my-repo",
+            "query": "main function",
+            "limit": 5
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body)?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        // Verify response structure is valid
+        assert!(json.get("matches").is_some());
+        assert!(json.get("metadata").is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_with_branch_filter() -> TestResult {
+        // Test that branch filter is accepted and passed through
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![(
+            "src/lib.rs".to_string(),
+            "pub fn main() {}".to_string(),
+            0.9,
+        )])));
+
+        let app = routes_with_mock(mock_service);
+
+        let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
+            "branch": "develop",
+            "query": "main function",
+            "limit": 5
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body)?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        // Verify response structure is valid
+        assert!(json.get("matches").is_some());
+        assert!(json.get("metadata").is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_with_both_filters() -> TestResult {
+        // Test that both repository_id and branch filters work together
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![(
+            "src/lib.rs".to_string(),
+            "pub fn main() {}".to_string(),
+            0.9,
+        )])));
+
+        let app = routes_with_mock(mock_service);
+
+        let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
+            "repository_id": "my-repo",
+            "branch": "feature/new-feature",
+            "query": "main function",
+            "limit": 5
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body)?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        // Verify response structure is valid
+        assert!(json.get("matches").is_some());
+        assert!(json.get("metadata").is_some());
 
         Ok(())
     }

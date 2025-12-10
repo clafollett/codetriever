@@ -113,6 +113,7 @@ impl IndexResponse {
         (status = 500, description = "Internal server error", body = IndexResponse)
     )
 )]
+// Skip logging `state` (not useful) and `request` (may contain large file contents)
 #[instrument(skip(state, request), fields(correlation_id))]
 pub async fn index_handler(
     State(state): State<Arc<AppState>>,
@@ -274,6 +275,7 @@ pub async fn get_job_status_handler(
     tracing::Span::current().record("correlation_id", correlation_id.to_string());
     tracing::Span::current().record("job_id", job_id.to_string());
 
+    // Debug level to prevent log spam from frequent polling (clients poll every few seconds)
     debug!(
         correlation_id = %correlation_id,
         job_id = %job_id,

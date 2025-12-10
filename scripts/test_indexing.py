@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """
 Manual indexing test script - index Rust files from codetriever-indexing crate
+
+Configuration via environment variables:
+  - TEST_TENANT_ID: UUID for the test tenant (default: auto-generated)
+  - API_URL: Base URL for the API (default: http://localhost:8080)
 """
 
 import json
+import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
-# Config
-API_URL = "http://localhost:8080"
+# Config - can be overridden by environment variables
+API_URL = os.environ.get("API_URL", "http://localhost:8080")
 TARGET_DIR = Path(__file__).parent.parent / "crates" / "codetriever-indexing"
+# Use env var or generate a unique tenant ID for test isolation
+DEFAULT_TENANT_ID = os.environ.get("TEST_TENANT_ID", str(uuid.uuid4()))
 
 def get_git_info():
     """Extract git commit context from current repo"""
@@ -86,9 +94,27 @@ def send_index_request(payload):
 
     return response_body, status_code
 
+def validate_uuid(value):
+    """Validate that a string is a valid UUID format"""
+    import re
+    uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+    return bool(uuid_pattern.match(value))
+
+def escape_sql_string(value):
+    """Escape single quotes in SQL string values to prevent injection"""
+    return value.replace("'", "''")
+
 def ensure_tenant_exists(tenant_id, tenant_name):
     """Ensure tenant exists in database, create if needed"""
     print(f"\n🔐 Checking tenant {tenant_id}...")
+
+    # Validate inputs to prevent SQL injection
+    if not validate_uuid(tenant_id):
+        print(f"  ❌ Invalid tenant_id format (must be UUID): {tenant_id}", file=sys.stderr)
+        return False
+
+    # Escape tenant_name to prevent SQL injection
+    safe_tenant_name = escape_sql_string(tenant_name)
 
     # Check if tenant exists
     check_result = subprocess.run(
@@ -105,7 +131,7 @@ def ensure_tenant_exists(tenant_id, tenant_name):
     # Create tenant
     print(f"  ⚠️  Tenant not found, creating...")
     create_result = subprocess.run(
-        ["just", "db-query", f"INSERT INTO tenants (tenant_id, name) VALUES ('{tenant_id}', '{tenant_name}') RETURNING tenant_id, name;"],
+        ["just", "db-query", f"INSERT INTO tenants (tenant_id, name) VALUES ('{tenant_id}', '{safe_tenant_name}') RETURNING tenant_id, name;"],
         capture_output=True,
         text=True,
         cwd=Path(__file__).parent.parent
@@ -166,8 +192,10 @@ def poll_job_until_complete(job_id, max_wait_seconds=60, poll_interval=3):
     print(f"\n⏱️  Timeout waiting for job completion ({poll_count} status checks)")
     return None
 
-def search_semantic(query, tenant_id="13e6e848-1183-4f2d-aa5a-6d5b69d0cb47", repository_id="codetriever", branch="main", limit=3):
+def search_semantic(query, tenant_id=None, repository_id="codetriever", branch="main", limit=3):
     """Perform semantic search"""
+    if tenant_id is None:
+        tenant_id = DEFAULT_TENANT_ID
     payload = {
         "tenant_id": tenant_id,
         "repository_id": repository_id,
@@ -287,9 +315,10 @@ def main():
         print("❌ No files to index!", file=sys.stderr)
         sys.exit(1)
 
-    # Ensure tenant exists
-    tenant_id = "13e6e848-1183-4f2d-aa5a-6d5b69d0cb47"
-    if not ensure_tenant_exists(tenant_id, "test-tenant"):
+    # Ensure tenant exists (uses DEFAULT_TENANT_ID which can be set via TEST_TENANT_ID env var)
+    tenant_id = DEFAULT_TENANT_ID
+    print(f"\n🆔 Using tenant ID: {tenant_id}")
+    if not ensure_tenant_exists(tenant_id, f"test-tenant-{tenant_id[:8]}"):
         print("❌ Failed to ensure tenant exists", file=sys.stderr)
         sys.exit(1)
 
