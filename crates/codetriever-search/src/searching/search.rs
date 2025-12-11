@@ -8,7 +8,7 @@ use codetriever_common::CorrelationId;
 use codetriever_embeddings::EmbeddingService;
 use codetriever_meta_data::DataClient;
 use codetriever_parsing::CodeChunk;
-use codetriever_vector_data::VectorStorage;
+use codetriever_vector_data::{SearchFilters, VectorStorage};
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 
@@ -123,38 +123,29 @@ impl Search {
                 }
             })?;
 
-            tracing::debug!("Performing vector search with tenant isolation");
-            // Search in vector storage with tenant filtering
+            // Build filters for Qdrant payload filtering (applied at vector search level)
+            let filters = SearchFilters {
+                repository_id: repository_id.map(|s| s.to_string()),
+                branch: branch.map(|s| s.to_string()),
+            };
+
+            tracing::debug!(
+                repository_filter = ?filters.repository_id,
+                branch_filter = ?filters.branch,
+                "Performing vector search with tenant isolation and payload filters"
+            );
+
+            // Search in vector storage with tenant + payload filtering
+            // Filters are applied at Qdrant level for efficiency
             let storage_results = self
                 .vector_storage
-                .search(tenant_id, query_embedding, limit, correlation_id)
+                .search(tenant_id, query_embedding, limit, &filters, correlation_id)
                 .await?;
 
-            // Convert StorageSearchResult to SearchMatch and apply post-filters
-            // Metadata is now complete from Qdrant payload - no enrichment needed!
-            //
-            // NOTE: Post-filtering limitation - results are filtered AFTER vector search,
-            // which means fewer results may be returned than the requested limit if many
-            // results are filtered out. For better efficiency with large multi-repo tenants,
-            // consider implementing Qdrant payload filters in the vector search itself.
-            // See: https://qdrant.tech/documentation/concepts/filtering/
+            // Convert StorageSearchResult to SearchMatch
+            // Metadata is complete from Qdrant payload - no enrichment needed!
             let results: Vec<SearchMatch> = storage_results
                 .into_iter()
-                .filter(|r| {
-                    // Apply repository_id filter if specified
-                    if let Some(repo) = repository_id
-                        && r.metadata.repository_id != repo
-                    {
-                        return false;
-                    }
-                    // Apply branch filter if specified
-                    if let Some(b) = branch
-                        && r.metadata.branch != b
-                    {
-                        return false;
-                    }
-                    true
-                })
                 .map(|r| {
                     // Convert vector-data RepositoryMetadata to search RepositoryMetadata
                     let repo_metadata = RepositoryMetadata {
@@ -174,10 +165,7 @@ impl Search {
                     }
                 })
                 .collect();
-            tracing::debug!(
-                "Search returned {} results with metadata (after filters)",
-                results.len()
-            );
+            tracing::debug!("Search returned {} results with metadata", results.len());
 
             Ok(results)
         })

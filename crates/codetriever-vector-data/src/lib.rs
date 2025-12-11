@@ -9,7 +9,7 @@ pub mod storage;
 
 // Re-export main types
 pub use error::{VectorDataError, VectorDataResult};
-pub use storage::traits::ChunkStorageContext;
+pub use storage::traits::{ChunkStorageContext, SearchFilters};
 pub use storage::{
     CodeChunk, MockStorage, QdrantStorage, StorageSearchResult, StorageStats, VectorStorage,
 };

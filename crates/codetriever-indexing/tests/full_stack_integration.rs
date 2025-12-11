@@ -10,7 +10,7 @@ use codetriever_meta_data::{
     repository::DbFileRepository,
 };
 use codetriever_parsing::CodeChunk;
-use codetriever_vector_data::{ChunkStorageContext, QdrantStorage, VectorStorage};
+use codetriever_vector_data::{ChunkStorageContext, QdrantStorage, SearchFilters, VectorStorage};
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -238,7 +238,13 @@ pub fn process_data(input: &str) -> String {
             .expect("Failed to generate query embedding");
 
         let search_results = storage
-            .search(&tenant_id, query_embedding[0].clone(), 5, &correlation_id)
+            .search(
+                &tenant_id,
+                query_embedding[0].clone(),
+                5,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .expect("Failed to search");
 
@@ -358,7 +364,13 @@ fn test_uuid_based_chunk_deletion() {
 
         // Verify chunks exist in Qdrant
         let search_results = storage
-            .search(&TEST_TENANT, vec![0.15; 768], 10, &correlation_id)
+            .search(
+                &TEST_TENANT,
+                vec![0.15; 768],
+                10,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .expect("Failed to search");
 
@@ -375,7 +387,13 @@ fn test_uuid_based_chunk_deletion() {
 
         // Verify chunks are deleted
         let search_after_delete = storage
-            .search(&TEST_TENANT, vec![0.15; 768], 10, &correlation_id)
+            .search(
+                &TEST_TENANT,
+                vec![0.15; 768],
+                10,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .expect("Failed to search after delete");
 

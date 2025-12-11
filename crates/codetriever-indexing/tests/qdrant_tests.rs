@@ -3,7 +3,7 @@ mod test_utils;
 
 use codetriever_common::CorrelationId;
 use codetriever_parsing::CodeChunk;
-use codetriever_vector_data::{ChunkStorageContext, VectorStorage};
+use codetriever_vector_data::{ChunkStorageContext, SearchFilters, VectorStorage};
 use test_utils::{cleanup_test_storage, create_test_storage};
 use uuid::Uuid;
 
@@ -70,7 +70,13 @@ fn test_store_and_retrieve_chunks() {
         // Search for similar chunks
         let query_embedding = vec![0.15; 768]; // Close to first chunk
         let results = storage
-            .search(&TEST_TENANT, query_embedding, 1, &correlation_id)
+            .search(
+                &TEST_TENANT,
+                query_embedding,
+                1,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .expect("Failed to search");
 

@@ -5,7 +5,7 @@
 
 use crate::{
     VectorDataError, VectorDataResult,
-    storage::traits::ChunkStorageContext,
+    storage::traits::{ChunkStorageContext, SearchFilters},
     storage::{CodeChunk, StorageSearchResult, StorageStats, VectorStorage},
 };
 use async_trait::async_trait;
@@ -164,6 +164,7 @@ impl VectorStorage for MockStorage {
         _tenant_id: &Uuid,
         _query_embedding: Vec<f32>,
         limit: usize,
+        filters: &SearchFilters,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<StorageSearchResult>> {
         if self.fail_on_search {
@@ -178,12 +179,34 @@ impl VectorStorage for MockStorage {
         tracing::debug!(
             correlation_id = %correlation_id,
             chunk_count = stored.len(),
-            "Mock search operation (tenant filtering not implemented in mock)"
+            repository_filter = ?filters.repository_id,
+            branch_filter = ?filters.branch,
+            "Mock search operation"
         );
 
-        // Return up to 'limit' chunks with mock similarity scores and metadata
-        let results: Vec<StorageSearchResult> = stored
+        // Filter by repository_id and branch if specified (simulating Qdrant payload filtering)
+        let filtered: Vec<_> = stored
             .iter()
+            .filter(|stored_chunk| {
+                // Apply repository_id filter if specified
+                if let Some(repo) = &filters.repository_id
+                    && stored_chunk.repository_id != *repo
+                {
+                    return false;
+                }
+                // Apply branch filter if specified
+                if let Some(branch) = &filters.branch
+                    && stored_chunk.branch != *branch
+                {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // Return up to 'limit' chunks with mock similarity scores and metadata
+        let results: Vec<StorageSearchResult> = filtered
+            .into_iter()
             .take(limit)
             .enumerate()
             .map(|(i, stored_chunk)| StorageSearchResult {
@@ -297,7 +320,13 @@ mod tests {
 
         // Test search
         let results = storage
-            .search(&TEST_TENANT, vec![0.1; 768], 10, &correlation_id)
+            .search(
+                &TEST_TENANT,
+                vec![0.1; 768],
+                10,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -345,7 +374,13 @@ mod tests {
         // Should fail to search
         assert!(
             storage
-                .search(&TEST_TENANT, vec![0.1; 768], 10, &correlation_id)
+                .search(
+                    &TEST_TENANT,
+                    vec![0.1; 768],
+                    10,
+                    &SearchFilters::default(),
+                    &correlation_id
+                )
                 .await
                 .is_err()
         );
