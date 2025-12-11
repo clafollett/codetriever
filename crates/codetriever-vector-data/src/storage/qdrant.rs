@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use codetriever_vector_data::{QdrantStorage, VectorStorage};
+//! use codetriever_vector_data::{QdrantStorage, SearchFilters, VectorStorage};
 //! use codetriever_common::CorrelationId;
 //!
 //! # #[tokio::main]
@@ -28,14 +28,15 @@
 //! let query_embedding = vec![0.1, 0.2, 0.3]; // Example embedding
 //! let tenant_id = uuid::Uuid::nil(); // Example tenant
 //! let correlation_id = CorrelationId::new();
-//! let results = storage.search(&tenant_id, query_embedding, 10, &correlation_id).await?;
+//! let filters = SearchFilters::default(); // No filtering
+//! let results = storage.search(&tenant_id, query_embedding, 10, &filters, &correlation_id).await?;
 //! # Ok(())
 //! # }
 //! ```
 
 use crate::{
     VectorDataError, VectorDataResult,
-    storage::traits::ChunkStorageContext,
+    storage::traits::{ChunkStorageContext, SearchFilters},
     storage::{CodeChunk, StorageSearchResult, VectorStorage},
 };
 use anyhow::Context;
@@ -241,7 +242,7 @@ impl VectorStorage for QdrantStorage {
 
         match self.client.delete_collection(request).await {
             Ok(_) => {
-                println!("Dropped collection '{}'", self.collection_name);
+                tracing::info!(collection = %self.collection_name, "Successfully dropped collection");
                 Ok(true)
             }
             Err(e) => Err(VectorDataError::Storage(format!(
@@ -339,7 +340,7 @@ impl VectorStorage for QdrantStorage {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use codetriever_vector_data::{QdrantStorage, VectorStorage};
+    /// use codetriever_vector_data::{QdrantStorage, SearchFilters, VectorStorage};
     /// use codetriever_common::CorrelationId;
     ///
     /// # #[tokio::main]
@@ -348,7 +349,12 @@ impl VectorStorage for QdrantStorage {
     /// let query_vector = vec![0.1; 768]; // 768-dimensional query embedding
     /// let tenant_id = uuid::Uuid::nil(); // Example tenant
     /// let correlation_id = CorrelationId::new();
-    /// let results = storage.search(&tenant_id, query_vector, 5, &correlation_id).await?;
+    /// // Filter to specific repository and branch
+    /// let filters = SearchFilters {
+    ///     repository_id: Some("my-repo".to_string()),
+    ///     branch: Some("main".to_string()),
+    /// };
+    /// let results = storage.search(&tenant_id, query_vector, 5, &filters, &correlation_id).await?;
     ///
     /// for result in results {
     ///     println!("Found: {} (lines {}-{}) - score: {:.3}",
@@ -357,47 +363,82 @@ impl VectorStorage for QdrantStorage {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip(self, query_embedding), fields(query_dim = query_embedding.len(), tenant_id = %tenant_id, limit))]
+    #[tracing::instrument(skip(self, query_embedding), fields(query_dim = query_embedding.len(), tenant_id = %tenant_id, limit, repository_id, branch))]
     async fn search(
         &self,
         tenant_id: &Uuid,
         query_embedding: Vec<f32>,
         limit: usize,
+        filters: &SearchFilters,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<StorageSearchResult>> {
+        // Record filter values in span
+        if let Some(repo) = &filters.repository_id {
+            tracing::Span::current().record("repository_id", repo.as_str());
+        }
+        if let Some(branch) = &filters.branch {
+            tracing::Span::current().record("branch", branch.as_str());
+        }
+
         // Log search operation with correlation ID for tracing
         tracing::info!(
             correlation_id = %correlation_id,
             tenant_id = %tenant_id,
+            repository_filter = ?filters.repository_id,
+            branch_filter = ?filters.branch,
             query_dim = query_embedding.len(),
             limit = %limit,
             collection = %self.collection_name,
-            "Performing vector search with tenant isolation"
+            "Performing vector search with tenant isolation and payload filters"
         );
 
-        // Build tenant isolation filter
+        // Build combined filter with tenant isolation + optional repository/branch filters
         use qdrant_client::qdrant::{Condition, Filter};
-        let tenant_filter = Filter {
-            must: vec![Condition {
+
+        /// Creates a Qdrant field condition for exact keyword matching.
+        ///
+        /// Used for filtering by indexed keyword fields such as tenant_id,
+        /// repository_id, and branch. Returns a Condition that matches when
+        /// the specified field exactly equals the given value.
+        fn keyword_condition(key: &str, value: &str) -> Condition {
+            Condition {
                 condition_one_of: Some(qdrant_client::qdrant::condition::ConditionOneOf::Field(
                     qdrant_client::qdrant::FieldCondition {
-                        key: "tenant_id".to_string(),
+                        key: key.to_string(),
                         r#match: Some(qdrant_client::qdrant::Match {
                             match_value: Some(qdrant_client::qdrant::r#match::MatchValue::Keyword(
-                                tenant_id.to_string(),
+                                value.to_string(),
                             )),
                         }),
                         ..Default::default()
                     },
                 )),
-            }],
+            }
+        }
+
+        // Start with mandatory tenant_id filter (pre-allocate for tenant + 2 optional filters)
+        let mut conditions = Vec::with_capacity(3);
+        conditions.push(keyword_condition("tenant_id", &tenant_id.to_string()));
+
+        // Add optional repository_id filter
+        if let Some(repo) = &filters.repository_id {
+            conditions.push(keyword_condition("repository_id", repo));
+        }
+
+        // Add optional branch filter
+        if let Some(branch) = &filters.branch {
+            conditions.push(keyword_condition("branch", branch));
+        }
+
+        let search_filter = Filter {
+            must: conditions,
             ..Default::default()
         };
 
         let search_request = SearchPoints {
             collection_name: self.collection_name.clone(),
             vector: query_embedding,
-            filter: Some(tenant_filter),
+            filter: Some(search_filter),
             limit: limit as u64,
             with_payload: Some(true.into()),
             ..Default::default()
@@ -420,13 +461,27 @@ impl VectorStorage for QdrantStorage {
                 .get("file_path")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        correlation_id = %correlation_id,
+                        point_id = ?scored_point.id,
+                        "Missing or invalid file_path in payload"
+                    );
+                    String::new()
+                });
 
             let content = payload
                 .get("content")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        correlation_id = %correlation_id,
+                        point_id = ?scored_point.id,
+                        "Missing or invalid content in payload"
+                    );
+                    String::new()
+                });
 
             let start_line = payload
                 .get("start_line")

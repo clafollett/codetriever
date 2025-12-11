@@ -5,7 +5,7 @@
 
 use codetriever_common::CorrelationId;
 use codetriever_parsing::CodeChunk;
-use codetriever_vector_data::{ChunkStorageContext, QdrantStorage, VectorStorage};
+use codetriever_vector_data::{ChunkStorageContext, QdrantStorage, SearchFilters, VectorStorage};
 use uuid::Uuid;
 
 const TEST_TENANT: Uuid = Uuid::nil();
@@ -79,7 +79,13 @@ fn test_delete_chunks_removes_points_from_collection() {
 
         // Search to verify they exist
         let results = storage
-            .search(&TEST_TENANT, vec![0.1; 768], 10, &correlation_id)
+            .search(
+                &TEST_TENANT,
+                vec![0.1; 768],
+                10,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .expect("Search failed");
         assert!(results.len() >= 2, "Should find at least 2 chunks");
@@ -92,7 +98,13 @@ fn test_delete_chunks_removes_points_from_collection() {
 
         // Search again to verify they're gone
         let results_after = storage
-            .search(&TEST_TENANT, vec![0.1; 768], 10, &correlation_id)
+            .search(
+                &TEST_TENANT,
+                vec![0.1; 768],
+                10,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .expect("Search failed");
         assert!(
@@ -158,7 +170,13 @@ fn test_store_and_search_chunks() {
 
         // Search for it
         let results = storage
-            .search(&TEST_TENANT, vec![0.5; 768], 5, &correlation_id)
+            .search(
+                &TEST_TENANT,
+                vec![0.5; 768],
+                5,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .expect("Search failed");
 

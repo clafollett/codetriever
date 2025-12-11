@@ -20,6 +20,7 @@ use test_utils::get_shared_db_client;
 use codetriever_common::CorrelationId;
 use codetriever_indexing::indexing::{Indexer, service::FileContent};
 use codetriever_search::SearchService;
+use codetriever_vector_data::SearchFilters;
 use std::sync::Arc;
 use test_utils::{
     cleanup_test_storage, create_code_parser_with_tokenizer, create_test_embedding_service,
@@ -279,7 +280,13 @@ impl PostgresConnection {
         let correlation_id = CorrelationId::new();
         let test_embedding = vec![0.1; 768]; // Dummy embedding for existence check
         let direct_results = vector_storage
-            .search(&tenant_id, test_embedding, 10, &correlation_id)
+            .search(
+                &tenant_id,
+                test_embedding,
+                10,
+                &SearchFilters::default(),
+                &correlation_id,
+            )
             .await
             .expect("Direct search failed");
 

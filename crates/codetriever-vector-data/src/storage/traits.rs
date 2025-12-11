@@ -57,6 +57,18 @@ pub struct StorageSearchResult {
     pub metadata: RepositoryMetadata,
 }
 
+/// Filters for narrowing search scope within a tenant
+///
+/// These filters are applied at the Qdrant level using payload filters,
+/// ensuring efficient filtering without post-processing.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFilters {
+    /// Filter by repository ID (e.g., "github.com/user/repo")
+    pub repository_id: Option<String>,
+    /// Filter by branch name (e.g., "main", "develop")
+    pub branch: Option<String>,
+}
+
 /// Trait for vector storage backends
 ///
 /// This trait abstracts vector database operations, allowing different
@@ -77,15 +89,25 @@ pub trait VectorStorage: Send + Sync {
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<Uuid>>;
 
-    /// Search for similar code chunks with tenant isolation
+    /// Search for similar code chunks with tenant isolation and optional filters
     ///
     /// Filters results by tenant_id for multi-tenancy isolation.
+    /// Optionally filters by repository_id and/or branch using Qdrant payload filters.
     /// Returns chunks ordered by similarity to the query embedding.
+    ///
+    /// # Performance
+    ///
+    /// Filters are applied at the vector database level (Qdrant payload filters),
+    /// NOT post-filtered in application code. This ensures:
+    /// - Efficient filtering using indexed payload fields
+    /// - Reduced network transfer (only matching results returned)
+    /// - Consistent result count (returns up to `limit` matches)
     async fn search(
         &self,
         tenant_id: &Uuid,
         query_embedding: Vec<f32>,
         limit: usize,
+        filters: &SearchFilters,
         correlation_id: &CorrelationId,
     ) -> VectorDataResult<Vec<StorageSearchResult>>;
 
