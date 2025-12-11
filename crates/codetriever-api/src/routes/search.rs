@@ -66,13 +66,17 @@ use utoipa::ToSchema;
 /// // Basic search
 /// let request = SearchRequest {
 ///     tenant_id: uuid::Uuid::nil(),
+///     repository_id: None,
+///     branch: None,
 ///     query: "error handling".to_string(),
 ///     limit: None,
 /// };
 ///
-/// // Limited search
+/// // Limited search with repository filter
 /// let request = SearchRequest {
 ///     tenant_id: uuid::Uuid::nil(),
+///     repository_id: Some("my-repo".to_string()),
+///     branch: Some("main".to_string()),
 ///     query: "database connection pool".to_string(),
 ///     limit: Some(5),
 /// };
@@ -82,6 +86,10 @@ pub struct SearchRequest {
     /// Tenant ID for multi-tenancy isolation
     #[schema(value_type = String)]
     pub tenant_id: uuid::Uuid,
+    /// Optional repository filter - only search within this repository
+    pub repository_id: Option<String>,
+    /// Optional branch filter - only search within this branch
+    pub branch: Option<String>,
     /// The search query string - can be natural language or specific code terms
     pub query: String,
     /// Optional limit on the number of search results returned
@@ -389,7 +397,14 @@ async fn search_handler_impl(
     // Perform search with tenant isolation and proper error handling
     let results = match tokio::time::timeout(
         Duration::from_secs(30), // 30-second timeout for search operations
-        search_service.search(&req.tenant_id, &query, limit, &correlation_id),
+        search_service.search(
+            &req.tenant_id,
+            req.repository_id.as_deref(),
+            req.branch.as_deref(),
+            &query,
+            limit,
+            &correlation_id,
+        ),
     )
     .await
     {
@@ -489,7 +504,11 @@ async fn search_handler_impl(
                     });
 
             Match {
-                file: file_path.clone(),
+                file: std::path::Path::new(&file_path)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
                 path: file_path,
                 repository,
                 content: chunk_content.clone(),
@@ -849,7 +868,14 @@ mod tests {
         let results = match search_service
             .lock()
             .await
-            .search(&req.tenant_id, &query, limit, &correlation_id)
+            .search(
+                &req.tenant_id,
+                req.repository_id.as_deref(),
+                req.branch.as_deref(),
+                &query,
+                limit,
+                &correlation_id,
+            )
             .await
         {
             Ok(results) => results,
@@ -866,7 +892,11 @@ mod tests {
             .map(|result| {
                 let file_path = result.chunk.file_path.clone();
                 Match {
-                    file: file_path.clone(),
+                    file: std::path::Path::new(&file_path)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
                     path: file_path,
                     repository: None,
                     content: result.chunk.content,
@@ -990,7 +1020,14 @@ mod tests {
         // Verify that we can use the search service
         let test_tenant = uuid::Uuid::nil(); // Test tenant ID
         let results = mock_search_service
-            .search(&test_tenant, "test query", 5, &CorrelationId::new())
+            .search(
+                &test_tenant,
+                None,
+                None,
+                "test query",
+                5,
+                &CorrelationId::new(),
+            )
             .await;
         assert!(results.is_ok());
 
@@ -1072,7 +1109,7 @@ mod tests {
 
         // Verify first match has all required fields
         let first_match = matches.first().expect("at least one match");
-        assert_eq!(first_match.get("file"), Some(&json!("src/auth.rs")));
+        assert_eq!(first_match.get("file"), Some(&json!("auth.rs"))); // basename only
         assert_eq!(first_match.get("path"), Some(&json!("src/auth.rs")));
         assert_eq!(
             first_match.get("content"),
@@ -1146,7 +1183,7 @@ mod tests {
 
         // Verify first match structure
         let first_match = matches.first().expect("at least one match");
-        assert_eq!(first_match.get("file"), Some(&json!("src/auth.rs")));
+        assert_eq!(first_match.get("file"), Some(&json!("auth.rs"))); // basename only
         assert_eq!(
             first_match.get("content"),
             Some(&json!("fn authenticate() {}"))
@@ -1302,12 +1339,133 @@ mod tests {
         assert!(first_match.get("commit").is_none());
 
         // Verify the basic match structure is correct
-        assert_eq!(first_match.get("file"), Some(&json!("src/auth.rs")));
+        assert_eq!(first_match.get("file"), Some(&json!("auth.rs"))); // basename only
         assert_eq!(
             first_match.get("content"),
             Some(&json!("fn authenticate() {}"))
         );
         assert_eq!(first_match.get("similarity"), Some(&json!(0.95)));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_with_repository_filter() -> TestResult {
+        // Test that repository_id filter is accepted and passed through
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![(
+            "src/lib.rs".to_string(),
+            "pub fn main() {}".to_string(),
+            0.9,
+        )])));
+
+        let app = routes_with_mock(mock_service);
+
+        let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
+            "repository_id": "my-repo",
+            "query": "main function",
+            "limit": 5
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body)?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        // Verify response structure is valid
+        assert!(json.get("matches").is_some());
+        assert!(json.get("metadata").is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_with_branch_filter() -> TestResult {
+        // Test that branch filter is accepted and passed through
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![(
+            "src/lib.rs".to_string(),
+            "pub fn main() {}".to_string(),
+            0.9,
+        )])));
+
+        let app = routes_with_mock(mock_service);
+
+        let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
+            "branch": "develop",
+            "query": "main function",
+            "limit": 5
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body)?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        // Verify response structure is valid
+        assert!(json.get("matches").is_some());
+        assert!(json.get("metadata").is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_with_both_filters() -> TestResult {
+        // Test that both repository_id and branch filters work together
+        let mock_service = Arc::new(Mutex::new(MockSearch::with_results(vec![(
+            "src/lib.rs".to_string(),
+            "pub fn main() {}".to_string(),
+            0.9,
+        )])));
+
+        let app = routes_with_mock(mock_service);
+
+        let request_body = json!({
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
+            "repository_id": "my-repo",
+            "branch": "feature/new-feature",
+            "query": "main function",
+            "limit": 5
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request_body)?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        // Verify response structure is valid
+        assert!(json.get("matches").is_some());
+        assert!(json.get("metadata").is_some());
 
         Ok(())
     }

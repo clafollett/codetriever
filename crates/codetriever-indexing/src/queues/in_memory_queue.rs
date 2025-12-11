@@ -160,6 +160,7 @@ mod tests {
             generation,
             file_chunk_index,
             job_id: uuid::Uuid::nil(),
+            correlation_id: uuid::Uuid::nil(),
             tenant_id: uuid::Uuid::nil(),
             repository_id: "test-repo".to_string(),
             branch: "main".to_string(),

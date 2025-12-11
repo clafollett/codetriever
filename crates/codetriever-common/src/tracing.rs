@@ -12,6 +12,11 @@ impl CorrelationId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+
+    /// Get the inner UUID value
+    pub const fn to_uuid(&self) -> Uuid {
+        self.0
+    }
 }
 
 impl Default for CorrelationId {

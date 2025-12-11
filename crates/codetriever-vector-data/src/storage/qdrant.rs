@@ -736,7 +736,7 @@ impl VectorStorage for QdrantStorage {
             .ok_or_else(|| VectorDataError::Other("Missing collection info result".into()))?;
 
         Ok(crate::storage::StorageStats {
-            vector_count: result.vectors_count.unwrap_or(0) as usize,
+            vector_count: result.points_count.unwrap_or(0) as usize,
             storage_bytes: Some(result.payload_schema.len() as u64), // Approximation
             collection_name: self.collection_name.clone(),
             storage_type: "qdrant".to_string(),

@@ -163,6 +163,8 @@ pub fn process_data(input: &str) -> String {
             author: "Test <test@test.com>".to_string(),
         };
 
+        let correlation_id = codetriever_common::CorrelationId::new();
+
         // Start indexing job (async pattern)
         let job_id = indexer
             .start_indexing_job(
@@ -171,6 +173,7 @@ pub fn process_data(input: &str) -> String {
                 &project_id,
                 vec![file],
                 &commit_context,
+                &correlation_id,
             )
             .await
             .expect("Failed to start indexing job");
