@@ -1,11 +1,12 @@
 {
-  "description": "Use this when you need to find code that implements a concept or pattern. This understands semantic meaning-searching for \\\"authentication\\\" will find login functions, JWT validation, password checking, etc. even if they don't contain the word \\\"authentication\\\". Perfect for exploring unfamiliar codebases or finding implementation patterns.",
+  "description": "Use this when you need to find code that implements a concept or pattern. This understands semantic meaning-searching for \"authentication\" will find login functions, JWT validation, password checking, etc. even if they don't contain the word \"authentication\". Perfect for exploring unfamiliar codebases or finding implementation patterns.",
   "operationId": "search",
   "path": "/search",
   "requestBody": {
     "properties": [
       {
-        "name": "limit"
+        "description": "Tenant ID for multi-tenancy isolation",
+        "name": "tenant_id"
       },
       {
         "description": "Natural language search query",
@@ -13,27 +14,43 @@
         "name": "query"
       },
       {
-        "name": "threshold"
+        "description": "Optional repository filter - only search within this repository",
+        "name": "repository_id"
+      },
+      {
+        "description": "Optional branch filter - only search within this branch",
+        "name": "branch"
+      },
+      {
+        "name": "limit"
       }
     ],
     "schema": {
-      "limit": {
-        "default": 10,
-        "maximum": 100.0,
-        "minimum": 1.0,
-        "type": "integer"
+      "tenant_id": {
+        "description": "Tenant ID for multi-tenancy isolation",
+        "example": "550e8400-e29b-41d4-a716-446655440000",
+        "type": "string"
       },
       "query": {
         "description": "Natural language search query",
         "example": "authentication logic",
         "type": "string"
       },
-      "threshold": {
-        "default": 0.7,
-        "format": "float",
-        "maximum": 1.0,
-        "minimum": 0.0,
-        "type": "number"
+      "repository_id": {
+        "description": "Optional repository filter - only search within this repository",
+        "example": "github.com/user/my-repo",
+        "type": "string"
+      },
+      "branch": {
+        "description": "Optional branch filter - only search within this branch",
+        "example": "main",
+        "type": "string"
+      },
+      "limit": {
+        "default": 10,
+        "maximum": 100.0,
+        "minimum": 1.0,
+        "type": "integer"
       }
     }
   },

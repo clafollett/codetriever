@@ -5,8 +5,20 @@
   "requestBody": {
     "properties": [
       {
-        "description": "Code snippet to find similar to",
+        "description": "Tenant ID for multi-tenancy isolation",
+        "name": "tenant_id"
+      },
+      {
+        "description": "Code snippet to find similar implementations of",
         "name": "code"
+      },
+      {
+        "description": "Optional repository filter - only search within this repository",
+        "name": "repository_id"
+      },
+      {
+        "description": "Optional branch filter - only search within this branch",
+        "name": "branch"
       },
       {
         "description": "File to exclude from results",
@@ -17,8 +29,23 @@
       }
     ],
     "schema": {
+      "tenant_id": {
+        "description": "Tenant ID for multi-tenancy isolation",
+        "example": "550e8400-e29b-41d4-a716-446655440000",
+        "type": "string"
+      },
       "code": {
-        "description": "Code snippet to find similar to",
+        "description": "Code snippet to find similar implementations of",
+        "type": "string"
+      },
+      "repository_id": {
+        "description": "Optional repository filter - only search within this repository",
+        "example": "github.com/user/my-repo",
+        "type": "string"
+      },
+      "branch": {
+        "description": "Optional branch filter - only search within this branch",
+        "example": "main",
         "type": "string"
       },
       "exclude_file": {

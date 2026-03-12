@@ -1,11 +1,20 @@
 {
-  "description": "Use this when you need to understand code in its full context. Given a file and line number, returns the surrounding code including function signatures, class definitions, imports, and nearby related code. Essential when you need to see the \\\"bigger picture\\\" around a specific piece of code.",
+  "description": "Use this when you need to understand code in its full context. Given a file and line number, returns the surrounding code including function signatures, class definitions, imports, and nearby related code. Essential when you need to see the \"bigger picture\" around a specific piece of code.",
   "operationId": "get_context",
   "path": "/context",
   "requestBody": {
     "properties": [
       {
-        "name": "file"
+        "description": "File path within the repository",
+        "name": "file_path"
+      },
+      {
+        "description": "Optional repository identifier",
+        "name": "repository_id"
+      },
+      {
+        "description": "Optional branch name",
+        "name": "branch"
       },
       {
         "name": "line"
@@ -16,10 +25,23 @@
       }
     ],
     "schema": {
-      "file": {
+      "file_path": {
+        "description": "File path within the repository",
+        "example": "src/auth.rs",
+        "type": "string"
+      },
+      "repository_id": {
+        "description": "Optional repository identifier - uses most recent if not provided",
+        "example": "github.com/user/my-repo",
+        "type": "string"
+      },
+      "branch": {
+        "description": "Optional branch name - uses default branch if not provided",
+        "example": "main",
         "type": "string"
       },
       "line": {
+        "description": "Optional line number to center context around",
         "type": "integer"
       },
       "radius": {
