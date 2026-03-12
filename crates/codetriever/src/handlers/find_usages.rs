@@ -1,4 +1,4 @@
-//! Auto-generated handler for `/find_usages` endpoint.
+//! Auto-generated handler for `/usages` endpoint.
 
 // Internal imports (std, crate)
 use crate::common::*;
@@ -24,7 +24,7 @@ pub struct FindUsagesParams {
     pub repository_id: Option<String>,
     #[schemars(description = r#"Optional branch filter - only search within this branch"#)]
     pub branch: Option<String>,
-    #[schemars(description = r#"Type of usage to find (definition, reference, all)"#)]
+    #[schemars(description = r#"Type of usage to find (definitions, references, all)"#)]
     pub usage_type: Option<String>,
 }
 

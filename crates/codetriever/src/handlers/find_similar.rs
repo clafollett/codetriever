@@ -1,4 +1,4 @@
-//! Auto-generated handler for `/find_similar` endpoint.
+//! Auto-generated handler for `/similar` endpoint.
 
 // Internal imports (std, crate)
 use crate::common::*;
