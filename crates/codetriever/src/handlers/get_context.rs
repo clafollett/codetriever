@@ -13,16 +13,18 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated unified parameters struct for `/get_context` endpoint.
-/// Combines query parameters and request body properties into a single MCP interface.
-/// Spec:
+/// Parameters for the `/context` endpoint.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct GetContextParams {
-    #[schemars(description = r#"Request body property"#)]
-    pub file: Option<String>,
-    #[schemars(description = r#"Request body property"#)]
+    #[schemars(description = r#"File path within the repository"#)]
+    pub file_path: Option<String>,
+    #[schemars(description = r#"Optional repository identifier"#)]
+    pub repository_id: Option<String>,
+    #[schemars(description = r#"Optional branch name"#)]
+    pub branch: Option<String>,
+    #[schemars(description = r#"Optional line number to center context around"#)]
     pub line: Option<i32>,
-    #[schemars(description = r#"Lines before and after (request body)"#)]
+    #[schemars(description = r#"Lines before and after target line (default: 20)"#)]
     pub radius: Option<i32>,
 }
 
@@ -41,7 +43,9 @@ impl GetContextParams {
     /// Extract request body properties for REST API calls
     pub fn to_request_body(&self) -> GetContextRequestBody {
         GetContextRequestBody {
-            file: self.file.clone(),
+            file_path: self.file_path.clone(),
+            repository_id: self.repository_id.clone(),
+            branch: self.branch.clone(),
             line: self.line,
             radius: self.radius,
         }
@@ -51,7 +55,9 @@ impl GetContextParams {
 /// Request body structure for REST API calls
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetContextRequestBody {
-    pub file: Option<String>,
+    pub file_path: Option<String>,
+    pub repository_id: Option<String>,
+    pub branch: Option<String>,
     pub line: Option<i32>,
     pub radius: Option<i32>,
 }
@@ -160,7 +166,9 @@ mod tests {
     #[test]
     fn test_parameters_struct_serialization() {
         let params = GetContextParams {
-            file: None,
+            file_path: None,
+            repository_id: None,
+            branch: None,
             line: None,
             radius: None,
         };

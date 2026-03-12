@@ -13,17 +13,19 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated unified parameters struct for `/search` endpoint.
-/// Combines query parameters and request body properties into a single MCP interface.
-/// Spec:
+/// Parameters for the `/search` endpoint.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct SearchParams {
-    #[schemars(description = r#"Request body property"#)]
-    pub limit: Option<i32>,
-    #[schemars(description = r#"Natural language search query (request body)"#)]
+    #[schemars(description = r#"Tenant ID for multi-tenancy isolation"#)]
+    pub tenant_id: Option<String>,
+    #[schemars(description = r#"Natural language search query"#)]
     pub query: Option<String>,
-    #[schemars(description = r#"Request body property"#)]
-    pub threshold: Option<f64>,
+    #[schemars(description = r#"Optional repository filter - only search within this repository"#)]
+    pub repository_id: Option<String>,
+    #[schemars(description = r#"Optional branch filter - only search within this branch"#)]
+    pub branch: Option<String>,
+    #[schemars(description = r#"Maximum number of results to return"#)]
+    pub limit: Option<i32>,
 }
 
 // Implement Endpoint for generic handler
@@ -41,9 +43,11 @@ impl SearchParams {
     /// Extract request body properties for REST API calls
     pub fn to_request_body(&self) -> SearchRequestBody {
         SearchRequestBody {
-            limit: self.limit,
+            tenant_id: self.tenant_id.clone(),
             query: self.query.clone(),
-            threshold: self.threshold,
+            repository_id: self.repository_id.clone(),
+            branch: self.branch.clone(),
+            limit: self.limit,
         }
     }
 }
@@ -51,9 +55,11 @@ impl SearchParams {
 /// Request body structure for REST API calls
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchRequestBody {
-    pub limit: Option<i32>,
+    pub tenant_id: Option<String>,
     pub query: Option<String>,
-    pub threshold: Option<f64>,
+    pub repository_id: Option<String>,
+    pub branch: Option<String>,
+    pub limit: Option<i32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -154,9 +160,11 @@ mod tests {
     #[test]
     fn test_parameters_struct_serialization() {
         let params = SearchParams {
-            limit: None,
+            tenant_id: None,
             query: None,
-            threshold: None,
+            repository_id: None,
+            branch: None,
+            limit: None,
         };
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
     }

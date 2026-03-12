@@ -13,14 +13,18 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated unified parameters struct for `/find_usages` endpoint.
-/// Combines query parameters and request body properties into a single MCP interface.
-/// Spec:
+/// Parameters for the `/usages` endpoint.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct FindUsagesParams {
-    #[schemars(description = r#"Request body property"#)]
+    #[schemars(description = r#"Tenant ID for multi-tenancy isolation"#)]
+    pub tenant_id: Option<String>,
+    #[schemars(description = r#"Symbol name to find usages of (function, class, variable)"#)]
     pub symbol: Option<String>,
-    #[schemars(description = r#"Request body property"#)]
+    #[schemars(description = r#"Optional repository filter - only search within this repository"#)]
+    pub repository_id: Option<String>,
+    #[schemars(description = r#"Optional branch filter - only search within this branch"#)]
+    pub branch: Option<String>,
+    #[schemars(description = r#"Type of usage to find (definition, reference, all)"#)]
     pub usage_type: Option<String>,
 }
 
@@ -39,7 +43,10 @@ impl FindUsagesParams {
     /// Extract request body properties for REST API calls
     pub fn to_request_body(&self) -> FindUsagesRequestBody {
         FindUsagesRequestBody {
+            tenant_id: self.tenant_id.clone(),
             symbol: self.symbol.clone(),
+            repository_id: self.repository_id.clone(),
+            branch: self.branch.clone(),
             usage_type: self.usage_type.clone(),
         }
     }
@@ -48,7 +55,10 @@ impl FindUsagesParams {
 /// Request body structure for REST API calls
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FindUsagesRequestBody {
+    pub tenant_id: Option<String>,
     pub symbol: Option<String>,
+    pub repository_id: Option<String>,
+    pub branch: Option<String>,
     pub usage_type: Option<String>,
 }
 
@@ -148,7 +158,10 @@ mod tests {
     #[test]
     fn test_parameters_struct_serialization() {
         let params = FindUsagesParams {
+            tenant_id: None,
             symbol: None,
+            repository_id: None,
+            branch: None,
             usage_type: None,
         };
         let _ = serde_json::to_string(&params).expect("Serializing test params should not fail");
