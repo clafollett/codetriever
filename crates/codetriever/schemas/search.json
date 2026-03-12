@@ -22,6 +22,7 @@
         "name": "branch"
       },
       {
+        "description": "Maximum number of results to return",
         "name": "limit"
       }
     ],
@@ -48,6 +49,7 @@
       },
       "limit": {
         "default": 10,
+        "description": "Maximum number of results to return",
         "maximum": 100.0,
         "minimum": 1.0,
         "type": "integer"

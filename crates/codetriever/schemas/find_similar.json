@@ -25,6 +25,7 @@
         "name": "exclude_file"
       },
       {
+        "description": "Maximum number of results to return",
         "name": "limit"
       }
     ],
@@ -54,6 +55,7 @@
       },
       "limit": {
         "default": 10,
+        "description": "Maximum number of results to return",
         "type": "integer"
       }
     }

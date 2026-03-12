@@ -20,7 +20,7 @@
         "name": "line"
       },
       {
-        "description": "Lines before and after",
+        "description": "Lines before and after target line (default: 20)",
         "name": "radius"
       }
     ],
@@ -46,7 +46,7 @@
       },
       "radius": {
         "default": 20,
-        "description": "Lines before and after",
+        "description": "Lines before and after target line (default: 20)",
         "type": "integer"
       }
     }

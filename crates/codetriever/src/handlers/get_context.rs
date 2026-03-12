@@ -1,4 +1,4 @@
-//! Auto-generated handler for `/get_context` endpoint.
+//! Auto-generated handler for `/context` endpoint.
 
 // Internal imports (std, crate)
 use crate::common::*;
