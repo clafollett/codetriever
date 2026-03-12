@@ -1,4 +1,4 @@
-//! Auto-generated handler for `/find_similar` endpoint.
+//! Auto-generated handler for `/similar` endpoint.
 
 // Internal imports (std, crate)
 use crate::common::*;
@@ -13,16 +13,20 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 use utoipa::ToSchema;
 
-/// Auto-generated unified parameters struct for `/find_similar` endpoint.
-/// Combines query parameters and request body properties into a single MCP interface.
-/// Spec:
+/// Parameters for the `/similar` endpoint.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub struct FindSimilarParams {
-    #[schemars(description = r#"Code snippet to find similar to (request body)"#)]
+    #[schemars(description = r#"Tenant ID for multi-tenancy isolation"#)]
+    pub tenant_id: Option<String>,
+    #[schemars(description = r#"Code snippet to find similar implementations of"#)]
     pub code: Option<String>,
-    #[schemars(description = r#"File to exclude from results (request body)"#)]
+    #[schemars(description = r#"Optional repository filter - only search within this repository"#)]
+    pub repository_id: Option<String>,
+    #[schemars(description = r#"Optional branch filter - only search within this branch"#)]
+    pub branch: Option<String>,
+    #[schemars(description = r#"File to exclude from results"#)]
     pub exclude_file: Option<String>,
-    #[schemars(description = r#"Request body property"#)]
+    #[schemars(description = r#"Maximum number of results to return"#)]
     pub limit: Option<i32>,
 }
 
@@ -41,7 +45,10 @@ impl FindSimilarParams {
     /// Extract request body properties for REST API calls
     pub fn to_request_body(&self) -> FindSimilarRequestBody {
         FindSimilarRequestBody {
+            tenant_id: self.tenant_id.clone(),
             code: self.code.clone(),
+            repository_id: self.repository_id.clone(),
+            branch: self.branch.clone(),
             exclude_file: self.exclude_file.clone(),
             limit: self.limit,
         }
@@ -51,7 +58,10 @@ impl FindSimilarParams {
 /// Request body structure for REST API calls
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FindSimilarRequestBody {
+    pub tenant_id: Option<String>,
     pub code: Option<String>,
+    pub repository_id: Option<String>,
+    pub branch: Option<String>,
     pub exclude_file: Option<String>,
     pub limit: Option<i32>,
 }
@@ -154,7 +164,10 @@ mod tests {
     #[test]
     fn test_parameters_struct_serialization() {
         let params = FindSimilarParams {
+            tenant_id: None,
             code: None,
+            repository_id: None,
+            branch: None,
             exclude_file: None,
             limit: None,
         };
