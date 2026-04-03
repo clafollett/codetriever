@@ -16,5 +16,5 @@ pub use searching::{
 // Re-export test utilities when test-utils feature is enabled
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_mocks {
-    pub use crate::searching::test_utils::MockSearch;
+    pub use crate::searching::test_utils::{MockSearch, TestSearchMatch};
 }

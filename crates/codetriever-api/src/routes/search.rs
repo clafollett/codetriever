@@ -8,6 +8,8 @@
 //!
 //! The search API exposes the following endpoints:
 //! - `POST /search` - Search for code using a query string with optional result limits
+//! - `POST /context` - Get surrounding code context for a specific file location
+//! - `POST /usages` - Find all usages of a symbol (function, class, variable)
 //!
 //! # Example Usage
 //!
@@ -194,32 +196,17 @@ pub struct CommitInfo {
     pub date: String,
 }
 
-/// Creates and configures the search API routes.
-///
-/// This function sets up all HTTP routes related to search functionality and returns
-/// an Axum [`Router`] that can be mounted into the main application router.
-///
-/// # Routes
-///
-/// - `POST /search` - Handles search requests using [`search_handler`]
-///
-/// # Returns
-///
-/// Returns an Axum [`Router`] with all search-related routes configured.
-/// The router handles JSON request/response serialization automatically.
-///
-/// # Examples
-///
 /// Type for search service handle
 type SearchServiceHandle = Arc<dyn SearchService>;
 
 /// Create routes with injected search service
 ///
-/// Handles both /search and /context endpoints with the same service
+/// Handles /search, /context, and /usages endpoints with the same service
 pub fn routes_with_search_service(search_service: Arc<dyn SearchService>) -> Router {
     Router::new()
         .route("/search", post(search_handler))
         .route("/context", post(context_handler))
+        .route("/usages", post(usages_handler))
         .with_state(search_service)
 }
 
@@ -471,37 +458,7 @@ async fn search_handler_impl(
             let file_path = chunk.file_path.clone();
             let chunk_content = chunk.content.clone();
 
-            // Extract repository and commit info from metadata if available
-            let (repository, commit) =
-                result
-                    .repository_metadata
-                    .as_ref()
-                    .map_or((None, None), |metadata| {
-                        let repository_name = metadata
-                            .repository_url
-                            .as_ref()
-                            .and_then(|url| url.split('/').next_back())
-                            .map(std::string::ToString::to_string);
-
-                        let commit_info =
-                            if let (Some(sha), Some(message), Some(author), Some(date)) = (
-                                &metadata.commit_sha,
-                                &metadata.commit_message,
-                                &metadata.author,
-                                &metadata.commit_date,
-                            ) {
-                                Some(CommitInfo {
-                                    sha: sha.clone(),
-                                    message: message.clone(),
-                                    author: author.clone(),
-                                    date: date.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-                                })
-                            } else {
-                                None
-                            };
-
-                        (repository_name, commit_info)
-                    });
+            let (repository, commit) = extract_repo_commit(result.repository_metadata.as_ref());
 
             Match {
                 file: std::path::Path::new(&file_path)
@@ -566,18 +523,14 @@ async fn search_handler_impl(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ContextRequest {
     /// Optional repository identifier (uses most recent if not provided)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_id: Option<String>,
     /// Optional branch name (uses default branch if not provided)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// File path within the repository
     pub file_path: String,
     /// Optional line number to center context around
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,
     /// Optional radius (lines before/after target line, default: 20)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub radius: Option<usize>,
 }
 
@@ -843,10 +796,370 @@ fn detect_language(file_path: &str) -> String {
     }
 }
 
+// ============================================================================
+// Usages Endpoint
+// ============================================================================
+
+/// Request payload for symbol usage search operations
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UsagesRequest {
+    /// Tenant ID for multi-tenancy isolation
+    #[schema(value_type = String)]
+    pub tenant_id: uuid::Uuid,
+    /// Symbol name to find usages of (function, class, variable)
+    pub symbol: String,
+    /// Optional repository filter - only search within this repository
+    pub repository_id: Option<String>,
+    /// Optional branch filter - only search within this branch
+    pub branch: Option<String>,
+    /// Type of usage to find: "all" (default), "definitions", "references"
+    #[serde(default = "default_usage_type")]
+    pub usage_type: String,
+    /// Optional limit on the number of results returned
+    pub limit: Option<usize>,
+}
+
+fn default_usage_type() -> String {
+    "all".to_string()
+}
+
+/// Response with symbol usages and metadata
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UsagesResponse {
+    /// List of symbol usages found
+    pub usages: Vec<Usage>,
+    /// Search metadata
+    pub metadata: UsagesMetadata,
+}
+
+/// A single symbol usage
+#[derive(Debug, Serialize, ToSchema)]
+pub struct Usage {
+    /// File name
+    pub file: String,
+    /// Full file path
+    pub path: String,
+    /// Line number where the usage occurs
+    pub line: usize,
+    /// Code content containing the usage
+    pub content: String,
+    /// Whether this is a "definition" or "reference"
+    pub usage_type: String,
+    /// Programming language
+    pub language: String,
+    /// Symbol kind (function, class, struct, etc.) — present for definitions
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Similarity score from semantic search
+    pub similarity: f32,
+    /// Repository name (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Git commit information (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<CommitInfo>,
+}
+
+/// Usages search metadata
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UsagesMetadata {
+    /// The symbol that was searched for
+    pub symbol: String,
+    /// Total usages found
+    pub total_usages: usize,
+    /// Number of definitions found
+    pub definitions: usize,
+    /// Number of references found
+    pub references: usize,
+    /// Query execution time in milliseconds
+    pub query_time_ms: u64,
+}
+
+/// Determine if a chunk is a definition of the symbol (name matches and has a structural kind)
+fn is_definition(chunk: &codetriever_parsing::CodeChunk, symbol: &str) -> bool {
+    chunk
+        .name
+        .as_ref()
+        .is_some_and(|n| n.eq_ignore_ascii_case(symbol))
+        && chunk.kind.is_some()
+}
+
+/// Determine if a chunk references the symbol (content contains it but it's not the definition).
+/// `symbol_lower` must be the pre-lowercased symbol to avoid per-call allocation.
+fn is_reference(chunk: &codetriever_parsing::CodeChunk, symbol: &str, symbol_lower: &str) -> bool {
+    !is_definition(chunk, symbol) && chunk.content.to_ascii_lowercase().contains(symbol_lower)
+}
+
+/// Extracted repository name and commit info
+type RepoCommitInfo = (Option<String>, Option<CommitInfo>);
+
+/// Extract repository name and commit info from metadata
+fn extract_repo_commit(
+    metadata: Option<&codetriever_search::RepositoryMetadata>,
+) -> RepoCommitInfo {
+    metadata.map_or((None, None), |m| {
+        let repo = m
+            .repository_url
+            .as_ref()
+            .and_then(|url| url.split('/').next_back())
+            .map(std::string::ToString::to_string);
+
+        let commit = if let (Some(sha), Some(message), Some(author), Some(date)) =
+            (&m.commit_sha, &m.commit_message, &m.author, &m.commit_date)
+        {
+            Some(CommitInfo {
+                sha: sha.clone(),
+                message: message.clone(),
+                author: author.clone(),
+                date: date.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            })
+        } else {
+            None
+        };
+
+        (repo, commit)
+    })
+}
+
+/// Find all usages of a symbol across the indexed codebase.
+///
+/// Performs semantic search for the symbol name, then classifies results as
+/// definitions (where the symbol is declared) or references (where it's used).
+/// Supports filtering by usage type, repository, and branch.
+///
+/// # Errors
+///
+/// Returns `ApiError` for invalid parameters, search service failures, or timeouts.
+#[utoipa::path(
+    post,
+    path = "/usages",
+    tag = "search",
+    request_body = UsagesRequest,
+    responses(
+        (status = 200, description = "Symbol usages found", body = UsagesResponse),
+        (status = 400, description = "Invalid parameters"),
+        (status = 500, description = "Internal server error")
+    )
+)]
+#[instrument(skip(search_service), fields(correlation_id))]
+pub async fn usages_handler(
+    State(search_service): State<SearchServiceHandle>,
+    context: Option<Extension<RequestContext>>,
+    Json(req): Json<UsagesRequest>,
+) -> ApiResult<Json<UsagesResponse>> {
+    let start = std::time::Instant::now();
+
+    let correlation_id = context
+        .as_ref()
+        .map_or_else(CorrelationId::new, |ctx| ctx.correlation_id.clone());
+
+    tracing::Span::current().record("correlation_id", correlation_id.to_string());
+
+    info!(
+        correlation_id = %correlation_id,
+        symbol = %req.symbol,
+        usage_type = %req.usage_type,
+        repository_id = ?req.repository_id,
+        branch = ?req.branch,
+        "Processing usages request"
+    );
+
+    // Validate symbol
+    if req.symbol.trim().is_empty() {
+        warn!(correlation_id = %correlation_id, "Empty symbol rejected");
+        return Err(ApiError::invalid_query(
+            req.symbol,
+            "Symbol cannot be empty".to_string(),
+            correlation_id,
+        ));
+    }
+
+    if req.symbol.len() > 500 {
+        warn!(correlation_id = %correlation_id, symbol_length = req.symbol.len(), "Symbol too long");
+        return Err(ApiError::invalid_query(
+            req.symbol,
+            "Symbol exceeds maximum length of 500 characters".to_string(),
+            correlation_id,
+        ));
+    }
+
+    // Validate usage_type
+    let usage_type = req.usage_type.to_lowercase();
+    if !["all", "definitions", "references"].contains(&usage_type.as_str()) {
+        warn!(
+            correlation_id = %correlation_id,
+            usage_type = %req.usage_type,
+            "Invalid usage_type rejected"
+        );
+        return Err(ApiError::invalid_query(
+            req.usage_type,
+            "Invalid usage_type. Must be one of: all, definitions, references".to_string(),
+            correlation_id,
+        ));
+    }
+
+    // Trim whitespace from symbol — validation checked non-empty on raw input,
+    // now use the cleaned version for search and classification.
+    let symbol = req.symbol.trim().to_string();
+
+    // Over-fetch 3x to compensate for post-filter losses — semantic search
+    // returns contextually related chunks, many of which won't contain the
+    // literal symbol string.
+    let user_limit = req.limit.unwrap_or(50).min(100);
+    let search_limit = user_limit.saturating_mul(3);
+
+    let results = match tokio::time::timeout(
+        Duration::from_secs(30),
+        search_service.search(
+            &req.tenant_id,
+            req.repository_id.as_deref(),
+            req.branch.as_deref(),
+            &symbol,
+            search_limit,
+            &correlation_id,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(results)) => {
+            info!(
+                correlation_id = %correlation_id,
+                result_count = results.len(),
+                "Symbol search completed"
+            );
+            results
+        }
+        Ok(Err(search_error)) => {
+            error!(
+                correlation_id = %correlation_id,
+                error = %search_error,
+                symbol = %symbol,
+                "Search service returned error during usages lookup"
+            );
+            if search_error.to_string().contains("timeout") {
+                return Err(ApiError::database_timeout(
+                    "usages".to_string(),
+                    correlation_id,
+                ));
+            } else if search_error.to_string().contains("unavailable")
+                || search_error.to_string().contains("connection")
+            {
+                return Err(ApiError::SearchServiceUnavailable {
+                    correlation_id,
+                    timeout_duration: Duration::from_secs(30),
+                });
+            }
+            error!(
+                correlation_id = %correlation_id,
+                error = %search_error,
+                symbol = %symbol,
+                "Usages search failed with unexpected error"
+            );
+            return Err(ApiError::InternalServerError { correlation_id });
+        }
+        Err(_timeout) => {
+            error!(correlation_id = %correlation_id, "Usages search timed out");
+            return Err(ApiError::SearchServiceUnavailable {
+                correlation_id,
+                timeout_duration: Duration::from_secs(30),
+            });
+        }
+    };
+
+    // Classify results as definitions or references, filtering by content match
+    let symbol_lower = symbol.to_ascii_lowercase();
+    let mut usages: Vec<Usage> = Vec::new();
+    for result in results {
+        let chunk = &result.chunk;
+
+        // Only include chunks that actually contain the symbol
+        let definition = is_definition(chunk, &symbol);
+        let reference = is_reference(chunk, &symbol, &symbol_lower);
+
+        if !definition && !reference {
+            continue;
+        }
+
+        // Apply usage_type filter
+        let classified_type = if definition {
+            "definition"
+        } else {
+            "reference"
+        };
+        match usage_type.as_str() {
+            "definitions" if !definition => continue,
+            "references" if !reference => continue,
+            _ => {}
+        }
+
+        let (repository, commit) = extract_repo_commit(result.repository_metadata.as_ref());
+
+        usages.push(Usage {
+            file: std::path::Path::new(&chunk.file_path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            path: chunk.file_path.clone(),
+            line: chunk.start_line,
+            content: chunk.content.clone(),
+            usage_type: classified_type.to_string(),
+            language: chunk.language.clone(),
+            kind: if definition { chunk.kind.clone() } else { None },
+            similarity: result.similarity,
+            repository,
+            commit,
+        });
+    }
+
+    // Sort: definitions first, then by similarity descending
+    usages.sort_by(|a, b| {
+        let type_order = |t: &str| i32::from(t != "definition");
+        type_order(&a.usage_type)
+            .cmp(&type_order(&b.usage_type))
+            .then(b.similarity.total_cmp(&a.similarity))
+    });
+
+    // Truncate to requested limit (we over-fetched to compensate for filtering)
+    usages.truncate(user_limit);
+
+    // Recompute counts after truncation so metadata stays consistent
+    let total_usages = usages.len();
+    let def_count = usages
+        .iter()
+        .filter(|u| u.usage_type == "definition")
+        .count();
+    let ref_count = total_usages.saturating_sub(def_count);
+
+    let query_time_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+    info!(
+        correlation_id = %correlation_id,
+        symbol = %symbol,
+        total_usages,
+        definitions = def_count,
+        references = ref_count,
+        query_time_ms,
+        "Usages request completed"
+    );
+
+    Ok(Json(UsagesResponse {
+        usages,
+        metadata: UsagesMetadata {
+            symbol,
+            total_usages,
+            definitions: def_count,
+            references: ref_count,
+            query_time_ms,
+        },
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)] // OK in tests
     #![allow(clippy::unwrap_used)] // OK in tests
+    #![allow(clippy::indexing_slicing)] // OK in tests
     use super::*;
     use crate::test_utils::TestResult;
     use axum::body::Body;
@@ -946,67 +1259,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_search_results_include_repository_and_commit_info() {
-        // Test that search results properly populate repository and commit fields from metadata
+    async fn test_extract_repo_commit_with_full_metadata() {
         use chrono::Utc;
 
-        let mock_result = codetriever_search::SearchMatch {
-            chunk: codetriever_parsing::CodeChunk {
-                file_path: "src/auth.rs".to_string(),
-                content: "fn authenticate() {}".to_string(),
-                start_line: 1,
-                end_line: 1,
-                byte_start: 0,
-                byte_end: 20,
-                kind: Some("function".to_string()),
-                language: "rust".to_string(),
-                name: Some("authenticate".to_string()),
-                token_count: Some(3),
-                embedding: None,
-            },
-            similarity: 0.95,
-            repository_metadata: Some(codetriever_search::RepositoryMetadata {
-                repository_id: "my-repo".to_string(),
-                repository_url: Some("https://github.com/user/my-repo".to_string()),
-                branch: "main".to_string(),
-                commit_sha: Some("abc123".to_string()),
-                commit_message: Some("Add authentication".to_string()),
-                commit_date: Some(Utc::now()),
-                author: Some("John Doe".to_string()),
-            }),
+        let metadata = codetriever_search::RepositoryMetadata {
+            repository_id: "my-repo".to_string(),
+            repository_url: Some("https://github.com/user/my-repo".to_string()),
+            branch: "main".to_string(),
+            commit_sha: Some("abc123".to_string()),
+            commit_message: Some("Add authentication".to_string()),
+            commit_date: Some(Utc::now()),
+            author: Some("John Doe".to_string()),
         };
 
-        // Convert to API Match format
-        let (repository, commit) =
-            mock_result
-                .repository_metadata
-                .as_ref()
-                .map_or((None, None), |metadata| {
-                    let repository_name = metadata
-                        .repository_url
-                        .as_ref()
-                        .and_then(|url| url.split('/').next_back())
-                        .map(std::string::ToString::to_string);
+        let (repository, commit) = extract_repo_commit(Some(&metadata));
 
-                    let commit_info = CommitInfo {
-                        sha: metadata.commit_sha.clone().unwrap_or_default(),
-                        message: metadata.commit_message.clone().unwrap_or_default(),
-                        author: metadata.author.clone().unwrap_or_default(),
-                        date: metadata
-                            .commit_date
-                            .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-                            .unwrap_or_default(),
-                    };
-
-                    (repository_name, Some(commit_info))
-                });
-
-        // Verify that repository and commit fields are properly populated
         assert_eq!(repository, Some("my-repo".to_string()));
         assert!(commit.is_some());
-        let commit_info = commit.unwrap();
-        assert_eq!(commit_info.sha, "abc123");
-        assert_eq!(commit_info.author, "John Doe");
+        let ci = commit.unwrap();
+        assert_eq!(ci.sha, "abc123");
+        assert_eq!(ci.author, "John Doe");
+    }
+
+    #[tokio::test]
+    async fn test_extract_repo_commit_with_none() {
+        let (repository, commit) = extract_repo_commit(None);
+        assert!(repository.is_none());
+        assert!(commit.is_none());
     }
 
     #[tokio::test]
@@ -1466,6 +1745,424 @@ mod tests {
         // Verify response structure is valid
         assert!(json.get("matches").is_some());
         assert!(json.get("metadata").is_some());
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Usages endpoint tests
+    // ========================================================================
+
+    use codetriever_search::test_mocks::TestSearchMatch;
+
+    /// Create routes with a mock search service for usages testing
+    fn usages_routes_with_mock(mock: MockSearch) -> Router {
+        let service: Arc<dyn SearchService> = Arc::new(mock);
+        Router::new()
+            .route("/usages", post(usages_handler))
+            .with_state(service)
+    }
+
+    #[tokio::test]
+    async fn test_usages_finds_definitions() -> TestResult {
+        // A chunk with name="parse_config" and kind="function" should be classified as a definition
+        let mock = MockSearch::with_matches(vec![TestSearchMatch::new(
+            "src/config.rs",
+            "fn parse_config(path: &str) -> Config { ... }",
+            0.92,
+            Some("parse_config"),
+            Some("function"),
+        )]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config",
+                        "usage_type": "all"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        let usages = json["usages"].as_array().expect("usages array");
+        assert_eq!(usages.len(), 1);
+        assert_eq!(usages[0]["usage_type"], "definition");
+        assert_eq!(usages[0]["kind"], "function");
+        assert_eq!(json["metadata"]["definitions"], 1);
+        assert_eq!(json["metadata"]["references"], 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_finds_references() -> TestResult {
+        // A chunk that contains the symbol in content but doesn't have it as name → reference
+        let mock = MockSearch::with_matches(vec![TestSearchMatch::new(
+            "src/main.rs",
+            "let cfg = parse_config(\"app.toml\");",
+            0.85,
+            Some("main"), // name is "main", not "parse_config"
+            Some("function"),
+        )]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        let usages = json["usages"].as_array().expect("usages array");
+        assert_eq!(usages.len(), 1);
+        assert_eq!(usages[0]["usage_type"], "reference");
+        assert!(usages[0]["kind"].is_null()); // kind only set for definitions
+        assert_eq!(json["metadata"]["definitions"], 0);
+        assert_eq!(json["metadata"]["references"], 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_definitions_sorted_before_references() -> TestResult {
+        // Definitions should appear before references regardless of similarity score
+        let mock = MockSearch::with_matches(vec![
+            TestSearchMatch::new(
+                "src/caller.rs",
+                "parse_config(path)",
+                0.95, // Higher similarity but it's a reference
+                Some("caller"),
+                Some("function"),
+            ),
+            TestSearchMatch::new(
+                "src/config.rs",
+                "fn parse_config(path: &str) -> Config {}",
+                0.80, // Lower similarity but it's a definition
+                Some("parse_config"),
+                Some("function"),
+            ),
+        ]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        let usages = json["usages"].as_array().expect("usages array");
+        assert_eq!(usages.len(), 2);
+        assert_eq!(
+            usages[0]["usage_type"], "definition",
+            "definition should come first"
+        );
+        assert_eq!(usages[1]["usage_type"], "reference");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_filter_definitions_only() -> TestResult {
+        let mock = MockSearch::with_matches(vec![
+            TestSearchMatch::new(
+                "src/config.rs",
+                "fn parse_config() {}",
+                0.90,
+                Some("parse_config"),
+                Some("function"),
+            ),
+            TestSearchMatch::new(
+                "src/main.rs",
+                "parse_config()",
+                0.85,
+                Some("main"),
+                Some("function"),
+            ),
+        ]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config",
+                        "usage_type": "definitions"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        let usages = json["usages"].as_array().expect("usages array");
+        assert_eq!(usages.len(), 1, "should only return definitions");
+        assert_eq!(usages[0]["usage_type"], "definition");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_filter_references_only() -> TestResult {
+        let mock = MockSearch::with_matches(vec![
+            TestSearchMatch::new(
+                "src/config.rs",
+                "fn parse_config() {}",
+                0.90,
+                Some("parse_config"),
+                Some("function"),
+            ),
+            TestSearchMatch::new(
+                "src/main.rs",
+                "parse_config()",
+                0.85,
+                Some("main"),
+                Some("function"),
+            ),
+        ]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config",
+                        "usage_type": "references"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        let usages = json["usages"].as_array().expect("usages array");
+        assert_eq!(usages.len(), 1, "should only return references");
+        assert_eq!(usages[0]["usage_type"], "reference");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_excludes_unrelated_chunks() -> TestResult {
+        // A chunk that doesn't contain the symbol at all should be excluded
+        let mock = MockSearch::with_matches(vec![TestSearchMatch::new(
+            "src/unrelated.rs",
+            "fn totally_different() { do_stuff(); }",
+            0.70,
+            Some("totally_different"),
+            Some("function"),
+        )]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        let usages = json["usages"].as_array().expect("usages array");
+        assert_eq!(usages.len(), 0, "unrelated chunks should be filtered out");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_rejects_empty_symbol() -> TestResult {
+        let mock = MockSearch::empty();
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "   "
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_rejects_invalid_usage_type() -> TestResult {
+        let mock = MockSearch::empty();
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config",
+                        "usage_type": "invalid_type"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_metadata_counts() -> TestResult {
+        // Verify metadata accurately counts definitions vs references
+        let mock = MockSearch::with_matches(vec![
+            TestSearchMatch::new(
+                "src/config.rs",
+                "fn parse_config() {}",
+                0.92,
+                Some("parse_config"),
+                Some("function"),
+            ),
+            TestSearchMatch::new(
+                "src/main.rs",
+                "let c = parse_config();",
+                0.88,
+                Some("main"),
+                Some("function"),
+            ),
+            TestSearchMatch::new(
+                "src/test.rs",
+                "parse_config()",
+                0.75,
+                Some("test_it"),
+                Some("function"),
+            ),
+        ]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        assert_eq!(json["metadata"]["symbol"], "parse_config");
+        assert_eq!(json["metadata"]["total_usages"], 3);
+        assert_eq!(json["metadata"]["definitions"], 1);
+        assert_eq!(json["metadata"]["references"], 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_definition_not_double_counted_as_reference() -> TestResult {
+        // A chunk with name == symbol AND content containing the symbol
+        // should be classified as definition only, never as both
+        let mock = MockSearch::with_matches(vec![TestSearchMatch::new(
+            "src/config.rs",
+            "fn parse_config(path: &str) -> Config { parse_config_inner(path) }",
+            0.95,
+            Some("parse_config"),
+            Some("function"),
+        )]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        let usages = json["usages"].as_array().expect("usages array");
+        assert_eq!(
+            usages.len(),
+            1,
+            "should be exactly 1 usage, not double-counted"
+        );
+        assert_eq!(usages[0]["usage_type"], "definition");
+        assert_eq!(json["metadata"]["definitions"], 1);
+        assert_eq!(json["metadata"]["references"], 0);
 
         Ok(())
     }
