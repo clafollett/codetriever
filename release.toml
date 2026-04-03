@@ -1,10 +1,7 @@
 # cargo-release configuration
-# Prevents per-crate tagging - only create workspace-level tags
-
-# Don't tag individual crates
-[[crate."*"]]
-tag = false
-
-# Only tag at workspace level
-[workspace]
+publish = false
+push = false
 tag-name = "v{{version}}"
+shared-version = true
+consolidate-commits = true
+pre-release-commit-message = "chore: Release v{{version}}"
