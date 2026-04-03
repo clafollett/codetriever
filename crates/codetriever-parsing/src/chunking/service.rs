@@ -185,7 +185,7 @@ impl ChunkingService {
         let mut current_byte_offset = span.byte_start;
 
         let mut line_buffer = String::with_capacity(256);
-        for (i, line) in lines.iter().enumerate() {
+        for line in lines.iter() {
             line_buffer.clear();
             line_buffer.push_str(line);
             line_buffer.push('\n');
@@ -210,11 +210,58 @@ impl ChunkingService {
                     embedding: None,
                 });
 
-                // Reset for next chunk
-                current_lines.clear();
-                current_tokens = 0;
-                current_start_line = span.start_line + i;
-                current_byte_offset += byte_len;
+                // Carry trailing lines as overlap into the next chunk.
+                // Walk backward through current_lines, accumulating token counts
+                // until we've collected up to `self.budget.overlap` tokens.
+                let overlap_lines: Vec<String> = if self.budget.overlap > 0 {
+                    let mut overlap_tokens = 0usize;
+                    let mut overlap_count = 0usize;
+                    let mut buf = String::with_capacity(256);
+                    for ol in current_lines.iter().rev() {
+                        buf.clear();
+                        buf.push_str(ol);
+                        buf.push('\n');
+                        let t = self.counter.count(&buf);
+                        if overlap_tokens + t > self.budget.overlap {
+                            break;
+                        }
+                        overlap_tokens += t;
+                        overlap_count += 1;
+                    }
+                    // Take the last `overlap_count` lines as the seed for the next chunk.
+                    current_lines[current_lines.len() - overlap_count..].to_vec()
+                } else {
+                    Vec::new()
+                };
+
+                // Advance the byte offset by only the non-overlap portion.
+                // The overlap lines will be re-emitted in the next chunk so their
+                // bytes are NOT consumed here.
+                let overlap_byte_len: usize = overlap_lines
+                    .iter()
+                    .map(|l| l.len() + 1) // +1 for the '\n' separator
+                    .sum();
+                // Guard against underflow when overlap_byte_len > byte_len (shouldn't
+                // happen in practice, but be safe).
+                let advance_bytes = byte_len.saturating_sub(overlap_byte_len);
+                current_byte_offset += advance_bytes;
+
+                // The next chunk starts at the line number of the first overlap line.
+                let non_overlap_count = current_lines.len() - overlap_lines.len();
+                // current_start_line is 1-indexed; lines before overlap are consumed.
+                current_start_line += non_overlap_count;
+
+                // Seed the next chunk with the overlap lines and their token count.
+                let overlap_token_sum: usize = overlap_lines
+                    .iter()
+                    .map(|l| {
+                        let mut b = l.clone();
+                        b.push('\n');
+                        self.counter.count(&b)
+                    })
+                    .sum();
+                current_lines = overlap_lines;
+                current_tokens = overlap_token_sum;
             }
 
             current_lines.push(line.to_string());
@@ -240,5 +287,206 @@ impl ChunkingService {
         }
 
         Ok(chunks)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunking::traits::TokenCounter;
+    use std::sync::Arc;
+
+    /// Simple word-counting token counter for deterministic tests.
+    /// Counts whitespace-separated words as tokens.
+    struct WordCounter;
+
+    impl TokenCounter for WordCounter {
+        fn name(&self) -> &str {
+            "word-counter"
+        }
+
+        fn max_tokens(&self) -> usize {
+            1024
+        }
+
+        fn count(&self, text: &str) -> usize {
+            text.split_whitespace().count()
+        }
+    }
+
+    /// Build a CodeSpan from a list of lines.
+    fn make_span(lines: &[&str]) -> CodeSpan {
+        let content = lines.join("\n");
+        let byte_end = content.len();
+        CodeSpan {
+            content,
+            start_line: 1,
+            end_line: lines.len(),
+            byte_start: 0,
+            byte_end,
+            kind: None,
+            name: None,
+            language: "rust".to_string(),
+        }
+    }
+
+    /// Build a ChunkingService with the WordCounter and a given budget.
+    fn make_service(hard: usize, overlap: usize) -> ChunkingService {
+        let budget = TokenBudget::new(hard, overlap);
+        ChunkingService::new(Arc::new(WordCounter), budget)
+    }
+
+    // ---------------------------------------------------------------------------
+    // Test 1: overlap lines from chunk[i] appear at start of chunk[i+1]
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn test_split_large_span_has_overlap() {
+        // 10 lines × 4 words each = 40 words (tokens).
+        // hard=20, soft=18, overlap=4.
+        // WordCounter counts whitespace-separated words, so each line = 4 tokens.
+        // Lines accumulate: 4→8→12→16 → at line 5: 16+4=20 > 18 → emit chunk
+        // with lines 1–4 (16 tokens). Overlap: 4 tokens → last 1 line carries over.
+        // Chunk[1] starts with the last line of chunk[0].
+        let lines: Vec<String> = (1..=10)
+            .map(|i| format!("word1_{i} word2_{i} word3_{i} word4_{i}"))
+            .collect();
+        let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let span = make_span(&line_refs);
+
+        let svc = make_service(20, 4);
+        let chunks = svc
+            .split_large_span("test.rs", span)
+            .expect("split should succeed");
+
+        // Must produce more than one chunk (content is 50 tokens, hard=20).
+        assert!(
+            chunks.len() > 1,
+            "expected multiple chunks, got {}",
+            chunks.len()
+        );
+
+        // For every consecutive pair, the first line of chunk[i+1] must appear
+        // as the last line of chunk[i].
+        for window in chunks.windows(2) {
+            let prev_last_line = window[0]
+                .content
+                .lines()
+                .last()
+                .expect("chunk must have content");
+            let next_first_line = window[1]
+                .content
+                .lines()
+                .next()
+                .expect("chunk must have content");
+
+            assert_eq!(
+                prev_last_line, next_first_line,
+                "overlap missing: last line of prev chunk should equal first line of next chunk"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Test 2: overlap token budget is never exceeded
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn test_overlap_token_count_respected() {
+        // 10 lines × 4 words each = 40 tokens total.
+        // hard=20, soft=18, overlap=6.
+        // Each line is 4 tokens. The overlap budget of 6 means at most 1 line
+        // can be carried (4 ≤ 6, but 4+4=8 > 6). Overlap tokens per chunk
+        // boundary must never exceed 6.
+        let lines: Vec<String> = (1..=10)
+            .map(|i| format!("word1_{i} word2_{i} word3_{i} word4_{i}"))
+            .collect();
+        let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let span = make_span(&line_refs);
+
+        let svc = make_service(20, 6);
+        let chunks = svc
+            .split_large_span("test.rs", span)
+            .expect("split should succeed");
+
+        assert!(chunks.len() > 1, "expected multiple chunks");
+
+        let counter = WordCounter;
+        for window in chunks.windows(2) {
+            // Collect overlap lines: lines from chunk[i+1] that also appear at
+            // the end of chunk[i].
+            let prev_lines: Vec<&str> = window[0].content.lines().collect();
+            let next_lines: Vec<&str> = window[1].content.lines().collect();
+
+            // Walk from the start of next chunk and count how many leading lines
+            // match the tail of the previous chunk.
+            let overlap_line_count = next_lines
+                .iter()
+                .zip(prev_lines.iter().rev())
+                .take_while(|(n, p)| n == p)
+                .count();
+
+            let overlap_text = next_lines[..overlap_line_count].join("\n");
+            let overlap_tokens = counter.count(&overlap_text);
+
+            assert!(
+                overlap_tokens <= 6,
+                "overlap tokens {overlap_tokens} exceeded budget of 6"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Test 3: content that fits in one chunk produces no split
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn test_single_chunk_no_overlap_needed() {
+        // 3 lines × 2 words each = 6 tokens. hard=20 → fits comfortably.
+        let lines = ["hello world", "foo bar", "baz qux"];
+        let span = make_span(&lines);
+
+        let svc = make_service(20, 4);
+        let chunks = svc
+            .split_large_span("test.rs", span)
+            .expect("split should succeed");
+
+        assert_eq!(chunks.len(), 1, "expected a single chunk");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Test 4: overlap=0 produces independent (non-overlapping) chunks
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn test_zero_overlap_no_change() {
+        // 10 lines × 4 words each = 40 tokens. hard=20, overlap=0.
+        // No line from chunk[i] should appear in chunk[i+1].
+        let lines: Vec<String> = (1..=10)
+            .map(|i| format!("word1_{i} word2_{i} word3_{i} word4_{i}"))
+            .collect();
+        let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let span = make_span(&line_refs);
+
+        let svc = make_service(20, 0);
+        let chunks = svc
+            .split_large_span("test.rs", span)
+            .expect("split should succeed");
+
+        assert!(chunks.len() > 1, "expected multiple chunks");
+
+        for window in chunks.windows(2) {
+            let prev_last_line = window[0]
+                .content
+                .lines()
+                .last()
+                .expect("chunk must have content");
+            let next_first_line = window[1]
+                .content
+                .lines()
+                .next()
+                .expect("chunk must have content");
+
+            assert_ne!(
+                prev_last_line, next_first_line,
+                "zero-overlap: last line of prev chunk should NOT equal first line of next chunk"
+            );
+        }
     }
 }
