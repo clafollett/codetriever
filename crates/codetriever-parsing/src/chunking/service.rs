@@ -130,12 +130,16 @@ impl ChunkingService {
             // soft limit) top-level definitions with different names.  Tiny
             // helpers below the threshold are packed with the next span because
             // they are almost certainly related context.
-            let substantive_threshold = self.budget.soft / 4;
+            // Use multiplication to avoid integer division rounding errors.
+            let names_differ = match (&span.name, &current_name) {
+                (Some(new), Some(cur)) => new != cur,
+                _ => false, // if either is unnamed, don't split on name alone
+            };
             let should_split_at_ast_boundary = is_new_definition
                 && current_has_definition
                 && !current_content.is_empty()
-                && span.name != current_name
-                && current_tokens >= substantive_threshold;
+                && names_differ
+                && current_tokens.saturating_mul(4) >= self.budget.soft;
 
             // Check if adding this span would exceed soft limit OR if an AST
             // semantic boundary demands a split.
@@ -181,6 +185,13 @@ impl ChunkingService {
                     // Subsequent spans - we must append so we need the content
                     current_content.push('\n');
                     current_content.push_str(&span.content);
+                    // Update kind/name if this span is a definition — ensures
+                    // the boundary check works even when non-definitions precede
+                    // a definition in the same chunk.
+                    if is_new_definition {
+                        current_kind = span.kind;
+                        current_name = span.name;
+                    }
                 }
                 current_end_line = span.end_line;
                 current_byte_end = span.byte_end;
