@@ -52,6 +52,55 @@ pub struct Search {
     cache: SearchCache,
 }
 
+/// Apply score adjustments based on metadata signals already present in search results.
+///
+/// Boosts and penalties are multiplicative and compound:
+/// - Exact symbol name match in query: +15%
+/// - Definition kind (function/method/class/etc.): +10%
+/// - Test/generated/fixture file path: -20%
+fn rerank(query: &str, results: &mut [SearchMatch]) {
+    for result in results.iter_mut() {
+        let mut boost: f32 = 1.0;
+
+        // Exact symbol name match: +15%
+        if let Some(ref name) = result.chunk.name
+            && (query.contains(name.as_str()) || name.contains(query))
+        {
+            boost *= 1.15;
+        }
+
+        // Definition kind boost: +10%
+        if let Some(ref kind) = result.chunk.kind
+            && matches!(
+                kind.as_str(),
+                "function"
+                    | "method"
+                    | "class"
+                    | "struct"
+                    | "enum"
+                    | "trait"
+                    | "impl"
+                    | "interface"
+            )
+        {
+            boost *= 1.10;
+        }
+
+        // Test/generated file penalty: -20%
+        let path = &result.chunk.file_path;
+        if path.contains("test")
+            || path.contains("spec")
+            || path.contains("mock")
+            || path.contains("generated")
+            || path.contains("fixture")
+        {
+            boost *= 0.80;
+        }
+
+        result.similarity *= boost;
+    }
+}
+
 impl Search {
     /// Create a search service with full dependency injection and database integration.
     pub fn new(
@@ -135,16 +184,27 @@ impl Search {
                 "Performing vector search with tenant isolation and payload filters"
             );
 
+            // Over-fetch to give the re-ranker enough candidates to work with.
+            // Re-ranking adjusts scores based on metadata signals, so the final
+            // top-k may differ from raw cosine order.
+            let fetch_limit = limit.saturating_mul(3);
+
             // Search in vector storage with tenant + payload filtering
             // Filters are applied at Qdrant level for efficiency
             let storage_results = self
                 .vector_storage
-                .search(tenant_id, query_embedding, limit, &filters, correlation_id)
+                .search(
+                    tenant_id,
+                    query_embedding,
+                    fetch_limit,
+                    &filters,
+                    correlation_id,
+                )
                 .await?;
 
             // Convert StorageSearchResult to SearchMatch
             // Metadata is complete from Qdrant payload - no enrichment needed!
-            let results: Vec<SearchMatch> = storage_results
+            let mut results: Vec<SearchMatch> = storage_results
                 .into_iter()
                 .map(|r| {
                     // Convert vector-data RepositoryMetadata to search RepositoryMetadata
@@ -165,7 +225,21 @@ impl Search {
                     }
                 })
                 .collect();
-            tracing::debug!("Search returned {} results with metadata", results.len());
+
+            // Apply metadata-signal re-ranking, re-sort, then truncate to requested limit
+            rerank(query, &mut results);
+            results.sort_by(|a, b| {
+                b.similarity
+                    .partial_cmp(&a.similarity)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            results.truncate(limit);
+
+            tracing::debug!(
+                fetched = results.len(),
+                limit,
+                "Search re-ranked and truncated results"
+            );
 
             Ok(results)
         })
@@ -350,6 +424,170 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use codetriever_vector_data::CodeChunk;
+
+    /// Build a minimal `SearchMatch` for re-ranking unit tests.
+    /// Only the fields exercised by `rerank()` need real values.
+    fn make_match(
+        file_path: &str,
+        name: Option<&str>,
+        kind: Option<&str>,
+        similarity: f32,
+    ) -> SearchMatch {
+        SearchMatch {
+            chunk: CodeChunk {
+                file_path: file_path.to_string(),
+                content: String::new(),
+                start_line: 1,
+                end_line: 1,
+                byte_start: 0,
+                byte_end: 0,
+                kind: kind.map(str::to_string),
+                language: "rust".to_string(),
+                name: name.map(str::to_string),
+                token_count: None,
+                embedding: None,
+            },
+            similarity,
+            repository_metadata: None,
+        }
+    }
+
+    // --- Re-ranking unit tests (pure logic, no I/O) ---
+
+    #[test]
+    fn test_symbol_name_match_boosted() {
+        // A result whose chunk.name matches the query receives the +15% name boost.
+        let query = "parse_config";
+        let mut results = vec![make_match("src/config.rs", Some("parse_config"), None, 1.0)];
+
+        rerank(query, &mut results);
+
+        let expected = 1.0_f32 * 1.15;
+        assert!(
+            (results[0].similarity - expected).abs() < 1e-5,
+            "name match should yield {expected:.4}, got {:.4}",
+            results[0].similarity
+        );
+    }
+
+    #[test]
+    fn test_definition_kind_boosted() {
+        // kind="function" earns +10%; kind="comment" receives no kind boost.
+        let query = "anything";
+        let mut results = vec![
+            make_match("src/a.rs", None, Some("function"), 1.0),
+            make_match("src/b.rs", None, Some("comment"), 1.0),
+        ];
+
+        rerank(query, &mut results);
+
+        assert!(
+            (results[0].similarity - 1.10).abs() < 1e-5,
+            "function kind should score 1.10, got {:.4}",
+            results[0].similarity
+        );
+        assert!(
+            (results[1].similarity - 1.0).abs() < 1e-5,
+            "comment kind should stay 1.0, got {:.4}",
+            results[1].similarity
+        );
+    }
+
+    #[test]
+    fn test_test_file_penalized() {
+        // Paths containing "test" receive the -20% penalty; clean paths do not.
+        let query = "anything";
+        let mut results = vec![
+            make_match("src/tests/config_test.rs", None, None, 1.0),
+            make_match("src/config.rs", None, None, 1.0),
+        ];
+
+        rerank(query, &mut results);
+
+        assert!(
+            (results[0].similarity - 0.80).abs() < 1e-5,
+            "test file should score 0.80, got {:.4}",
+            results[0].similarity
+        );
+        assert!(
+            (results[1].similarity - 1.0).abs() < 1e-5,
+            "normal file should stay 1.0, got {:.4}",
+            results[1].similarity
+        );
+    }
+
+    #[test]
+    fn test_boosts_compound() {
+        // Name match (+15%) and function kind (+10%) compound: 1.0 * 1.15 * 1.10 = 1.265.
+        let query = "parse_config";
+        let mut results = vec![make_match(
+            "src/config.rs",
+            Some("parse_config"),
+            Some("function"),
+            1.0,
+        )];
+
+        rerank(query, &mut results);
+
+        let expected = 1.0_f32 * 1.15 * 1.10;
+        assert!(
+            (results[0].similarity - expected).abs() < 1e-5,
+            "compound boost should yield {expected:.4}, got {:.4}",
+            results[0].similarity
+        );
+    }
+
+    #[test]
+    fn test_rerank_preserves_order_when_no_signals() {
+        // When no signals fire, `rerank` leaves scores unchanged (boost stays 1.0).
+        let query = "something_completely_unrelated";
+        let mut results = vec![
+            make_match("src/a.rs", None, None, 0.9),
+            make_match("src/b.rs", None, None, 0.8),
+            make_match("src/c.rs", None, None, 0.7),
+        ];
+
+        rerank(query, &mut results);
+
+        assert!((results[0].similarity - 0.9).abs() < 1e-5);
+        assert!((results[1].similarity - 0.8).abs() < 1e-5);
+        assert!((results[2].similarity - 0.7).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_overfetch_and_truncate() {
+        // Simulates the over-fetch pipeline: rerank → sort descending → truncate to limit.
+        // With no signals firing the scores are unchanged, so sort preserves the original
+        // descending order and truncate returns exactly `limit` items.
+        let query = "irrelevant";
+        let limit = 3_usize;
+
+        // 9 items (simulating limit * 3 over-fetch), descending similarity
+        let mut results: Vec<SearchMatch> = (0..9_u32)
+            .rev()
+            .map(|i| make_match("src/a.rs", None, None, 0.1 * i as f32))
+            .collect();
+
+        rerank(query, &mut results);
+        results.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(limit);
+
+        assert_eq!(
+            results.len(),
+            limit,
+            "truncate should return exactly {limit} results"
+        );
+        // Top result should be the highest score (0.8 = 0.1 * 8)
+        assert!(
+            (results[0].similarity - 0.8).abs() < 1e-5,
+            "top result should have similarity 0.8, got {:.4}",
+            results[0].similarity
+        );
+    }
 
     #[test]
     fn test_search_result_with_metadata() {
