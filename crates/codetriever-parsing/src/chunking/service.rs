@@ -106,8 +106,42 @@ impl ChunkingService {
                 continue;
             }
 
-            // Check if adding this span would exceed soft limit
-            if current_tokens + span_tokens > self.budget.soft && !current_content.is_empty() {
+            // Determine whether this span and the accumulated content are each
+            // top-level definitions (function, class, struct, etc.).
+            let definition_kinds = [
+                "function",
+                "method",
+                "class",
+                "struct",
+                "enum",
+                "trait",
+                "impl",
+                "interface",
+            ];
+            let is_new_definition = span
+                .kind
+                .as_deref()
+                .is_some_and(|k| definition_kinds.contains(&k));
+            let current_has_definition = current_kind
+                .as_deref()
+                .is_some_and(|k| definition_kinds.contains(&k));
+
+            // Prefer separate chunks when BOTH spans are substantive (≥ 25% of
+            // soft limit) top-level definitions with different names.  Tiny
+            // helpers below the threshold are packed with the next span because
+            // they are almost certainly related context.
+            let substantive_threshold = self.budget.soft / 4;
+            let should_split_at_ast_boundary = is_new_definition
+                && current_has_definition
+                && !current_content.is_empty()
+                && span.name != current_name
+                && current_tokens >= substantive_threshold;
+
+            // Check if adding this span would exceed soft limit OR if an AST
+            // semantic boundary demands a split.
+            if (current_tokens + span_tokens > self.budget.soft || should_split_at_ast_boundary)
+                && !current_content.is_empty()
+            {
                 // Create chunk from accumulated content
                 chunks.push(CodeChunk {
                     file_path: file_path.to_string(),
@@ -286,7 +320,6 @@ mod tests {
     use std::sync::Arc;
 
     /// Simple word-counting token counter for deterministic tests.
-    /// Counts whitespace-separated words as tokens.
     struct WordCounter;
 
     impl TokenCounter for WordCounter {
@@ -303,7 +336,7 @@ mod tests {
         }
     }
 
-    /// Build a CodeSpan from a list of lines.
+    /// Build a CodeSpan from a list of lines (for overlap tests).
     fn make_span(lines: &[&str]) -> CodeSpan {
         let content = lines.join("\n");
         let byte_end = content.len();
@@ -319,79 +352,69 @@ mod tests {
         }
     }
 
-    /// Build a ChunkingService with the WordCounter and a given budget.
-    fn make_service(hard: usize, overlap: usize) -> ChunkingService {
+    /// Build a CodeSpan with a specific kind, name, and exact word count (for AST boundary tests).
+    fn make_definition_span(kind: &str, name: &str, word_count: usize) -> CodeSpan {
+        let words: Vec<String> = (0..word_count).map(|i| format!("word_{i}")).collect();
+        let content = words.join(" ");
+        let byte_end = content.len();
+        CodeSpan {
+            content,
+            start_line: 1,
+            end_line: 1,
+            byte_start: 0,
+            byte_end,
+            kind: Some(kind.to_string()),
+            name: Some(name.to_string()),
+            language: "rust".to_string(),
+        }
+    }
+
+    /// Build a ChunkingService with overlap support.
+    fn make_service_with_overlap(hard: usize, overlap: usize) -> ChunkingService {
         let budget = TokenBudget::new(hard, overlap);
         ChunkingService::new(Arc::new(WordCounter), budget)
     }
 
-    // ---------------------------------------------------------------------------
-    // Test 1: overlap lines from chunk[i] appear at start of chunk[i+1]
-    // ---------------------------------------------------------------------------
+    /// Build a ChunkingService without overlap (for AST boundary tests).
+    fn make_service(hard: usize) -> ChunkingService {
+        make_service_with_overlap(hard, 0)
+    }
+
+    // =========================================================================
+    // Overlap tests (split_large_span)
+    // =========================================================================
+
     #[test]
     fn test_split_large_span_has_overlap() {
-        // 10 lines × 4 words each = 40 words (tokens).
-        // hard=20, soft=18, overlap=4.
-        // WordCounter counts whitespace-separated words, so each line = 4 tokens.
-        // Lines accumulate: 4→8→12→16 → at line 5: 16+4=20 > 18 → emit chunk
-        // with lines 1–4 (16 tokens). Overlap: 4 tokens → last 1 line carries over.
-        // Chunk[1] starts with the last line of chunk[0].
         let lines: Vec<String> = (1..=10)
             .map(|i| format!("word1_{i} word2_{i} word3_{i} word4_{i}"))
             .collect();
         let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let span = make_span(&line_refs);
 
-        let svc = make_service(20, 4);
+        let svc = make_service_with_overlap(20, 4);
         let chunks = svc
             .split_large_span("test.rs", span)
             .expect("split should succeed");
 
-        // Must produce more than one chunk (content is 40 tokens, hard=20).
-        assert!(
-            chunks.len() > 1,
-            "expected multiple chunks, got {}",
-            chunks.len()
-        );
+        assert!(chunks.len() > 1, "expected multiple chunks, got {}", chunks.len());
 
-        // For every consecutive pair, the first line of chunk[i+1] must appear
-        // as the last line of chunk[i].
         for window in chunks.windows(2) {
-            let prev_last_line = window[0]
-                .content
-                .lines()
-                .last()
-                .expect("chunk must have content");
-            let next_first_line = window[1]
-                .content
-                .lines()
-                .next()
-                .expect("chunk must have content");
-
-            assert_eq!(
-                prev_last_line, next_first_line,
-                "overlap missing: last line of prev chunk should equal first line of next chunk"
-            );
+            let prev_last = window[0].content.lines().last().expect("chunk must have content");
+            let next_first = window[1].content.lines().next().expect("chunk must have content");
+            assert_eq!(prev_last, next_first, "overlap missing between chunks");
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Test 2: overlap token budget is never exceeded
-    // ---------------------------------------------------------------------------
     #[test]
     fn test_overlap_token_count_respected() {
-        // 10 lines × 4 words each = 40 tokens total.
-        // hard=20, soft=18, overlap=6.
-        // Each line is 4 tokens. The overlap budget of 6 means at most 1 line
-        // can be carried (4 ≤ 6, but 4+4=8 > 6). Overlap tokens per chunk
-        // boundary must never exceed 6.
         let lines: Vec<String> = (1..=10)
             .map(|i| format!("word1_{i} word2_{i} word3_{i} word4_{i}"))
             .collect();
         let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let span = make_span(&line_refs);
 
-        let svc = make_service(20, 6);
+        let svc = make_service_with_overlap(20, 6);
         let chunks = svc
             .split_large_span("test.rs", span)
             .expect("split should succeed");
@@ -400,13 +423,9 @@ mod tests {
 
         let counter = WordCounter;
         for window in chunks.windows(2) {
-            // Collect overlap lines: lines from chunk[i+1] that also appear at
-            // the end of chunk[i].
             let prev_lines: Vec<&str> = window[0].content.lines().collect();
             let next_lines: Vec<&str> = window[1].content.lines().collect();
 
-            // Find how many leading lines of the next chunk match the trailing
-            // lines of the previous chunk (suffix/prefix comparison).
             let max_overlap = next_lines.len().min(prev_lines.len());
             let overlap_line_count = (1..=max_overlap)
                 .rev()
@@ -415,88 +434,49 @@ mod tests {
 
             let overlap_text = next_lines[..overlap_line_count].join("\n");
             let overlap_tokens = counter.count(&overlap_text);
-
-            assert!(
-                overlap_tokens <= 6,
-                "overlap tokens {overlap_tokens} exceeded budget of 6"
-            );
+            assert!(overlap_tokens <= 6, "overlap tokens {overlap_tokens} exceeded budget of 6");
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Test 3: content that fits in one chunk produces no split
-    // ---------------------------------------------------------------------------
     #[test]
     fn test_single_chunk_no_overlap_needed() {
-        // 3 lines × 2 words each = 6 tokens. hard=20 → fits comfortably.
         let lines = ["hello world", "foo bar", "baz qux"];
         let span = make_span(&lines);
 
-        let svc = make_service(20, 4);
-        let chunks = svc
-            .split_large_span("test.rs", span)
-            .expect("split should succeed");
-
+        let svc = make_service_with_overlap(20, 4);
+        let chunks = svc.split_large_span("test.rs", span).expect("split should succeed");
         assert_eq!(chunks.len(), 1, "expected a single chunk");
     }
 
-    // ---------------------------------------------------------------------------
-    // Test 4: overlap=0 produces independent (non-overlapping) chunks
-    // ---------------------------------------------------------------------------
     #[test]
     fn test_zero_overlap_no_change() {
-        // 10 lines × 4 words each = 40 tokens. hard=20, overlap=0.
-        // No line from chunk[i] should appear in chunk[i+1].
         let lines: Vec<String> = (1..=10)
             .map(|i| format!("word1_{i} word2_{i} word3_{i} word4_{i}"))
             .collect();
         let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let span = make_span(&line_refs);
 
-        let svc = make_service(20, 0);
-        let chunks = svc
-            .split_large_span("test.rs", span)
-            .expect("split should succeed");
-
+        let svc = make_service_with_overlap(20, 0);
+        let chunks = svc.split_large_span("test.rs", span).expect("split should succeed");
         assert!(chunks.len() > 1, "expected multiple chunks");
 
         for window in chunks.windows(2) {
-            let prev_last_line = window[0]
-                .content
-                .lines()
-                .last()
-                .expect("chunk must have content");
-            let next_first_line = window[1]
-                .content
-                .lines()
-                .next()
-                .expect("chunk must have content");
-
-            assert_ne!(
-                prev_last_line, next_first_line,
-                "zero-overlap: last line of prev chunk should NOT equal first line of next chunk"
-            );
+            let prev_last = window[0].content.lines().last().expect("content");
+            let next_first = window[1].content.lines().next().expect("content");
+            assert_ne!(prev_last, next_first, "zero-overlap should not share lines");
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Test 5: byte offsets are consistent with emitted content
-    // ---------------------------------------------------------------------------
     #[test]
     fn test_overlap_byte_offsets_consistent() {
-        // Verify that each chunk's byte_end - byte_start == content.len()
-        // and that byte ranges don't have gaps (accounting for overlap).
         let lines: Vec<String> = (1..=10)
             .map(|i| format!("word1_{i} word2_{i} word3_{i} word4_{i}"))
             .collect();
         let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let span = make_span(&line_refs);
 
-        let svc = make_service(20, 4);
-        let chunks = svc
-            .split_large_span("test.rs", span)
-            .expect("split should succeed");
-
+        let svc = make_service_with_overlap(20, 4);
+        let chunks = svc.split_large_span("test.rs", span).expect("split should succeed");
         assert!(chunks.len() > 1, "expected multiple chunks");
 
         for (i, chunk) in chunks.iter().enumerate() {
@@ -508,5 +488,68 @@ mod tests {
                 chunk.byte_start, chunk.byte_end
             );
         }
+    }
+
+    // =========================================================================
+    // AST boundary tests (chunk_spans)
+    // =========================================================================
+
+    #[test]
+    fn test_separate_named_functions_get_own_chunks() {
+        let svc = make_service(100);
+        let span_a = make_definition_span("function", "foo", 40);
+        let span_b = make_definition_span("function", "bar", 40);
+
+        let chunks = svc.chunk_spans("test.rs", vec![span_a, span_b]).expect("should succeed");
+
+        assert_eq!(chunks.len(), 2, "two substantive functions should produce 2 chunks");
+        assert_eq!(chunks[0].name.as_deref(), Some("foo"));
+        assert_eq!(chunks[1].name.as_deref(), Some("bar"));
+    }
+
+    #[test]
+    fn test_small_helper_packed_with_next_function() {
+        let svc = make_service(100);
+        let tiny_helper = make_definition_span("function", "helper", 9);
+        let large_fn = make_definition_span("function", "process_data", 60);
+
+        let chunks = svc.chunk_spans("test.rs", vec![tiny_helper, large_fn]).expect("should succeed");
+        assert_eq!(chunks.len(), 1, "small helper below 25% should pack with next function");
+    }
+
+    #[test]
+    fn test_non_definition_spans_still_pack() {
+        let svc = make_service(100);
+
+        let make_import = |n: usize| {
+            let words: Vec<String> = (0..n).map(|i| format!("use_mod_{i}")).collect();
+            let content = words.join(" ");
+            let byte_end = content.len();
+            CodeSpan {
+                content,
+                start_line: 1,
+                end_line: 1,
+                byte_start: 0,
+                byte_end,
+                kind: Some("import".to_string()),
+                name: None,
+                language: "rust".to_string(),
+            }
+        };
+
+        let chunks = svc
+            .chunk_spans("test.rs", vec![make_import(30), make_import(30)])
+            .expect("should succeed");
+        assert_eq!(chunks.len(), 1, "non-definition spans should pack together");
+    }
+
+    #[test]
+    fn test_same_name_definitions_pack() {
+        let svc = make_service(100);
+        let impl_a = make_definition_span("impl", "MyStruct", 35);
+        let impl_b = make_definition_span("impl", "MyStruct", 35);
+
+        let chunks = svc.chunk_spans("test.rs", vec![impl_a, impl_b]).expect("should succeed");
+        assert_eq!(chunks.len(), 1, "same-named impl blocks should stay packed");
     }
 }
