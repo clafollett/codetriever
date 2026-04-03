@@ -458,37 +458,7 @@ async fn search_handler_impl(
             let file_path = chunk.file_path.clone();
             let chunk_content = chunk.content.clone();
 
-            // Extract repository and commit info from metadata if available
-            let (repository, commit) =
-                result
-                    .repository_metadata
-                    .as_ref()
-                    .map_or((None, None), |metadata| {
-                        let repository_name = metadata
-                            .repository_url
-                            .as_ref()
-                            .and_then(|url| url.split('/').next_back())
-                            .map(std::string::ToString::to_string);
-
-                        let commit_info =
-                            if let (Some(sha), Some(message), Some(author), Some(date)) = (
-                                &metadata.commit_sha,
-                                &metadata.commit_message,
-                                &metadata.author,
-                                &metadata.commit_date,
-                            ) {
-                                Some(CommitInfo {
-                                    sha: sha.clone(),
-                                    message: message.clone(),
-                                    author: author.clone(),
-                                    date: date.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-                                })
-                            } else {
-                                None
-                            };
-
-                        (repository_name, commit_info)
-                    });
+            let (repository, commit) = extract_repo_commit(result.repository_metadata.as_ref());
 
             Match {
                 file: std::path::Path::new(&file_path)
@@ -553,18 +523,14 @@ async fn search_handler_impl(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ContextRequest {
     /// Optional repository identifier (uses most recent if not provided)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_id: Option<String>,
     /// Optional branch name (uses default branch if not provided)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// File path within the repository
     pub file_path: String,
     /// Optional line number to center context around
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,
     /// Optional radius (lines before/after target line, default: 20)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub radius: Option<usize>,
 }
 
@@ -843,10 +809,8 @@ pub struct UsagesRequest {
     /// Symbol name to find usages of (function, class, variable)
     pub symbol: String,
     /// Optional repository filter - only search within this repository
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_id: Option<String>,
     /// Optional branch filter - only search within this branch
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// Type of usage to find: "all" (default), "definitions", "references"
     #[serde(default = "default_usage_type")]
@@ -922,7 +886,11 @@ fn is_definition(chunk: &codetriever_parsing::CodeChunk, symbol: &str) -> bool {
 
 /// Determine if a chunk references the symbol (content contains it but it's not the definition)
 fn is_reference(chunk: &codetriever_parsing::CodeChunk, symbol: &str) -> bool {
-    !is_definition(chunk, symbol) && chunk.content.contains(symbol)
+    !is_definition(chunk, symbol)
+        && chunk
+            .content
+            .to_ascii_lowercase()
+            .contains(&symbol.to_ascii_lowercase())
 }
 
 /// Extracted repository name and commit info
@@ -1021,19 +989,27 @@ pub async fn usages_handler(
     // Validate usage_type
     let usage_type = req.usage_type.to_lowercase();
     if !["all", "definitions", "references"].contains(&usage_type.as_str()) {
+        warn!(
+            correlation_id = %correlation_id,
+            usage_type = %req.usage_type,
+            "Invalid usage_type rejected"
+        );
         return Err(ApiError::invalid_query(
-            req.symbol,
-            format!(
-                "Invalid usage_type '{}'. Must be one of: all, definitions, references",
-                req.usage_type
-            ),
+            req.usage_type,
+            "Invalid usage_type. Must be one of: all, definitions, references".to_string(),
             correlation_id,
         ));
     }
 
-    // Search for the symbol — cast a wide net to find both definitions and references
-    let search_limit = req.limit.unwrap_or(50).min(100);
-    let symbol = req.symbol.clone();
+    // Trim whitespace from symbol — validation checked non-empty on raw input,
+    // now use the cleaned version for search and classification.
+    let symbol = req.symbol.trim().to_string();
+
+    // Over-fetch 3x to compensate for post-filter losses — semantic search
+    // returns contextually related chunks, many of which won't contain the
+    // literal symbol string.
+    let user_limit = req.limit.unwrap_or(50).min(100);
+    let search_limit = user_limit.saturating_mul(3);
 
     let results = match tokio::time::timeout(
         Duration::from_secs(30),
@@ -1139,12 +1115,11 @@ pub async fn usages_handler(
         let type_order = |t: &str| i32::from(t != "definition");
         type_order(&a.usage_type)
             .cmp(&type_order(&b.usage_type))
-            .then(
-                b.similarity
-                    .partial_cmp(&a.similarity)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-            )
+            .then(b.similarity.total_cmp(&a.similarity))
     });
+
+    // Truncate to requested limit (we over-fetched to compensate for filtering)
+    usages.truncate(user_limit);
 
     let query_time_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     let total_usages = usages.len();
@@ -1275,67 +1250,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_search_results_include_repository_and_commit_info() {
-        // Test that search results properly populate repository and commit fields from metadata
+    async fn test_extract_repo_commit_with_full_metadata() {
         use chrono::Utc;
 
-        let mock_result = codetriever_search::SearchMatch {
-            chunk: codetriever_parsing::CodeChunk {
-                file_path: "src/auth.rs".to_string(),
-                content: "fn authenticate() {}".to_string(),
-                start_line: 1,
-                end_line: 1,
-                byte_start: 0,
-                byte_end: 20,
-                kind: Some("function".to_string()),
-                language: "rust".to_string(),
-                name: Some("authenticate".to_string()),
-                token_count: Some(3),
-                embedding: None,
-            },
-            similarity: 0.95,
-            repository_metadata: Some(codetriever_search::RepositoryMetadata {
-                repository_id: "my-repo".to_string(),
-                repository_url: Some("https://github.com/user/my-repo".to_string()),
-                branch: "main".to_string(),
-                commit_sha: Some("abc123".to_string()),
-                commit_message: Some("Add authentication".to_string()),
-                commit_date: Some(Utc::now()),
-                author: Some("John Doe".to_string()),
-            }),
+        let metadata = codetriever_search::RepositoryMetadata {
+            repository_id: "my-repo".to_string(),
+            repository_url: Some("https://github.com/user/my-repo".to_string()),
+            branch: "main".to_string(),
+            commit_sha: Some("abc123".to_string()),
+            commit_message: Some("Add authentication".to_string()),
+            commit_date: Some(Utc::now()),
+            author: Some("John Doe".to_string()),
         };
 
-        // Convert to API Match format
-        let (repository, commit) =
-            mock_result
-                .repository_metadata
-                .as_ref()
-                .map_or((None, None), |metadata| {
-                    let repository_name = metadata
-                        .repository_url
-                        .as_ref()
-                        .and_then(|url| url.split('/').next_back())
-                        .map(std::string::ToString::to_string);
+        let (repository, commit) = extract_repo_commit(Some(&metadata));
 
-                    let commit_info = CommitInfo {
-                        sha: metadata.commit_sha.clone().unwrap_or_default(),
-                        message: metadata.commit_message.clone().unwrap_or_default(),
-                        author: metadata.author.clone().unwrap_or_default(),
-                        date: metadata
-                            .commit_date
-                            .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-                            .unwrap_or_default(),
-                    };
-
-                    (repository_name, Some(commit_info))
-                });
-
-        // Verify that repository and commit fields are properly populated
         assert_eq!(repository, Some("my-repo".to_string()));
         assert!(commit.is_some());
-        let commit_info = commit.unwrap();
-        assert_eq!(commit_info.sha, "abc123");
-        assert_eq!(commit_info.author, "John Doe");
+        let ci = commit.unwrap();
+        assert_eq!(ci.sha, "abc123");
+        assert_eq!(ci.author, "John Doe");
+    }
+
+    #[tokio::test]
+    async fn test_extract_repo_commit_with_none() {
+        let (repository, commit) = extract_repo_commit(None);
+        assert!(repository.is_none());
+        assert!(commit.is_none());
     }
 
     #[tokio::test]
@@ -2169,6 +2110,50 @@ mod tests {
         assert_eq!(json["metadata"]["total_usages"], 3);
         assert_eq!(json["metadata"]["definitions"], 1);
         assert_eq!(json["metadata"]["references"], 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_usages_definition_not_double_counted_as_reference() -> TestResult {
+        // A chunk with name == symbol AND content containing the symbol
+        // should be classified as definition only, never as both
+        let mock = MockSearch::with_matches(vec![TestSearchMatch::new(
+            "src/config.rs",
+            "fn parse_config(path: &str) -> Config { parse_config_inner(path) }",
+            0.95,
+            Some("parse_config"),
+            Some("function"),
+        )]);
+
+        let app = usages_routes_with_mock(mock);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/usages")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&json!({
+                        "tenant_id": "00000000-0000-0000-0000-000000000000",
+                        "symbol": "parse_config"
+                    }))?))?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+        let usages = json["usages"].as_array().expect("usages array");
+        assert_eq!(
+            usages.len(),
+            1,
+            "should be exactly 1 usage, not double-counted"
+        );
+        assert_eq!(usages[0]["usage_type"], "definition");
+        assert_eq!(json["metadata"]["definitions"], 1);
+        assert_eq!(json["metadata"]["references"], 0);
 
         Ok(())
     }

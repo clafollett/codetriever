@@ -50,7 +50,11 @@ pub struct MockSearch {
 }
 
 impl MockSearch {
-    /// Create a mock that returns specific results
+    /// Create a mock that returns specific results.
+    ///
+    /// Note: chunks will have `name: None` and `kind: Some("function")`.
+    /// For tests that need named chunks (e.g., usages classification), use
+    /// `with_matches` and `TestSearchMatch` instead.
     pub fn with_results(results: Vec<TestSearchResult>) -> Self {
         let results = results
             .into_iter()
