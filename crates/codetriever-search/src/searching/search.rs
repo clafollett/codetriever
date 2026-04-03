@@ -52,6 +52,13 @@ pub struct Search {
     cache: SearchCache,
 }
 
+/// Normalize a string for fuzzy symbol matching: lowercase and strip separators.
+///
+/// `"ParseConfig"` becomes `"parseconfig"`, `"parse_config"` becomes `"parseconfig"`
+fn normalize_symbol(s: &str) -> String {
+    s.to_lowercase().replace(['_', '-'], "")
+}
+
 /// Apply score adjustments based on metadata signals already present in search results.
 ///
 /// Boosts and penalties are multiplicative and compound:
@@ -59,14 +66,17 @@ pub struct Search {
 /// - Definition kind (function/method/class/etc.): +10%
 /// - Test/generated/fixture file path: -20%
 fn rerank(query: &str, results: &mut [SearchMatch]) {
+    let query_norm = normalize_symbol(query);
+
     for result in results.iter_mut() {
         let mut boost: f32 = 1.0;
 
-        // Exact symbol name match: +15%
-        if let Some(ref name) = result.chunk.name
-            && (query.contains(name.as_str()) || name.contains(query))
-        {
-            boost *= 1.15;
+        // Case/separator-insensitive symbol name match: +15%
+        if let Some(ref name) = result.chunk.name {
+            let name_norm = normalize_symbol(name);
+            if query_norm.contains(&name_norm) || name_norm.contains(&query_norm) {
+                boost *= 1.15;
+            }
         }
 
         // Definition kind boost: +10%
@@ -87,13 +97,20 @@ fn rerank(query: &str, results: &mut [SearchMatch]) {
         }
 
         // Test/generated file penalty: -20%
+        // Match on path segments to avoid false positives like "attestation" or "contest"
         let path = &result.chunk.file_path;
-        if path.contains("test")
-            || path.contains("spec")
-            || path.contains("mock")
-            || path.contains("generated")
-            || path.contains("fixture")
-        {
+        let is_test_path = path.split('/').any(|seg| {
+            matches!(
+                seg,
+                "test" | "tests" | "spec" | "specs" | "mock" | "mocks" | "generated" | "fixtures"
+            )
+        }) || path.rsplit('/').next().is_some_and(|filename| {
+            filename.contains("_test.")
+                || filename.contains("_spec.")
+                || filename.contains(".test.")
+                || filename.contains(".spec.")
+        });
+        if is_test_path {
             boost *= 0.80;
         }
 
@@ -587,6 +604,44 @@ mod tests {
             "top result should have similarity 0.8, got {:.4}",
             results[0].similarity
         );
+    }
+
+    #[test]
+    fn test_symbol_name_match_case_insensitive() {
+        // "ParseConfig" query should boost chunk named "parse_config" and vice versa
+        let query = "ParseConfig";
+        let mut results = vec![make_match("src/config.rs", Some("parse_config"), None, 1.0)];
+
+        rerank(query, &mut results);
+
+        let expected = 1.0_f32 * 1.15;
+        assert!(
+            (results[0].similarity - expected).abs() < 1e-5,
+            "case-insensitive name match should yield {expected:.4}, got {:.4}",
+            results[0].similarity
+        );
+    }
+
+    #[test]
+    fn test_attestation_path_not_penalized() {
+        // "attestation" contains "test" as a substring but is NOT a test path
+        let query = "anything";
+        let mut results = vec![
+            make_match("src/attestation/validator.rs", None, None, 1.0),
+            make_match("src/contest/rules.rs", None, None, 1.0),
+            make_match("src/latest_config.rs", None, None, 1.0),
+        ];
+
+        rerank(query, &mut results);
+
+        for result in &results {
+            assert!(
+                (result.similarity - 1.0).abs() < 1e-5,
+                "path '{}' should NOT be penalized, got {:.4}",
+                result.chunk.file_path,
+                result.similarity
+            );
+        }
     }
 
     #[test]
