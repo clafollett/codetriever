@@ -1044,7 +1044,20 @@ pub async fn usages_handler(
                     "usages".to_string(),
                     correlation_id,
                 ));
+            } else if search_error.to_string().contains("unavailable")
+                || search_error.to_string().contains("connection")
+            {
+                return Err(ApiError::SearchServiceUnavailable {
+                    correlation_id,
+                    timeout_duration: Duration::from_secs(30),
+                });
             }
+            error!(
+                correlation_id = %correlation_id,
+                error = %search_error,
+                symbol = %symbol,
+                "Usages search failed with unexpected error"
+            );
             return Err(ApiError::InternalServerError { correlation_id });
         }
         Err(_timeout) => {
