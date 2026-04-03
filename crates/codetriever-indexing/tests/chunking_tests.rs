@@ -126,21 +126,29 @@ fn test_chunking_service_simple() {
 
     let chunks = service.chunk_spans("test.rs", spans).unwrap();
 
-    // Should create 2 chunks: first two spans fit in soft limit (40 < 45)
-    // Third span goes to second chunk
-    assert_eq!(chunks.len(), 2);
+    // With AST-aware boundaries, each named function definition gets its own
+    // chunk when the accumulated content is substantive (>= 25% of soft limit).
+    // soft=45, threshold=11. Each span is 20 tokens (>11), so all three are
+    // substantive definitions with different names → 3 separate chunks.
+    assert_eq!(chunks.len(), 3);
 
-    // First chunk should have spans 1 and 2
+    // First chunk: test_func
     assert_eq!(chunks[0].start_line, 1);
-    assert_eq!(chunks[0].end_line, 10);
+    assert_eq!(chunks[0].end_line, 5);
     assert_eq!(chunks[0].byte_start, 0);
-    assert_eq!(chunks[0].byte_end, 40);
+    assert_eq!(chunks[0].byte_end, 20);
 
-    // Second chunk should have span 3
-    assert_eq!(chunks[1].start_line, 11);
-    assert_eq!(chunks[1].end_line, 15);
-    assert_eq!(chunks[1].byte_start, 40);
-    assert_eq!(chunks[1].byte_end, 60);
+    // Second chunk: another_func
+    assert_eq!(chunks[1].start_line, 6);
+    assert_eq!(chunks[1].end_line, 10);
+    assert_eq!(chunks[1].byte_start, 20);
+    assert_eq!(chunks[1].byte_end, 40);
+
+    // Third chunk: third_func
+    assert_eq!(chunks[2].start_line, 11);
+    assert_eq!(chunks[2].end_line, 15);
+    assert_eq!(chunks[2].byte_start, 40);
+    assert_eq!(chunks[2].byte_end, 60);
 }
 
 #[test]
