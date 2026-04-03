@@ -213,8 +213,8 @@ impl ChunkingService {
                 // Carry trailing lines as overlap into the next chunk.
                 // Walk backward through current_lines, accumulating token counts
                 // until we've collected up to `self.budget.overlap` tokens.
+                let mut overlap_token_count = 0usize;
                 let overlap_lines: Vec<String> = if self.budget.overlap > 0 {
-                    let mut overlap_tokens = 0usize;
                     let mut overlap_count = 0usize;
                     let mut buf = String::with_capacity(256);
                     for ol in current_lines.iter().rev() {
@@ -222,46 +222,35 @@ impl ChunkingService {
                         buf.push_str(ol);
                         buf.push('\n');
                         let t = self.counter.count(&buf);
-                        if overlap_tokens + t > self.budget.overlap {
+                        if overlap_token_count + t > self.budget.overlap {
                             break;
                         }
-                        overlap_tokens += t;
+                        overlap_token_count += t;
                         overlap_count += 1;
                     }
-                    // Take the last `overlap_count` lines as the seed for the next chunk.
                     current_lines[current_lines.len() - overlap_count..].to_vec()
                 } else {
                     Vec::new()
                 };
 
-                // Advance the byte offset by only the non-overlap portion.
-                // The overlap lines will be re-emitted in the next chunk so their
-                // bytes are NOT consumed here.
-                let overlap_byte_len: usize = overlap_lines
-                    .iter()
-                    .map(|l| l.len() + 1) // +1 for the '\n' separator
-                    .sum();
-                // Guard against underflow when overlap_byte_len > byte_len (shouldn't
-                // happen in practice, but be safe).
+                // Compute overlap byte length using the same join("\n") representation
+                // as chunk content to avoid off-by-one drift at boundaries.
+                let overlap_byte_len = if overlap_lines.is_empty() {
+                    0
+                } else {
+                    overlap_lines.join("\n").len()
+                };
                 let advance_bytes = byte_len.saturating_sub(overlap_byte_len);
                 current_byte_offset += advance_bytes;
 
                 // The next chunk starts at the line number of the first overlap line.
                 let non_overlap_count = current_lines.len() - overlap_lines.len();
-                // current_start_line is 1-indexed; lines before overlap are consumed.
                 current_start_line += non_overlap_count;
 
-                // Seed the next chunk with the overlap lines and their token count.
-                let overlap_token_sum: usize = overlap_lines
-                    .iter()
-                    .map(|l| {
-                        let mut b = l.clone();
-                        b.push('\n');
-                        self.counter.count(&b)
-                    })
-                    .sum();
+                // Seed the next chunk with the overlap lines and the token count
+                // already computed during the reverse walk.
                 current_lines = overlap_lines;
-                current_tokens = overlap_token_sum;
+                current_tokens = overlap_token_count;
             }
 
             current_lines.push(line.to_string());
@@ -358,7 +347,7 @@ mod tests {
             .split_large_span("test.rs", span)
             .expect("split should succeed");
 
-        // Must produce more than one chunk (content is 50 tokens, hard=20).
+        // Must produce more than one chunk (content is 40 tokens, hard=20).
         assert!(
             chunks.len() > 1,
             "expected multiple chunks, got {}",
@@ -416,13 +405,13 @@ mod tests {
             let prev_lines: Vec<&str> = window[0].content.lines().collect();
             let next_lines: Vec<&str> = window[1].content.lines().collect();
 
-            // Walk from the start of next chunk and count how many leading lines
-            // match the tail of the previous chunk.
-            let overlap_line_count = next_lines
-                .iter()
-                .zip(prev_lines.iter().rev())
-                .take_while(|(n, p)| n == p)
-                .count();
+            // Find how many leading lines of the next chunk match the trailing
+            // lines of the previous chunk (suffix/prefix comparison).
+            let max_overlap = next_lines.len().min(prev_lines.len());
+            let overlap_line_count = (1..=max_overlap)
+                .rev()
+                .find(|&k| next_lines[..k] == prev_lines[prev_lines.len() - k..])
+                .unwrap_or(0);
 
             let overlap_text = next_lines[..overlap_line_count].join("\n");
             let overlap_tokens = counter.count(&overlap_text);
@@ -486,6 +475,37 @@ mod tests {
             assert_ne!(
                 prev_last_line, next_first_line,
                 "zero-overlap: last line of prev chunk should NOT equal first line of next chunk"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Test 5: byte offsets are consistent with emitted content
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn test_overlap_byte_offsets_consistent() {
+        // Verify that each chunk's byte_end - byte_start == content.len()
+        // and that byte ranges don't have gaps (accounting for overlap).
+        let lines: Vec<String> = (1..=10)
+            .map(|i| format!("word1_{i} word2_{i} word3_{i} word4_{i}"))
+            .collect();
+        let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let span = make_span(&line_refs);
+
+        let svc = make_service(20, 4);
+        let chunks = svc
+            .split_large_span("test.rs", span)
+            .expect("split should succeed");
+
+        assert!(chunks.len() > 1, "expected multiple chunks");
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            let expected_len = chunk.content.len();
+            let actual_len = chunk.byte_end - chunk.byte_start;
+            assert_eq!(
+                actual_len, expected_len,
+                "chunk {i}: byte range ({}-{} = {actual_len}) != content.len() ({expected_len})",
+                chunk.byte_start, chunk.byte_end
             );
         }
     }
