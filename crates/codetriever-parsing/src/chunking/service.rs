@@ -408,11 +408,23 @@ mod tests {
             .split_large_span("test.rs", span)
             .expect("split should succeed");
 
-        assert!(chunks.len() > 1, "expected multiple chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() > 1,
+            "expected multiple chunks, got {}",
+            chunks.len()
+        );
 
         for window in chunks.windows(2) {
-            let prev_last = window[0].content.lines().last().expect("chunk must have content");
-            let next_first = window[1].content.lines().next().expect("chunk must have content");
+            let prev_last = window[0]
+                .content
+                .lines()
+                .last()
+                .expect("chunk must have content");
+            let next_first = window[1]
+                .content
+                .lines()
+                .next()
+                .expect("chunk must have content");
             assert_eq!(prev_last, next_first, "overlap missing between chunks");
         }
     }
@@ -445,7 +457,10 @@ mod tests {
 
             let overlap_text = next_lines[..overlap_line_count].join("\n");
             let overlap_tokens = counter.count(&overlap_text);
-            assert!(overlap_tokens <= 6, "overlap tokens {overlap_tokens} exceeded budget of 6");
+            assert!(
+                overlap_tokens <= 6,
+                "overlap tokens {overlap_tokens} exceeded budget of 6"
+            );
         }
     }
 
@@ -455,7 +470,9 @@ mod tests {
         let span = make_span(&lines);
 
         let svc = make_service_with_overlap(20, 4);
-        let chunks = svc.split_large_span("test.rs", span).expect("split should succeed");
+        let chunks = svc
+            .split_large_span("test.rs", span)
+            .expect("split should succeed");
         assert_eq!(chunks.len(), 1, "expected a single chunk");
     }
 
@@ -468,7 +485,9 @@ mod tests {
         let span = make_span(&line_refs);
 
         let svc = make_service_with_overlap(20, 0);
-        let chunks = svc.split_large_span("test.rs", span).expect("split should succeed");
+        let chunks = svc
+            .split_large_span("test.rs", span)
+            .expect("split should succeed");
         assert!(chunks.len() > 1, "expected multiple chunks");
 
         for window in chunks.windows(2) {
@@ -487,7 +506,9 @@ mod tests {
         let span = make_span(&line_refs);
 
         let svc = make_service_with_overlap(20, 4);
-        let chunks = svc.split_large_span("test.rs", span).expect("split should succeed");
+        let chunks = svc
+            .split_large_span("test.rs", span)
+            .expect("split should succeed");
         assert!(chunks.len() > 1, "expected multiple chunks");
 
         for (i, chunk) in chunks.iter().enumerate() {
@@ -511,9 +532,15 @@ mod tests {
         let span_a = make_definition_span("function", "foo", 40);
         let span_b = make_definition_span("function", "bar", 40);
 
-        let chunks = svc.chunk_spans("test.rs", vec![span_a, span_b]).expect("should succeed");
+        let chunks = svc
+            .chunk_spans("test.rs", vec![span_a, span_b])
+            .expect("should succeed");
 
-        assert_eq!(chunks.len(), 2, "two substantive functions should produce 2 chunks");
+        assert_eq!(
+            chunks.len(),
+            2,
+            "two substantive functions should produce 2 chunks"
+        );
         assert_eq!(chunks[0].name.as_deref(), Some("foo"));
         assert_eq!(chunks[1].name.as_deref(), Some("bar"));
     }
@@ -524,8 +551,14 @@ mod tests {
         let tiny_helper = make_definition_span("function", "helper", 9);
         let large_fn = make_definition_span("function", "process_data", 60);
 
-        let chunks = svc.chunk_spans("test.rs", vec![tiny_helper, large_fn]).expect("should succeed");
-        assert_eq!(chunks.len(), 1, "small helper below 25% should pack with next function");
+        let chunks = svc
+            .chunk_spans("test.rs", vec![tiny_helper, large_fn])
+            .expect("should succeed");
+        assert_eq!(
+            chunks.len(),
+            1,
+            "small helper below 25% should pack with next function"
+        );
     }
 
     #[test]
@@ -560,7 +593,9 @@ mod tests {
         let impl_a = make_definition_span("impl", "MyStruct", 35);
         let impl_b = make_definition_span("impl", "MyStruct", 35);
 
-        let chunks = svc.chunk_spans("test.rs", vec![impl_a, impl_b]).expect("should succeed");
+        let chunks = svc
+            .chunk_spans("test.rs", vec![impl_a, impl_b])
+            .expect("should succeed");
         assert_eq!(chunks.len(), 1, "same-named impl blocks should stay packed");
     }
 }

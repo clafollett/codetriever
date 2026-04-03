@@ -1175,6 +1175,7 @@ pub async fn usages_handler(
 mod tests {
     #![allow(clippy::expect_used)] // OK in tests
     #![allow(clippy::unwrap_used)] // OK in tests
+    #![allow(clippy::indexing_slicing)] // OK in tests
     use super::*;
     use crate::test_utils::TestResult;
     use axum::body::Body;
