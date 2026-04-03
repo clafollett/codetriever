@@ -884,13 +884,10 @@ fn is_definition(chunk: &codetriever_parsing::CodeChunk, symbol: &str) -> bool {
         && chunk.kind.is_some()
 }
 
-/// Determine if a chunk references the symbol (content contains it but it's not the definition)
-fn is_reference(chunk: &codetriever_parsing::CodeChunk, symbol: &str) -> bool {
-    !is_definition(chunk, symbol)
-        && chunk
-            .content
-            .to_ascii_lowercase()
-            .contains(&symbol.to_ascii_lowercase())
+/// Determine if a chunk references the symbol (content contains it but it's not the definition).
+/// `symbol_lower` must be the pre-lowercased symbol to avoid per-call allocation.
+fn is_reference(chunk: &codetriever_parsing::CodeChunk, symbol: &str, symbol_lower: &str) -> bool {
+    !is_definition(chunk, symbol) && chunk.content.to_ascii_lowercase().contains(symbol_lower)
 }
 
 /// Extracted repository name and commit info
@@ -1070,16 +1067,14 @@ pub async fn usages_handler(
     };
 
     // Classify results as definitions or references, filtering by content match
+    let symbol_lower = symbol.to_ascii_lowercase();
     let mut usages: Vec<Usage> = Vec::new();
-    let mut def_count = 0usize;
-    let mut ref_count = 0usize;
-
     for result in results {
         let chunk = &result.chunk;
 
         // Only include chunks that actually contain the symbol
         let definition = is_definition(chunk, &symbol);
-        let reference = is_reference(chunk, &symbol);
+        let reference = is_reference(chunk, &symbol, &symbol_lower);
 
         if !definition && !reference {
             continue;
@@ -1095,12 +1090,6 @@ pub async fn usages_handler(
             "definitions" if !definition => continue,
             "references" if !reference => continue,
             _ => {}
-        }
-
-        if definition {
-            def_count = def_count.saturating_add(1);
-        } else {
-            ref_count = ref_count.saturating_add(1);
         }
 
         let (repository, commit) = extract_repo_commit(result.repository_metadata.as_ref());
@@ -1134,8 +1123,15 @@ pub async fn usages_handler(
     // Truncate to requested limit (we over-fetched to compensate for filtering)
     usages.truncate(user_limit);
 
-    let query_time_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    // Recompute counts after truncation so metadata stays consistent
     let total_usages = usages.len();
+    let def_count = usages
+        .iter()
+        .filter(|u| u.usage_type == "definition")
+        .count();
+    let ref_count = total_usages.saturating_sub(def_count);
+
+    let query_time_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     info!(
         correlation_id = %correlation_id,

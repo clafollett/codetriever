@@ -178,13 +178,21 @@ This test manually reimplements the repository/commit extraction logic instead o
 
 ---
 
-## Required Before Merge
+## Required Before Merge — ALL RESOLVED
 
-| # | Issue | Category |
-|---|-------|----------|
-| 1 | Refactor `search_handler_impl` to use `extract_repo_commit` | Major |
-| 2 | Case sensitivity mismatch in `is_definition`/`is_reference` — document or fix | Major |
-| 4 | Client-side filter against fixed-cap fetch — document the tradeoff or add overfetch | Major |
-| 5 | `invalid_query` error passes wrong field + missing `warn!` log | Minor |
+All issues below were fixed in subsequent commits on this branch.
 
-Issues 3, 6, 7, 8, 9 are improvements recommended before or shortly after merge.
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | Refactor `search_handler_impl` to use `extract_repo_commit` | ✅ Fixed |
+| 2 | Case sensitivity mismatch in `is_definition`/`is_reference` | ✅ Fixed — `is_reference` now case-insensitive with precomputed `symbol_lower` |
+| 3 | Client-side filter against fixed-cap fetch | ✅ Fixed — overfetch 3x, truncate after sort |
+| 4 | `invalid_query` error passes wrong field + missing `warn!` log | ✅ Fixed |
+| 5 | Dead `skip_serializing_if` on Deserialize-only structs | ✅ Removed |
+| 6 | Missing test: definition not double-counted as reference | ✅ Added |
+| 7 | Symbol whitespace not trimmed | ✅ Trimmed after validation |
+| 8 | Meaningless repo/commit test | ✅ Replaced with `extract_repo_commit` unit test |
+| 9 | `MockSearch::with_results` missing doc warning | ✅ Added |
+| 10 | `SearchServiceUnavailable` mapping missing in usages handler | ✅ Added (Copilot follow-up) |
+| 11 | Metadata counts inconsistent after truncation | ✅ Fixed — recomputed post-truncation (Copilot follow-up) |
+| 12 | `is_reference` per-call allocation | ✅ Fixed — precompute `symbol_lower` (Copilot follow-up) |
