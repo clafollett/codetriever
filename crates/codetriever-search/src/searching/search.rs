@@ -62,7 +62,7 @@ fn normalize_symbol(s: &str) -> String {
 /// Apply score adjustments based on metadata signals already present in search results.
 ///
 /// Boosts and penalties are multiplicative and compound:
-/// - Exact symbol name match in query: +15%
+/// - Symbol name substring match in query (case/separator normalized): +15%
 /// - Definition kind (function/method/class/etc.): +10%
 /// - Test/generated/fixture file path: -20%
 fn rerank(query: &str, results: &mut [SearchMatch]) {
@@ -245,15 +245,13 @@ impl Search {
 
             // Apply metadata-signal re-ranking, re-sort, then truncate to requested limit
             rerank(query, &mut results);
-            results.sort_by(|a, b| {
-                b.similarity
-                    .partial_cmp(&a.similarity)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            results.sort_by(|a, b| b.similarity.total_cmp(&a.similarity));
+            let candidates = results.len();
             results.truncate(limit);
 
             tracing::debug!(
-                fetched = results.len(),
+                candidates,
+                returned = results.len(),
                 limit,
                 "Search re-ranked and truncated results"
             );
@@ -440,7 +438,6 @@ impl SearchService for Search {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use codetriever_vector_data::CodeChunk;
 
     /// Build a minimal `SearchMatch` for re-ranking unit tests.
     /// Only the fields exercised by `rerank()` need real values.
@@ -586,11 +583,7 @@ mod tests {
             .collect();
 
         rerank(query, &mut results);
-        results.sort_by(|a, b| {
-            b.similarity
-                .partial_cmp(&a.similarity)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        results.sort_by(|a, b| b.similarity.total_cmp(&a.similarity));
         results.truncate(limit);
 
         assert_eq!(
