@@ -10,6 +10,7 @@ use utoipa_swagger_ui::SwaggerUi;
     paths(
         crate::routes::search::search_handler,
         crate::routes::search::context_handler,
+        crate::routes::search::usages_handler,
         crate::routes::index::index_handler,
         crate::routes::index::get_job_status_handler,
         // Note: status endpoint path excluded from OpenAPI due to impl Trait limitation
@@ -26,6 +27,12 @@ use utoipa_swagger_ui::SwaggerUi;
             crate::routes::search::Context,
             crate::routes::search::Range,
             crate::routes::search::CommitInfo,
+
+            // Usages schemas
+            crate::routes::search::UsagesRequest,
+            crate::routes::search::UsagesResponse,
+            crate::routes::search::UsagesMetadata,
+            crate::routes::search::Usage,
 
             // Context schemas (now in search module)
             crate::routes::search::ContextRequest,
